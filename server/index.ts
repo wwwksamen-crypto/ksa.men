@@ -4,6 +4,7 @@ import {getCookie,setCookie} from 'hono/cookie';
 import {ZodError} from 'zod';
 import {type Bindings,type Session,type User,type Env,one,run,now,digest,hmac,verifySecret,rate,setting,safeUrl,publicProfile} from './core';
 import {registerAuth} from './auth';
+import {registerBackup,makeBackup} from './backup';
 import {registerBusiness} from './business';
 import {registerOperations} from './operations';
 import {registerIntelligence,fetchRadar} from './intelligence';
@@ -37,8 +38,8 @@ app.use('*',async(c,next)=>{
 async function lockHTML(c:any,lock:any){return `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KSA.MEN — اختبار خاص</title><body style="margin:0;background:#07120f;color:#f5f7f6;font-family:Arial;min-height:100vh;display:grid;place-items:center"><main style="padding:30px;text-align:center;max-width:460px"><img src="/assets/logo.webp" alt="KSA.MEN" width="200"><h1>ظهور رقمي يليق بك</h1><p>${escape(lock.message||'المنصة في اختبار خاص')}</p><a style="color:#6ee7a4" href="https://${c.env.ROOT_DOMAIN}/auth">دخول المالك والاختبار الخاص</a></main></body></html>`;}
 app.get('/api/platform',async c=>{const lock:any=await setting(c,'lock',{mode:'private'});return c.json({lock:{mode:lock.mode,message:lock.message,reason:lock.reason,passwordEnabled:!!lock.passwordHash},access:lock.mode==='open'||c.get('user')?.role==='owner'||['manager','moderator'].includes(c.get('user')?.role||'')||await gate(c,lock),contact:await setting(c,'contact'),season:await setting(c,'season')});});
 app.post('/api/gate',async c=>{const lock:any=await setting(c,'lock');await rate(c,'gate:'+c.req.header('CF-Connecting-IP'),6,900);const {password}=await c.req.json<any>();if(!lock.passwordHash||typeof password!=='string'||!await verifySecret(password,lock.passwordHash))throw new HTTPException(403,{message:'كلمة مرور البوابة غير صحيحة'});const t=now()+6*3600;setCookie(c,'__Host-ksa_gate',t+'.'+await hmac(c.env.AUTH_SECRET,t+':'+lock.passwordHash),{secure:true,httpOnly:true,sameSite:'Lax',path:'/',maxAge:6*3600});return c.json({ok:true});});
-registerAuth(app);registerPublic(app);registerBusiness(app);registerOperations(app);registerIntelligence(app);
+registerBackup(app);registerAuth(app);registerPublic(app);registerBusiness(app);registerOperations(app);registerIntelligence(app);
 app.get('/robots.txt',async c=>{const l:any=await setting(c,'lock');return c.text(l.mode==='open'?'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /api/\n':'User-agent: *\nDisallow: /\n');});
 app.get('*',async c=>{const path=new URL(c.req.url).pathname;const r=await c.env.ASSETS.fetch(new Request(new URL(path==='/'?'/index.html':path,c.req.url),c.req.raw));if(r.status===200)return r;if(path.startsWith('/assets/')||path.includes('.')||path.startsWith('/api/'))throw new HTTPException(404);return c.env.ASSETS.fetch(new Request(new URL('/index.html',c.req.url),c.req.raw));});
 app.onError((err,c)=>{if(err instanceof ZodError)return c.json({error:err.issues.map(v=>v.message).join('،')},400);if(err instanceof HTTPException)return c.json({error:err.message||'تعذر تنفيذ الطلب'},err.status);console.error('KSA request failed',err.name);return c.json({error:'تعذر إتمام العملية بأمان، حاول مجددًا'},500);});
-export default {fetch:app.fetch,async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext){ctx.waitUntil(fetchRadar(env));}};
+export default {fetch:app.fetch,async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext){ctx.waitUntil(fetchRadar(env));if(new Date(_event.scheduledTime).getUTCHours()===0)ctx.waitUntil(makeBackup(env));}};
