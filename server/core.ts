@@ -14,9 +14,29 @@ export const me=(c:Ctx):User=>{const u=c.get('user');if(!u)throw new HTTPExcepti
 export const role=(c:Ctx,roles:string[])=>{const u=me(c);if(!roles.includes(u.role))throw new HTTPException(403,{message:'ليست لديك صلاحية لهذا الإجراء'});return u;};
 export const finance=(c:Ctx)=>{const u=role(c,['owner','manager']);if(u.role!=='owner'&&!u.financial)throw new HTTPException(403,{message:'يلزم تفويض مالي'});return u;};
 export const fresh=(c:Ctx)=>{me(c);if(!c.get('session')||now()-(c.get('session')?.verified_at??0)>900)throw new HTTPException(403,{message:'أعد التحقق من البريد لإتمام الإجراء الحساس'});};
-export async function setting<T=any>(c:Ctx,key:string,fallback?:T):Promise<T>{const r=await one<{value:string}>(c,'SELECT value FROM settings WHERE key=?',key);return r?JSON.parse(r.value):fallback as T;}
-export async function siteFor(c:Ctx,id?:string){const u=me(c);const s:any=id?await one(c,'SELECT * FROM sites WHERE id=?',id):await one(c,'SELECT * FROM sites WHERE user_id=? ORDER BY created_at LIMIT 1',u.id);if(!s)throw new HTTPException(404,{message:'الموقع غير موجود'});if(s.user_id!==u.id&&s.manager_id!==u.id&&u.role!=='owner'&&!(['manager','moderator'].includes(u.role)&&s.manager_id===u.id))throw new HTTPException(403,{message:'الموقع ليس ضمن صلاحياتك'});return s;}
-export async function service(c:Ctx,key:string,userId?:number){const u=userId?await one<User>(c,'SELECT * FROM users WHERE id=?',userId):me(c);if(!u)throw new HTTPException(404);const s:any=await one(c,'SELECT * FROM services WHERE key=?',key);if(!s||!s.enabled)throw new HTTPException(403,{message:'الخدمة معلقة على مستوى المنصة'});const o:any=await one(c,'SELECT * FROM user_services WHERE user_id=? AND key=?',u.id,key);if(o?.mode==='suspended')throw new HTTPException(403,{message:'الخدمة معلقة لهذا الحساب'});const active=!s.premium||u.trial_until>now()||u.entitlement_until>now()||(o?.mode==='grant'&&(!o.until_at||o.until_at>now()));if(!active)throw new HTTPException(403,{message:'الخدمة تحتاج استحقاقًا نشطًا'});return true;}
+const requestSettings=new WeakMap<object,Promise<Map<string,any>>>();
+export async function setting<T=any>(c:Ctx,key:string,fallback?:T):Promise<T>{let pending=requestSettings.get(c);if(!pending){pending=all<{key:string,value:string}>(c,'SELECT key,value FROM settings').then(rows=>new Map(rows.map(r=>[r.key,JSON.parse(r.value)])));requestSettings.set(c,pending);}const values=await pending;return values.has(key)?values.get(key):fallback as T;}
+export async function siteFor(c:Ctx,id?:string){const u=me(c);const s:any=id?await one(c,'SELECT * FROM sites WHERE id=?',id):await one(c,'SELECT * FROM sites WHERE user_id=? ORDER BY created_at LIMIT 1',u.id);if(!s)throw new HTTPException(404,{message:'الموقع غير موجود'});if(s.user_id===u.id||s.manager_id===u.id||u.role==='owner')return s;if(u.role==='manager'&&s.user_id!==null&&await one(c,'SELECT id FROM users WHERE id=? AND assigned_to=?',s.user_id,u.id))return s;throw new HTTPException(403,{message:'الموقع ليس ضمن صلاحياتك'});}
+
+export async function serviceState(c:Ctx,key:string,userId?:number){
+ const u=userId?await one<User>(c,'SELECT * FROM users WHERE id=?',userId):me(c);
+ if(!u||u.status!=='active')throw new HTTPException(403,{message:'الحساب غير متاح'});
+ const catalog:any=await one(c,'SELECT * FROM services WHERE key=?',key);
+ if(!catalog)return {enabled:false,entitled:false,reason:'الخدمة غير موجودة',sources:[]};
+ const override:any=await one(c,'SELECT * FROM user_services WHERE user_id=? AND key=?',u.id,key);
+ const policy=typeof catalog.policy==='string'?JSON.parse(catalog.policy):catalog.policy||{};
+ const clock=now();
+ const active:any[]=await all(c,'SELECT source_kind,starts_at,ends_at FROM entitlement_sources WHERE user_id=? AND revoked_at IS NULL AND starts_at<=? AND ends_at>?',u.id,clock,clock);
+ const sources=active.filter(v=>policy[v.source_kind]!==false).map(v=>v.source_kind);
+ if(u.trial_until>clock&&policy.trial!==false&&!sources.includes('trial'))sources.push('trial');
+ if(override?.mode==='grant'&&policy.grant!==false&&(!override.until_at||override.until_at>clock))sources.push('grant');
+ const enabled=!!catalog.enabled;
+ const suspended=override?.mode==='suspended';
+ const entitled=enabled&&!suspended&&(!catalog.premium||sources.length>0);
+ return {enabled,entitled,policy,override:override?{mode:override.mode,untilAt:override.until_at}:null,sources:[...new Set(sources)],reason:!enabled?'الخدمة معلقة على مستوى المنصة':suspended?'الخدمة معلقة لهذا الحساب':!entitled?'الخدمة تحتاج استحقاقًا نشطًا':null};
+}
+export async function service(c:Ctx,key:string,userId?:number){const state=await serviceState(c,key,userId);if(!state.entitled)throw new HTTPException(403,{message:state.reason||'الخدمة غير متاحة'});return true;}
+
 const enc=new TextEncoder();
 export async function digest(text:string){const b=await crypto.subtle.digest('SHA-256',enc.encode(text));return Array.from(new Uint8Array(b),v=>v.toString(16).padStart(2,'0')).join('');}
 export async function hmac(secret:string,text:string){const k=await crypto.subtle.importKey('raw',enc.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const b=await crypto.subtle.sign('HMAC',k,enc.encode(text));return Array.from(new Uint8Array(b),v=>v.toString(16).padStart(2,'0')).join('');}

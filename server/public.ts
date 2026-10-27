@@ -1,17 +1,209 @@
 import type {App,Ctx} from './core';
-import {one,all,run,now,uid,me,siteFor,service,publicProfile,safeUrl,rate,verifySecret,hmac,setting} from './core';
+import {one,all,run,now,uid,me,siteFor,service,publicProfile,rate,verifySecret,hmac} from './core';
 import {HTTPException} from 'hono/http-exception';
 import {getCookie,setCookie} from 'hono/cookie';
 import {z} from 'zod';
-export async function personalGate(c:Ctx,site:any){if(!site.lock_hash)return true;const raw=getCookie(c,'__Host-ksa_site')||'';const [time,sig]=raw.split('.');return Number(time)>now()&&sig===await hmac(c.env.AUTH_SECRET,site.id+':'+time+':'+site.lock_hash);}
-export async function publishedForHost(c:Ctx){const host=new URL(c.req.url).hostname;const name=host.replace('.'+c.env.ROOT_DOMAIN,'');if(host===c.env.ROOT_DOMAIN)throw new HTTPException(404);const s:any=await one(c,"SELECT s.*,n.name FROM names n JOIN sites s ON s.id=n.site_id WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL",name);if(!s)throw new HTTPException(404,{message:'هذا الموقع غير منشور'});return s;}
+
+type ExportRule={canonical:string;serviceKey:string|null};
+
+const exportRules:Record<string,ExportRule>={
+  profile:{canonical:'profile',serviceKey:'profile_pdf'},
+  pdf:{canonical:'profile',serviceKey:'profile_pdf'},
+  professional:{canonical:'profile',serviceKey:'profile_pdf'},
+  identity:{canonical:'profile',serviceKey:'profile_pdf'},
+  ats:{canonical:'ats',serviceKey:'ats_pdf'},
+  resume:{canonical:'ats',serviceKey:'ats_pdf'},
+  cv:{canonical:'ats',serviceKey:'ats_pdf'},
+  badge:{canonical:'badge',serviceKey:'digital_card'},
+  conference:{canonical:'badge',serviceKey:'digital_card'},
+  card:{canonical:'card',serviceKey:'digital_card'},
+  digital_card:{canonical:'card',serviceKey:'digital_card'},
+  'digital-card':{canonical:'card',serviceKey:'digital_card'},
+  social:{canonical:'social',serviceKey:'digital_card'},
+  share:{canonical:'social',serviceKey:'digital_card'},
+  vcard:{canonical:'vcard',serviceKey:'vcard'},
+  vcf:{canonical:'vcard',serviceKey:'vcard'},
+  contact:{canonical:'vcard',serviceKey:'vcard'},
+  qr:{canonical:'qr',serviceKey:null},
+  qrcode:{canonical:'qr',serviceKey:null},
+  free_qr:{canonical:'qr',serviceKey:null},
+};
+
+function publishedJson(site:{published:string}){
+  try{return JSON.parse(site.published) as Record<string,unknown>;}catch{throw new HTTPException(500,{message:'تعذر قراءة النسخة المنشورة بأمان'});}
+}
+
+function visibility(raw:Record<string,unknown>){
+  return Array.isArray(raw.hidden)?raw.hidden.filter((field):field is string=>typeof field==='string'):[];
+}
+
+/** Applies the published locale first, then removes every field that its owner hid. */
+function visibleProfile(raw:Record<string,unknown>,lang:string,includeVisibility=false){
+  const translation=lang==='en'&&raw.translations&&typeof raw.translations==='object'
+    ?(raw.translations as Record<string,unknown>).en
+    :undefined;
+  const localized=translation&&typeof translation==='object'
+    ?{...raw,...translation,hidden:visibility(raw)}
+    :{...raw,hidden:visibility(raw)};
+  const profile=publicProfile(localized) as Record<string,unknown>;
+  return includeVisibility?{...profile,hidden:visibility(raw)}:profile;
+}
+
+function exportRule(kind:string){
+  const normalized=kind.trim().toLowerCase();
+  const rule=exportRules[normalized];
+  if(!rule)throw new HTTPException(400,{message:'نوع التصدير غير مدعوم'});
+  return rule;
+}
+
+function profileReferencesMedia(profile:Record<string,unknown>,mediaId:string){
+  const expected='/api/media/'+mediaId;
+  const media=[profile.photo,profile.cover,...(Array.isArray(profile.skillImages)?profile.skillImages:[]),...(Array.isArray(profile.workImages)?profile.workImages:[])];
+  return media.some(value=>value===expected);
+}
+
+function publishedReferencesMedia(raw:Record<string,unknown>,mediaId:string){
+  return profileReferencesMedia(visibleProfile(raw,'ar'),mediaId)||profileReferencesMedia(visibleProfile(raw,'en'),mediaId);
+}
+
+export async function personalGate(c:Ctx,site:any){
+  if(!site.lock_hash)return true;
+  const raw=getCookie(c,'__Host-ksa_site')||'';
+  const [time,sig]=raw.split('.');
+  return Number(time)>now()&&sig===await hmac(c.env.AUTH_SECRET,site.id+':'+time+':'+site.lock_hash);
+}
+
+export async function publishedForHost(c:Ctx){
+  const host=new URL(c.req.url).hostname;
+  const name=host.replace('.'+c.env.ROOT_DOMAIN,'');
+  if(host===c.env.ROOT_DOMAIN)throw new HTTPException(404);
+  const site:any=await one(c,"SELECT s.*,n.name FROM dns_names n JOIN sites s ON s.id=n.site_id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL AND u.status='active'",name);
+  if(!site)throw new HTTPException(404,{message:'هذا الموقع غير منشور'});
+  return site;
+}
+
 export function registerPublic(app:App){
- app.get('/api/public/profile',async c=>{const s=await publishedForHost(c);const raw=JSON.parse(s.published);const lang=c.req.query('lang')||'ar';const p=publicProfile({...raw,...raw.translations?.[lang],hidden:raw.hidden});if(!await personalGate(c,s))return c.json({locked:true,site:s.id,name:s.name,photo:p.photo||'/assets/logo.webp',message:s.lock_message});return c.json({profile:p,site:s.id,name:s.name,branding:!!s.branding,userId:'C'+s.user_id});});
- app.post('/api/public/unlock',async c=>{const s=await publishedForHost(c);await rate(c,'site-lock:'+s.id+':'+c.req.header('CF-Connecting-IP'),6,900);const {password}=z.object({password:z.string().min(1).max(200)}).parse(await c.req.json());if(!s.lock_hash||!await verifySecret(password,s.lock_hash))throw new HTTPException(403,{message:'كلمة المرور غير صحيحة'});const t=now()+3600;setCookie(c,'__Host-ksa_site',t+'.'+await hmac(c.env.AUTH_SECRET,s.id+':'+t+':'+s.lock_hash),{httpOnly:true,secure:true,path:'/',sameSite:'Lax',maxAge:3600});return c.json({ok:true});});
- app.get('/api/search',async c=>{const q=(c.req.query('q')||'').slice(0,100).toLowerCase(),city=(c.req.query('city')||'').slice(0,100),specialty=(c.req.query('specialty')||'').slice(0,100);const offset=Math.min(10000,Math.max(0,Number(c.req.query('offset'))||0));const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.published,s.lock_hash,n.name FROM sites s JOIN names n ON n.site_id=s.id WHERE s.status='published' AND s.searchable=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");const profiles=rows.filter(r=>!r.lock_hash).map(r=>({site:r.id,name:r.name,userId:'C'+r.user_id,profile:publicProfile(JSON.parse(r.published))}));const matched=profiles.filter(r=>[r.name,r.userId,r.profile.name,r.profile.title,r.profile.city].join(' ').toLowerCase().includes(q)&&(!city||r.profile.city===city)&&(!specialty||r.profile.title===specialty));return c.json({items:matched.slice(offset,offset+20).map(r=>({site:r.site,name:r.name,userId:r.userId,profile:{name:r.profile.name,title:r.profile.title,city:r.profile.city,photo:r.profile.photo,allowContact:r.profile.allowContact},url:'https://'+r.name+'.'+c.env.ROOT_DOMAIN})),total:matched.length,cities:[...new Set(profiles.map(r=>r.profile.city).filter(Boolean))],specialties:[...new Set(profiles.map(r=>r.profile.title).filter(Boolean))]});});
- app.get('/api/public/quick/:id',async c=>{const link:any=await one(c,'SELECT * FROM quick_links WHERE id=? AND revoked=0 AND expires_at>?',c.req.param('id'),now());if(!link)throw new HTTPException(404,{message:'انتهت صلاحية رابط التعارف أو ألغي'});const payload=JSON.parse(link.payload);const profile=payload.values||payload;return c.json({profile:{...profile,url:profile.url||profile.site},expiresAt:link.expires_at});});
- app.get('/api/export-data/:site',async c=>{const s=await siteFor(c,c.req.param('site'));const kind=c.req.query('kind')||'pdf';const key=kind==='qr'?'free_qr':kind==='vcard'?'vcard':kind==='ats'?'ats_pdf':['pdf','profile','professional'].includes(kind)?'profile_pdf':'digital_card';if(key!=='free_qr')await service(c,key,s.user_id);let p=JSON.parse(s.draft);const lang=c.req.query('lang')||'ar';if(lang==='en'&&p.translations?.en)p={...p,...p.translations.en};const name:any=await one(c,'SELECT name FROM names WHERE site_id=? AND owner_id=? LIMIT 1',s.id,s.user_id);return c.json({profile:p,name:name?.name??'',site:s.id,allowed:true,translated:lang!=='en'||!!p.translations?.en});});
- app.post('/api/upload',async c=>{const u=me(c);await rate(c,'upload:'+u.id,60,3600);const form=await c.req.formData();const file=form.get('file');if(!(file instanceof File))throw new HTTPException(400,{message:'اختر الملف'});const purpose=z.enum(['photo','cover','skill','work','receipt']).parse(form.get('purpose'));const siteId=String(form.get('siteId')||'');if(siteId)await siteFor(c,siteId);if(file.size>8*1024*1024||file.size<12)throw new HTTPException(400,{message:'حجم الملف غير مناسب؛ الحد 8 ميجابايت'});const bytes=new Uint8Array(await file.arrayBuffer());let mime='';if(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)mime='image/jpeg';if(bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71)mime='image/png';if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')mime='image/webp';if(purpose==='receipt'&&new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')mime='application/pdf';if(!mime||file.type!==mime)throw new HTTPException(400,{message:'محتوى الملف غير مسموح؛ استخدم PNG أو JPEG أو WebP، أو PDF للإيصال'});const id=uid(),key='user/'+u.id+'/'+id;await c.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});await run(c,'INSERT INTO media(id,owner_id,site_id,purpose,bucket_key,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)',id,u.id,siteId||null,purpose,key,mime,file.size,now());return c.json({id,url:'/api/media/'+id});});
- app.get('/api/media/:id',async c=>{const m:any=await one(c,'SELECT * FROM media WHERE id=?',c.req.param('id'));if(!m)throw new HTTPException(404);const u=c.get('user');let authorized=u?.id===m.owner_id;if(m.purpose==='receipt'&&!authorized){authorized=!!u&&(u.role==='owner'||(u.role==='manager'&&!!u.financial));}if(m.purpose!=='receipt'&&!authorized){const s:any=m.site_id?await one(c,"SELECT * FROM sites WHERE id=? AND status='published'",m.site_id):null;if(s?.published&&await personalGate(c,s)){const p=publicProfile(JSON.parse(s.published));authorized=JSON.stringify(p).includes('/api/media/'+m.id);}}if(!authorized)throw new HTTPException(403,{message:'الملف خاص أو غير منشور'});const o=await c.env.MEDIA.get(m.bucket_key);if(!o)throw new HTTPException(404);return new Response(o.body,{headers:{'Content-Type':m.mime,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',...(m.purpose==='receipt'?{'Content-Disposition':'attachment; filename="receipt.'+(m.mime==='application/pdf'?'pdf':'webp')+'"'}:{})}});});
- app.post('/api/public/event',async c=>{const data=z.object({event:z.enum(['visit','contact','vcard','qr']),site:z.string().uuid()}).parse(await c.req.json());const s=await publishedForHost(c);if(s.id!==data.site||!await personalGate(c,s))throw new HTTPException(403);await rate(c,'event:'+s.id+':'+c.req.header('CF-Connecting-IP'),100,3600);await run(c,'INSERT INTO analytics(site_id,event,created_at) VALUES(?,?,?)',s.id,data.event,now());return c.json({ok:true});});
+  app.get('/api/public/profile',async c=>{
+    const site=await publishedForHost(c);
+    const raw=publishedJson(site);
+    const lang=c.req.query('lang')==='en'?'en':'ar';
+    const profile=visibleProfile(raw,lang);
+    if(!await personalGate(c,site)){
+      return c.json({locked:true,site:site.id,name:site.name,photo:typeof profile.photo==='string'?profile.photo:'/assets/logo.webp',message:site.lock_message});
+    }
+    return c.json({profile,site:site.id,name:site.name,branding:!!site.branding,userId:site.user_id?'C'+site.user_id:null});
+  });
+
+  app.post('/api/public/unlock',async c=>{
+    const site=await publishedForHost(c);
+    await rate(c,'site-lock:'+site.id+':'+c.req.header('CF-Connecting-IP'),6,900);
+    const {password}=z.object({password:z.string().min(1).max(200)}).parse(await c.req.json());
+    if(!site.lock_hash||!await verifySecret(password,site.lock_hash))throw new HTTPException(403,{message:'كلمة المرور غير صحيحة'});
+    const expiresAt=now()+3600;
+    setCookie(c,'__Host-ksa_site',expiresAt+'.'+await hmac(c.env.AUTH_SECRET,site.id+':'+expiresAt+':'+site.lock_hash),{httpOnly:true,secure:true,path:'/',sameSite:'Lax',maxAge:3600});
+    return c.json({ok:true});
+  });
+
+  app.get('/api/search',async c=>{
+    const query=(c.req.query('q')||'').slice(0,100).toLocaleLowerCase();
+    const city=(c.req.query('city')||'').slice(0,100).toLocaleLowerCase();
+    const specialty=(c.req.query('specialty')||'').slice(0,100).toLocaleLowerCase();
+    const offset=Math.min(10_000,Math.max(0,Number(c.req.query('offset'))||0));
+    const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.published,s.lock_hash,n.name FROM sites s JOIN dns_names n ON n.site_id=s.id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE u.status='active' AND s.status='published' AND s.searchable=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");
+    const profiles=rows.filter(row=>!row.lock_hash).map(row=>({site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(publishedJson(row),'ar')}));
+    const matched=profiles.filter(result=>{
+      const profile=result.profile;
+      const haystack=[result.name,result.userId,profile.name,profile.title,profile.city].filter(value=>typeof value==='string').join(' ').toLocaleLowerCase();
+      const resultCity=typeof profile.city==='string'?profile.city.toLocaleLowerCase():'';
+      const resultSpecialty=typeof profile.title==='string'?profile.title.toLocaleLowerCase():'';
+      return haystack.includes(query)&&(!city||resultCity===city)&&(!specialty||resultSpecialty===specialty);
+    });
+    return c.json({
+      items:matched.slice(offset,offset+20).map(result=>({
+        site:result.site,
+        name:result.name,
+        userId:result.userId,
+        profile:{name:result.profile.name,title:result.profile.title,city:result.profile.city,photo:result.profile.photo,allowContact:result.profile.allowContact},
+        url:'https://'+result.name+'.'+c.env.ROOT_DOMAIN,
+      })),
+      total:matched.length,
+      cities:[...new Set(profiles.map(result=>result.profile.city).filter((value):value is string=>typeof value==='string'&&Boolean(value)))],
+      specialties:[...new Set(profiles.map(result=>result.profile.title).filter((value):value is string=>typeof value==='string'&&Boolean(value)))],
+    });
+  });
+
+  app.get('/api/public/quick/:id',async c=>{
+    const link:any=await one(c,'SELECT * FROM quick_links WHERE id=? AND revoked=0 AND expires_at>?',c.req.param('id'),now());
+    if(!link)throw new HTTPException(404,{message:'انتهت صلاحية رابط التعارف أو ألغي'});
+    const payload=JSON.parse(link.payload);
+    const profile=payload.values||payload;
+    return c.json({profile:{...profile,url:profile.url||profile.site},mode:payload.mode||'professional',expiresAt:link.expires_at});
+  });
+
+  app.get('/api/export-data/:site',async c=>{
+    const site=await siteFor(c,c.req.param('site'));
+    const rule=exportRule(c.req.query('kind')||'profile');
+    if(rule.serviceKey)await service(c,rule.serviceKey,site.user_id);
+    let raw:Record<string,unknown>;
+    try{raw=JSON.parse(site.draft) as Record<string,unknown>;}catch{throw new HTTPException(500,{message:'تعذر قراءة المسودة للتصدير بأمان'});}
+    const lang=c.req.query('lang')==='en'?'en':'ar';
+    const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
+    const name:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? AND owner_id=? LIMIT 1',site.id,site.user_id);
+    return c.json({profile:visibleProfile(raw,lang,true),name:name?.name??'',site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation});
+  });
+
+  app.post('/api/upload',async c=>{
+    const user=me(c);
+    await rate(c,'upload:'+user.id,60,3600);
+    const form=await c.req.formData();
+    const file=form.get('file');
+    if(!(file instanceof File))throw new HTTPException(400,{message:'اختر الملف'});
+    const purpose=z.enum(['photo','cover','skill','work','receipt']).parse(form.get('purpose'));
+    const siteId=String(form.get('siteId')||'');
+    if(siteId)await siteFor(c,siteId);
+    if(file.size>8*1024*1024||file.size<12)throw new HTTPException(400,{message:'حجم الملف غير مناسب؛ الحد 8 ميجابايت'});
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    let mime='';
+    if(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)mime='image/jpeg';
+    if(bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71)mime='image/png';
+    if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')mime='image/webp';
+    if(purpose==='receipt'&&new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')mime='application/pdf';
+    if(!mime||file.type!==mime)throw new HTTPException(400,{message:'محتوى الملف غير مسموح؛ استخدم PNG أو JPEG أو WebP، أو PDF للإيصال'});
+    const id=uid(),key='user/'+user.id+'/'+id;
+    await c.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});
+    await run(c,'INSERT INTO media(id,owner_id,site_id,purpose,bucket_key,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)',id,user.id,siteId||null,purpose,key,mime,file.size,now());
+    return c.json({id,url:'/api/media/'+id});
+  });
+
+  app.get('/api/media/:id',async c=>{
+    const media:any=await one(c,'SELECT * FROM media WHERE id=?',c.req.param('id'));
+    if(!media)throw new HTTPException(404);
+    const user=c.get('user');
+    let authorized=user?.id===media.owner_id;
+    if(media.purpose==='receipt'&&!authorized){
+      authorized=!!user&&(user.role==='owner'||(user.role==='manager'&&!!user.financial));
+    }
+    if(media.purpose!=='receipt'&&!authorized){
+      const site:any=media.site_id?await one(c,"SELECT * FROM sites WHERE id=? AND status='published'",media.site_id):null;
+      if(site?.published&&await personalGate(c,site))authorized=publishedReferencesMedia(publishedJson(site),media.id);
+    }
+    if(!authorized)throw new HTTPException(403,{message:'الملف خاص أو غير منشور'});
+    const object=await c.env.MEDIA.get(media.bucket_key);
+    if(!object)throw new HTTPException(404);
+    return new Response(object.body,{headers:{
+      'Content-Type':media.mime,
+      'Cache-Control':'private, no-store',
+      'X-Content-Type-Options':'nosniff',
+      ...(media.purpose==='receipt'?{'Content-Disposition':'attachment; filename="receipt.'+(media.mime==='application/pdf'?'pdf':'webp')+'"'}:{}),
+    }});
+  });
+
+  app.post('/api/public/event',async c=>{
+    const data=z.object({event:z.enum(['visit','contact','vcard','qr']),site:z.string().uuid()}).parse(await c.req.json());
+    const site=await publishedForHost(c);
+    if(site.id!==data.site||!await personalGate(c,site))throw new HTTPException(403);
+    await rate(c,'event:'+site.id+':'+c.req.header('CF-Connecting-IP'),100,3600);
+    await run(c,'INSERT INTO analytics(site_id,event,created_at) VALUES(?,?,?)',site.id,data.event,now());
+    return c.json({ok:true});
+  });
 }

@@ -39,6 +39,13 @@ type ReviewRow = {
   decided_at: number | null;
 };
 
+type DecidedReviewRow = ReviewRow & {
+  decision_status: "approved" | "rejected" | null;
+  decision_reviewer_id: number | null;
+  decision_reason: string | null;
+  decision_decided_at: number | null;
+};
+
 type PaymentRow = {
   id: string;
   user_id: number;
@@ -71,6 +78,7 @@ const BACKUP_TABLES = [
   "sites",
   "names",
   "reviews",
+  "review_decisions",
   "review_events",
   "media",
   "services",
@@ -84,6 +92,7 @@ const BACKUP_TABLES = [
   "transfers",
   "handovers",
   "proxy_sites",
+  "proxy_media",
   "site_custody",
   "quick_links",
   "analytics",
@@ -144,6 +153,40 @@ function jsonString(value: unknown, label: string, maximum = 100_000): string {
   const encoded = JSON.stringify(value);
   if (encoded.length > maximum) fail(400, `${label} is too large`, "invalid_input");
   return encoded;
+}
+
+function proxyMediaIds(draft: string): string[] {
+  const found = new Set<string>();
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 20 || found.size > 9) return;
+    if (typeof value === "string") {
+      const match = /^\/api\/media\/([A-Za-z0-9_-]{1,160})$/.exec(value);
+      if (match) found.add(match[1]);
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth + 1);
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value as Record<string, unknown>)) visit(item, depth + 1);
+    }
+  };
+  visit(parseJson(draft), 0);
+  if (found.size > 9) fail(400, "A proxy profile may reference at most nine uploaded images", "invalid_media");
+  return [...found];
+}
+
+function resolvedReview(review: DecidedReviewRow): ReviewRow {
+  const { decision_status, decision_reviewer_id, decision_reason, decision_decided_at, ...original } = review;
+  if (!decision_status) return original;
+  return {
+    ...original,
+    status: decision_status,
+    reviewer_id: decision_reviewer_id,
+    reason: decision_reason,
+    decided_at: decision_decided_at,
+  };
 }
 
 function customerId(value: unknown, label = "recipient"): number {
@@ -376,7 +419,7 @@ export function registerOperations(app: App): void {
     const user = actor(c);
     const unread = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL", user.id);
     if (user.role === "moderator") {
-      const pending = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM reviews WHERE status='pending'");
+      const pending = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)");
       const metrics = {
         total_users: null,
         new_registrations: null,
@@ -421,15 +464,17 @@ export function registerOperations(app: App): void {
     const pendingReviews = await one<{ count: number }>(
       c,
       scoped
-        ? "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND EXISTS(SELECT 1 FROM sites s WHERE s.id=r.site_id AND (s.manager_id=? OR s.user_id=?))"
-        : "SELECT COUNT(*) AS count FROM reviews WHERE status='pending'",
+        ? "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id) AND EXISTS(SELECT 1 FROM sites s WHERE s.id=r.site_id AND (s.manager_id=? OR s.user_id=?))"
+        : "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)",
       ...(scoped ? [user.id, user.id] : []),
     );
-    const [trials, subscriptions, transfers, contacts] = await Promise.all([
+    const [trials, subscriptions, transfers, contacts, newRegistrations, serviceActivity] = await Promise.all([
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.trial_until>? AND u.entitlement_until<=u.trial_until` : "SELECT COUNT(*) AS count FROM users WHERE trial_until>? AND entitlement_until<=trial_until", ...(scoped ? [user.id, user.id, user.id, now()] : [now()])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(DISTINCT s.user_id) AS count FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE ${userScope}` : "SELECT COUNT(DISTINCT user_id) AS count FROM subscriptions", ...(scoped ? [user.id, user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? "SELECT COUNT(*) AS count FROM transfers t JOIN users u ON u.id=t.from_id WHERE (u.id=? OR u.assigned_to=?)" : "SELECT COUNT(*) AS count FROM transfers", ...(scoped ? [user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? "SELECT COUNT(*) AS count FROM contact_requests r JOIN users u ON u.id=r.to_id WHERE (u.id=? OR u.assigned_to=?)" : "SELECT COUNT(*) AS count FROM contact_requests", ...(scoped ? [user.id, user.id] : [])),
+      one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.created_at>=?` : "SELECT COUNT(*) AS count FROM users WHERE created_at>=?", ...(scoped ? [user.id, user.id, user.id, now() - 30 * DAY] : [now() - 30 * DAY])),
+      one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM user_services us JOIN users u ON u.id=us.user_id WHERE ${userScope}` : "SELECT COUNT(*) AS count FROM user_services", ...(scoped ? [user.id, user.id, user.id] : [])),
     ]);
     const financial = user.role === "owner" || Boolean(user.financial);
     const [payments, referrals, treasury] = financial
@@ -441,7 +486,7 @@ export function registerOperations(app: App): void {
       : [null, null, null];
     const metrics = {
       total_users: users?.count ?? 0,
-      new_registrations: null,
+      new_registrations: newRegistrations?.count ?? 0,
       published_sites: publishedSites?.count ?? 0,
       pending_sites: pendingSites?.count ?? 0,
       review_requests: pendingReviews?.count ?? 0,
@@ -452,7 +497,7 @@ export function registerOperations(app: App): void {
       treasury_points: treasury?.balance ?? null,
       transfers: transfers?.count ?? 0,
       resource_usage: null,
-      service_activity: null,
+      service_activity: serviceActivity?.count ?? 0,
       notifications: unread?.count ?? 0,
       contact_requests: contacts?.count ?? 0,
     };
@@ -483,7 +528,7 @@ export function registerOperations(app: App): void {
       c,
       `SELECT u.id,u.email,u.name,u.whatsapp,u.role,u.financial,u.status,u.trial_until,u.entitlement_until,u.referrer_id,u.referral_paid,u.assigned_to,u.created_at,u.last_active,
               w.balance,
-              (SELECT n.name FROM names n WHERE n.owner_id=u.id ORDER BY n.created_at LIMIT 1) AS subdomain,
+              (SELECT n.name FROM dns_names n WHERE n.owner_id=u.id ORDER BY n.created_at LIMIT 1) AS subdomain,
               (SELECT s.status FROM sites s WHERE s.user_id=u.id ORDER BY s.created_at LIMIT 1) AS site_status,
               (SELECT d.status FROM deletion_requests d WHERE d.user_id=u.id ORDER BY d.created_at DESC LIMIT 1) AS deletion_request_status
        FROM users u
@@ -585,14 +630,27 @@ export function registerOperations(app: App): void {
     }
 
     if (action === "grant") {
-      managerOrOwner(c);
+      const operator = managerOrOwner(c);
       await userInManagerScope(c, targetId);
       const days = integer(body.days, "days", 1, 36_500);
       const target = await one<{ id: number }>(c, "SELECT id FROM users WHERE id=?", targetId);
       if (!target) fail(404, "User not found", "not_found");
-      await run(c, "UPDATE users SET entitlement_until=MAX(entitlement_until,trial_until,?)+?*? WHERE id=?", clock, days, DAY, targetId);
+      const sourceId = `entitlement-grant-${uid()}`;
+      const reference = `grant-${targetId}-${uid()}`;
+      const results = await c.env.DB.batch([
+        c.env.DB.prepare(
+          `INSERT INTO entitlement_sources(id,user_id,source_kind,starts_at,ends_at,reference,detail,created_by,created_at)
+           SELECT ?,id,'grant',MAX(entitlement_until,trial_until,?),MAX(entitlement_until,trial_until,?)+?*?,?,?,?,?
+           FROM users WHERE id=?`,
+        ).bind(sourceId, clock, clock, days, DAY, reference, `Administrative grant of ${days} day(s)`, operator.id, clock, targetId),
+        c.env.DB.prepare(
+          `UPDATE users SET entitlement_until=(SELECT ends_at FROM entitlement_sources WHERE id=?)
+           WHERE id=? AND EXISTS(SELECT 1 FROM entitlement_sources WHERE id=? AND user_id=?)`,
+        ).bind(sourceId, targetId, sourceId, targetId),
+      ]);
+      if (!changed(results[0]) || !changed(results[1])) fail(409, "The entitlement grant could not be recorded", "grant_conflict");
       const account = await one<{ entitlement_until: number }>(c, "SELECT entitlement_until FROM users WHERE id=?", targetId);
-      await audit(c, "user.grant", `user:${targetId}`, JSON.stringify({ days, entitlementUntil: account?.entitlement_until ?? null }));
+      await audit(c, "user.grant", `user:${targetId}`, JSON.stringify({ days, sourceId, reference, entitlementUntil: account?.entitlement_until ?? null }));
       return c.json({ entitlementUntil: account?.entitlement_until ?? 0 });
     }
 
@@ -656,28 +714,35 @@ export function registerOperations(app: App): void {
     const scope = user.role === "manager"
       ? "AND EXISTS(SELECT 1 FROM sites scoped WHERE scoped.id=r.site_id AND (scoped.manager_id=? OR scoped.user_id=?))"
       : "";
-    const rows = await all<ReviewRow & { published: string | null; site_status: string; submitter_name: string }>(
+    const rows = await all<DecidedReviewRow & { published: string | null; site_status: string; submitter_name: string }>(
       c,
-      `SELECT r.*,s.published,s.status AS site_status,u.name AS submitter_name
+      `SELECT r.*,s.published,s.status AS site_status,u.name AS submitter_name,
+              d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
        FROM reviews r JOIN sites s ON s.id=r.site_id JOIN users u ON u.id=r.user_id
-       WHERE r.status=? ${scope}
+       LEFT JOIN review_decisions d ON d.review_id=r.id
+       WHERE COALESCE(d.status,r.status)=? ${scope}
        ORDER BY r.created_at ASC LIMIT ?`,
       status,
       ...(user.role === "manager" ? [user.id, user.id] : []),
       limit,
     );
     return c.json({
-      reviews: rows.map((review) => ({
+      reviews: rows.map((row) => {
+        const review = resolvedReview(row);
+        const published = row.published;
+        return {
         ...review,
+        preview_url:'/api/admin/reviews/'+review.id+'/preview',
         snapshot: parseJson(review.snapshot),
         diff: {
-          before: parseJson(review.published),
+          before: parseJson(published),
           after: parseJson(review.snapshot),
-          changes: shallowChanges(review.published, review.snapshot),
+          changes: shallowChanges(published, review.snapshot),
         },
-        changes: shallowChanges(review.published, review.snapshot),
+        changes: shallowChanges(published, review.snapshot),
         published: undefined,
-      })),
+        };
+      }),
     });
   });
 
@@ -685,30 +750,40 @@ export function registerOperations(app: App): void {
     const body = await input(c);
     const decision = decisionValue(body.decision);
     const reason = text(body.reason ?? "", "reason", { min: decision === "rejected" ? 1 : 0, max: 2_000, optional: decision === "approved" });
-    const review = await one<ReviewRow>(c, "SELECT * FROM reviews WHERE id=?", c.req.param("id"));
+    const review = await one<DecidedReviewRow>(
+      c,
+      `SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
+       FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.id=?`,
+      c.req.param("id"),
+    );
     if (!review) fail(404, "Review not found", "not_found");
     const reviewer = await reviewScope(c, review);
+    if (review.status !== "pending" || review.decision_status) fail(409, "This review is no longer pending", "review_stale");
     const decidedAt = now();
-    const statements = [
-      c.env.DB.prepare(
-        `UPDATE reviews SET status=?,reviewer_id=?,reason=?,decided_at=?
-         WHERE id=? AND status='pending'
-           AND EXISTS(SELECT 1 FROM sites s WHERE s.id=reviews.site_id
-             AND s.published_version=reviews.base_version
-             AND s.draft_version=reviews.draft_version
-             AND (?<>'approved' OR (s.user_id IS NOT NULL AND s.status<>'proxy_pending')))`,
-      ).bind(decision, reviewer.id, reason, decidedAt, review.id, decision),
-      c.env.DB.prepare(
-        `INSERT INTO review_events(id,review_id,site_id,reviewer_id,decision,reason,created_at)
-         SELECT ?,id,site_id,?,?,?,? FROM reviews
-         WHERE id=? AND status=? AND reviewer_id=? AND decided_at=?`,
-      ).bind(`review-event-${uid()}`, reviewer.id, decision, reason, decidedAt, review.id, decision, reviewer.id, decidedAt),
-    ];
-    const results = await c.env.DB.batch(statements);
-    if (!changed(results[0])) fail(409, "This review is no longer pending or its base version is stale", "review_stale");
+    try {
+      await run(
+        c,
+        "INSERT INTO review_decisions(review_id,status,reviewer_id,reason,decided_at) VALUES(?,?,?,?,?)",
+        review.id,
+        decision,
+        reviewer.id,
+        reason,
+        decidedAt,
+      );
+    } catch {
+      // The migration triggers atomically reject duplicate decisions and a changed
+      // published base. Do not disclose which competing actor caused the conflict.
+      fail(409, "This review is no longer pending or its published base is stale", "review_stale");
+    }
     await audit(c, "review.decision", `review:${review.id}`, JSON.stringify({ decision, reason, siteId: review.site_id, baseVersion: review.base_version }));
-    const updated = await one<ReviewRow>(c, "SELECT * FROM reviews WHERE id=?", review.id);
-    return c.json({ review: updated ? { ...updated, snapshot: parseJson(updated.snapshot) } : null });
+    const updated = await one<DecidedReviewRow>(
+      c,
+      `SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
+       FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.id=?`,
+      review.id,
+    );
+    const resolved = updated ? resolvedReview(updated) : null;
+    return c.json({ review: resolved ? { ...resolved, snapshot: parseJson(resolved.snapshot) } : null });
   });
 
   app.get("/api/admin/payments", async (c) => {
@@ -774,8 +849,25 @@ export function registerOperations(app: App): void {
     const existing = await one<{ id: string }>(c, "SELECT id FROM payment_reversals WHERE payment_id=?", paymentId);
     if (existing) fail(409, "This payment already has a reversal record", "already_reversed");
 
+    const sourceReference = `subscription-${paymentId}`;
+    const subscriptionSource = await one<{ id: string; starts_at: number; ends_at: number }>(
+      c,
+      `SELECT id,starts_at,ends_at FROM entitlement_sources
+       WHERE user_id=? AND source_kind='subscription' AND reference=? AND revoked_at IS NULL`,
+      payment.user_id,
+      sourceReference,
+    );
+    if (!subscriptionSource || subscriptionSource.starts_at !== payment.subscription_start || subscriptionSource.ends_at !== payment.subscription_end) {
+      fail(409, "The recorded subscription entitlement source is unavailable", "entitlement_source_missing");
+    }
+    const remainingSource = await one<{ ends_at: number | null }>(
+      c,
+      "SELECT MAX(ends_at) AS ends_at FROM entitlement_sources WHERE user_id=? AND revoked_at IS NULL AND reference<>?",
+      payment.user_id,
+      sourceReference,
+    );
     const before = payment.entitlement_until;
-    const after = before <= payment.subscription_end ? Math.max(payment.trial_until, payment.subscription_start) : before;
+    const after = Math.max(payment.trial_until, Number(remainingSource?.ends_at ?? 0));
     const referral = payment.referrer_id && payment.approved_at
       ? await one<{ from_id: number; to_id: number; amount: number }>(
         c,
@@ -799,7 +891,7 @@ export function registerOperations(app: App): void {
       c.env.DB.prepare(
         `INSERT INTO entitlement_adjustments(id,user_id,payment_id,kind,before_at,after_at,reason,actor_id,created_at)
          VALUES(?,?,?,?,?,?,?,?,?)`,
-      ).bind(`entitlement-reversal-${uid()}`, payment.user_id, paymentId, "payment_reversal", before, after, justification, reviewer.id, createdAt),
+      ).bind(`entitlement-reversal-${uid()}`, payment.user_id, paymentId, "payment_reversal", before, after, `Revoked ${sourceReference} (${subscriptionSource.starts_at}-${subscriptionSource.ends_at}): ${justification}`, reviewer.id, createdAt),
       c.env.DB.prepare("UPDATE users SET entitlement_until=? WHERE id=?").bind(after, payment.user_id),
       c.env.DB.prepare("UPDATE payments SET reversed_at=? WHERE id=? AND reversed_at IS NULL").bind(createdAt, paymentId),
       ...(recoverable > 0 && payment.referrer_id
@@ -815,7 +907,7 @@ export function registerOperations(app: App): void {
       if (duplicate) fail(409, "This payment already has a reversal record", "already_reversed");
       throw error;
     }
-    await audit(c, "payment.reversal", `payment:${paymentId}`, JSON.stringify({ justification, entitlementBefore: before, entitlementAfter: after, referralRecovered: recoverable }));
+    await audit(c, "payment.reversal", `payment:${paymentId}`, JSON.stringify({ justification, entitlementBefore: before, entitlementAfter: after, sourceId: subscriptionSource.id, sourceReference, sourceStartsAt: subscriptionSource.starts_at, sourceEndsAt: subscriptionSource.ends_at, referralRecovered: recoverable }));
     return c.json({
       reversal: {
         id: reversalId,
@@ -897,7 +989,7 @@ export function registerOperations(app: App): void {
     const names = await all<Record<string, unknown>>(
       c,
       `SELECT r.name,r.kind,r.reason,r.active,n.owner_id,n.site_id,n.created_at
-       FROM reserved_names r LEFT JOIN names n ON n.name=r.name ORDER BY r.name`,
+       FROM reserved_names r LEFT JOIN dns_names n ON n.name=r.name ORDER BY r.name`,
     );
     return c.json({ names });
   });
@@ -909,7 +1001,7 @@ export function registerOperations(app: App): void {
     const name = nameValue(body.name);
     const kind = text(body.kind ?? "policy", "kind", { max: 64 });
     const reason = text(body.reason, "reason", { max: 1_000 });
-    const existingName = await one<{ name: string }>(c, "SELECT name FROM names WHERE name=?", name);
+    const existingName = await one<{ name: string }>(c, "SELECT name FROM dns_names WHERE name=?", name);
     if (existingName) fail(409, "An owned name cannot be reserved", "name_in_use");
     await run(
       c,
@@ -955,10 +1047,10 @@ export function registerOperations(app: App): void {
       c.env.DB.prepare(
         `UPDATE transfers SET status=?,reviewer_id=?,decided_at=?
          WHERE id=? AND status='accepted'
-           AND EXISTS(SELECT 1 FROM names n WHERE n.name=transfers.name AND n.owner_id=transfers.from_id)`,
+           AND EXISTS(SELECT 1 FROM dns_names n WHERE n.name=transfers.name AND n.owner_id=transfers.from_id)`,
       ).bind(decision, reviewer.id, decidedAt, transferId),
       c.env.DB.prepare(
-        `UPDATE names SET owner_id=(SELECT to_id FROM transfers WHERE id=?),site_id=NULL
+        `UPDATE dns_names SET owner_id=(SELECT to_id FROM transfers WHERE id=?),site_id=NULL
          WHERE name=(SELECT name FROM transfers WHERE id=?)
            AND owner_id=(SELECT from_id FROM transfers WHERE id=?)
            AND EXISTS(SELECT 1 FROM transfers WHERE id=? AND status='approved' AND reviewer_id=?)`,
@@ -966,7 +1058,13 @@ export function registerOperations(app: App): void {
     ]);
     if (!changed(results[0])) fail(409, "The transfer is not accepted, is stale, or the name ownership changed", "transfer_stale");
     if (decision === "approved" && !changed(results[1])) fail(409, "The name transfer could not be completed", "transfer_stale");
-    const transfer = await one<Record<string, unknown>>(c, "SELECT * FROM transfers WHERE id=?", transferId);
+    const transfer = await one<Record<string, unknown>>(
+      c,
+      `SELECT t.*,f.name AS from_name,tu.name AS to_name
+       FROM transfers t JOIN users f ON f.id=t.from_id JOIN users tu ON tu.id=t.to_id
+       WHERE t.id=?`,
+      transferId,
+    );
     if (transfer) {
       await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)", `notification-${uid()}`, Number(transfer.from_id), "Name transfer decided", decision === "approved" ? "The accepted name transfer was approved. The prior site remains separate from the name." : "The accepted name transfer was not approved.", decidedAt);
       await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)", `notification-${uid()}`, Number(transfer.to_id), "Name transfer decided", decision === "approved" ? "The accepted name transfer was approved. No prior site content moved with the name." : "The accepted name transfer was not approved.", decidedAt);
@@ -977,21 +1075,38 @@ export function registerOperations(app: App): void {
 
   app.post("/api/admin/sites", async (c) => {
     const creator = managerOrOwner(c);
+    fresh(c);
     const body = await input(c);
     const email = body.email === undefined || body.email === null || body.email === "" ? "" : text(body.email, "email", { min: 3, max: 320 }).toLowerCase();
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "email is invalid", "invalid_input");
     const name = body.name === undefined || body.name === null || body.name === "" ? null : nameValue(body.name);
     const draft = jsonString(body.draft, "draft");
     const authorization = text(body.authorization, "authorization", { min: 8, max: 4_000 });
+    const mediaIds = proxyMediaIds(draft);
     const siteId = `site-${uid()}`;
     const handoverId = email ? `handover-${uid()}` : null;
     const createdAt = now();
     const reservationReason = `Proxy reservation for ${siteId}`;
     if (name) {
-      const unavailable = await one<{ name: string }>(c, "SELECT name FROM names WHERE name=?", name);
+      const unavailable = await one<{ name: string }>(c, "SELECT name FROM dns_names WHERE name=?", name);
       const activeReservation = await one<{ name: string }>(c, "SELECT name FROM reserved_names WHERE name=? AND active=1", name);
       if (unavailable || activeReservation) fail(409, "Name is unavailable", "name_unavailable");
     }
+    if (mediaIds.length) {
+      const media = await all<{ id: string }>(
+        c,
+        `SELECT id FROM media
+         WHERE owner_id=? AND site_id IS NULL AND purpose IN ('photo','cover','skill','work')
+           AND id IN (${mediaIds.map(() => "?").join(",")})`,
+        creator.id,
+        ...mediaIds,
+      );
+      if (media.length !== mediaIds.length) fail(403, "Proxy media must be unassigned images uploaded by the authorized creator", "proxy_media_forbidden");
+    }
+    const mediaGuard = mediaIds.length
+      ? `AND (SELECT COUNT(*) FROM media WHERE owner_id=? AND site_id IS NULL AND purpose IN ('photo','cover','skill','work') AND id IN (${mediaIds.map(() => "?").join(",")}))=?`
+      : "";
+    const mediaGuardArgs: Array<string | number> = mediaIds.length ? [creator.id, ...mediaIds, mediaIds.length] : [];
     const statements = [
       ...(name ? [c.env.DB.prepare(
         `INSERT INTO reserved_names(name,kind,reason,active) VALUES(?,?,?,1)
@@ -1000,12 +1115,18 @@ export function registerOperations(app: App): void {
       c.env.DB.prepare(
         `INSERT INTO sites(id,user_id,manager_id,draft,draft_version,status,created_at,updated_at,authorization)
          SELECT ?,NULL,?,?,0,'proxy_pending',?,?,?
-         WHERE (? IS NULL OR EXISTS(SELECT 1 FROM reserved_names WHERE name=? AND kind='proxy_pending' AND reason=? AND active=1))`,
-      ).bind(siteId, creator.id, draft, createdAt, createdAt, authorization, name, name, reservationReason),
+         WHERE (? IS NULL OR EXISTS(SELECT 1 FROM reserved_names WHERE name=? AND kind='proxy_pending' AND reason=? AND active=1))
+         ${mediaGuard}`,
+      ).bind(siteId, creator.id, draft, createdAt, createdAt, authorization, name, name, reservationReason, ...mediaGuardArgs),
       c.env.DB.prepare(
         `INSERT INTO proxy_sites(site_id,pending_name,target_email,authorization,creator_id,created_at)
          SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM sites WHERE id=?)`,
       ).bind(siteId, name, email, authorization, creator.id, createdAt, siteId),
+      ...(mediaIds.length ? [c.env.DB.prepare(
+        `UPDATE media SET site_id=?
+         WHERE owner_id=? AND site_id IS NULL AND purpose IN ('photo','cover','skill','work')
+           AND id IN (${mediaIds.map(() => "?").join(",")})`,
+      ).bind(siteId, creator.id, ...mediaIds)] : []),
       ...(handoverId ? [c.env.DB.prepare(
         `INSERT INTO handovers(id,site_id,target_email,creator_id,status,created_at)
          SELECT ?,?,?,?,'pending',? WHERE EXISTS(SELECT 1 FROM sites WHERE id=?)`,
@@ -1027,8 +1148,12 @@ export function registerOperations(app: App): void {
 
   app.post("/api/admin/sites/:id/handover", async (c) => {
     const user = managerOrOwner(c);
+    fresh(c);
     const siteId = c.req.param("id");
-    await siteInManagerScope(c, siteId);
+    const site = await siteInManagerScope(c, siteId);
+    const proxy = await one<{ creator_id: number; consented_at: number | null }>(c, "SELECT creator_id,consented_at FROM proxy_sites WHERE site_id=?", siteId);
+    if (!proxy || proxy.consented_at !== null || site.user_id !== null) fail(409, "Only an unaccepted proxy site can be delivered by an administrator", "handover_state");
+    if (user.role === "manager" && proxy.creator_id !== user.id) fail(403, "Only the authorized proxy creator can request this handover", "scope_denied");
     const body = await input(c);
     const email = text(body.email, "email", { min: 3, max: 320 }).toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "email is invalid", "invalid_input");
@@ -1070,28 +1195,46 @@ export function registerOperations(app: App): void {
 
   app.get("/api/admin/economics", async (c) => {
     owner(c);
+    const clock = now();
     const revenue = await one<{ total: number | null }>(
       c,
       "SELECT COALESCE(SUM(p.amount),0) AS total FROM payments p LEFT JOIN payment_reversals r ON r.payment_id=p.id WHERE p.status='approved' AND r.id IS NULL",
     );
-    const expenses = await one<{ total: number | null }>(c, "SELECT COALESCE(SUM(amount),0) AS total FROM expenses");
-    const active = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM users WHERE status='active'");
-    const paid = await one<{ count: number }>(c, "SELECT COUNT(DISTINCT user_id) AS count FROM subscriptions");
-    const trials = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM users WHERE trial_until>? AND entitlement_until<=trial_until", now());
+    const [expenses, active, paid, trials, recentUsers, renewedUsers, completedTrials, successfulReferrals] = await Promise.all([
+      one<{ total: number | null }>(c, "SELECT COALESCE(SUM(amount),0) AS total FROM expenses"),
+      one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM users WHERE status='active'"),
+      one<{ count: number }>(c, "SELECT COUNT(DISTINCT s.user_id) AS count FROM subscriptions s JOIN payments p ON p.id=s.payment_id LEFT JOIN payment_reversals r ON r.payment_id=p.id WHERE p.status='approved' AND r.id IS NULL"),
+      one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM users WHERE trial_until>? AND entitlement_until<=trial_until", clock),
+      one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM users WHERE created_at>=?", clock - 30 * DAY),
+      one<{ count: number }>(c, `SELECT COUNT(*) AS count FROM (
+        SELECT s.user_id FROM subscriptions s JOIN payments p ON p.id=s.payment_id
+        LEFT JOIN payment_reversals r ON r.payment_id=p.id
+        WHERE p.status='approved' AND r.id IS NULL GROUP BY s.user_id HAVING COUNT(*)>=2
+      )`),
+      one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM users WHERE trial_until>0 AND trial_until<=?", clock),
+      one<{ count: number }>(c, `SELECT COUNT(*) AS count FROM ledger l
+        JOIN payments p ON l.reference='referral-'||p.user_id
+        LEFT JOIN payment_reversals r ON r.payment_id=p.id
+        WHERE l.kind='referral' AND p.status='approved' AND r.id IS NULL`),
+    ]);
     const expenseTotal = Number(expenses?.total ?? 0);
     const revenueTotal = Number(revenue?.total ?? 0);
     const activeCount = active?.count ?? 0;
+    const paidCount = paid?.count ?? 0;
+    const completedTrialCount = completedTrials?.count ?? 0;
+    const renewalRate = paidCount ? (renewedUsers?.count ?? 0) / paidCount : null;
+    const trialConversion = completedTrialCount ? paidCount / completedTrialCount : null;
     const metrics = {
       active_users: activeCount,
       cost_per_active_user: activeCount ? expenseTotal / activeCount : null,
       storage_usage: null,
       email_usage: null,
       request_usage: null,
-      user_growth: null,
-      renewal_rate: null,
-      trial_conversion: null,
-      successful_referrals: null,
-      acquisition_cost: null,
+      user_growth: recentUsers?.count ?? 0,
+      renewal_rate: renewalRate,
+      trial_conversion: trialConversion,
+      successful_referrals: successfulReferrals?.count ?? 0,
+      acquisition_cost: paidCount ? expenseTotal / paidCount : null,
       approved_revenue: revenueTotal,
       recorded_expenses: expenseTotal,
       operating_profitability: revenueTotal - expenseTotal,
@@ -1100,7 +1243,7 @@ export function registerOperations(app: App): void {
       metrics,
       economics: {
         activeUsers: activeCount,
-        paidUsers: paid?.count ?? 0,
+        paidUsers: paidCount,
         activeTrials: trials?.count ?? 0,
         approvedRevenue: revenueTotal,
         recordedExpenses: expenseTotal,
@@ -1109,15 +1252,17 @@ export function registerOperations(app: App): void {
         storageUsage: null,
         mailUsage: null,
         requestUsage: null,
-        renewalRate: null,
-        trialConversionRate: null,
+        userGrowthLast30Days: recentUsers?.count ?? 0,
+        renewalRate,
+        trialConversionRate: trialConversion,
+        successfulReferrals: successfulReferrals?.count ?? 0,
+        acquisitionCost: paidCount ? expenseTotal / paidCount : null,
       },
     });
   });
 
   app.post("/api/admin/expenses", async (c) => {
     const user = requireFinance(c);
-    if (user.role !== "owner") fail(403, "Only the owner can record platform expenses", "owner_required");
     const body = await input(c);
     const amount = typeof body.amount === "number" ? body.amount : Number(body.amount);
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1_000_000_000) fail(400, "amount is invalid", "invalid_input");
@@ -1128,7 +1273,7 @@ export function registerOperations(app: App): void {
     const id = `expense-${uid()}`;
     const createdAt = now();
     await run(c, "INSERT INTO expenses(id,amount,description,created_at) VALUES(?,?,?,?)", id, amount, storedDescription, createdAt);
-    await audit(c, "expense.record", `expense:${id}`, JSON.stringify({ amount, description, notes }));
+    await audit(c, "expense.record", `expense:${id}`, JSON.stringify({ amount, description, notes, delegated: user.role === "manager" }));
     return c.json({ expense: { id, amount, description, notes, createdAt, created_at: createdAt } }, 201);
   });
 
@@ -1221,7 +1366,7 @@ export function registerOperations(app: App): void {
     const user = me(c) as Actor;
     const clock = now();
     await run(c, "UPDATE conversations SET status='expired' WHERE status='active' AND last_activity<? AND (from_id=? OR to_id=?)", clock - MESSAGE_WINDOW, user.id, user.id);
-    const [requests, conversations, blocks] = await Promise.all([
+    const [requests, conversations, blocks, retention] = await Promise.all([
       all<Record<string, unknown>>(
         c,
         `SELECT r.id,r.from_id,r.to_id,r.status,r.created_at,r.decided_at,u.name AS from_name
@@ -1248,8 +1393,9 @@ export function registerOperations(app: App): void {
          FROM blocks b JOIN users u ON u.id=b.blocked_id WHERE b.user_id=? ORDER BY b.created_at DESC`,
         user.id,
       ),
+      one<{ value: string }>(c, "SELECT value FROM settings WHERE key='retention'"),
     ]);
-    return c.json({ requests, conversations, blocks });
+    return c.json({ requests, conversations, blocks, retention: parseJson(retention?.value) ?? {} });
   });
 
   app.post("/api/contact/request", async (c) => {
@@ -1281,10 +1427,26 @@ export function registerOperations(app: App): void {
     if (existing) fail(409, "A contact request is already awaiting a decision", "request_pending");
     const requestId = `contact-${uid()}`;
     const createdAt = now();
-    await c.env.DB.batch([
-      c.env.DB.prepare("INSERT INTO contact_requests(id,from_id,to_id,status,created_at) VALUES(?,?,?,?,?)").bind(requestId, user.id, recipient, "pending", createdAt),
-      c.env.DB.prepare("INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)").bind(`notification-${uid()}`, recipient, "Contact request", `C${user.id} requested permission to start a text conversation.`, createdAt),
-    ]);
+    let results: D1Change[];
+    try {
+      results = await c.env.DB.batch([
+        c.env.DB.prepare(
+          `INSERT INTO contact_requests(id,from_id,to_id,status,created_at)
+           SELECT ?,?,?,?,? WHERE NOT EXISTS(
+             SELECT 1 FROM blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)
+           )`,
+        ).bind(requestId, user.id, recipient, "pending", createdAt, user.id, recipient, recipient, user.id),
+        c.env.DB.prepare(
+          `INSERT INTO notifications(id,user_id,title,body,created_at)
+           SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM contact_requests WHERE id=? AND status='pending')`,
+        ).bind(`notification-${uid()}`, recipient, "Contact request", `C${user.id} requested permission to start a text conversation.`, createdAt, requestId),
+      ]) as D1Change[];
+    } catch {
+      if (await pairBlocked(c, user.id, recipient)) fail(403, "Contact is blocked for this pair", "blocked");
+      fail(409, "A contact request is already awaiting a decision", "request_pending");
+    }
+    if (!changed(results[0])) fail(403, "Contact is blocked for this pair", "blocked");
+    await audit(c, "contact.request", `contact:${requestId}`, JSON.stringify({ from: user.id, to: recipient }));
     return c.json({ request: { id: requestId, recipient: `C${recipient}`, status: "pending", createdAt } }, 201);
   });
 
@@ -1313,15 +1475,27 @@ export function registerOperations(app: App): void {
     }
     const conversationId = `conversation-${uid()}`;
     const statements = [
-      c.env.DB.prepare("UPDATE contact_requests SET status=?,decided_at=? WHERE id=? AND to_id=? AND status='pending'").bind(body.accept ? "accepted" : "rejected", decidedAt, requestId, user.id),
+      c.env.DB.prepare(
+        `UPDATE contact_requests SET status=?,decided_at=?
+         WHERE id=? AND to_id=? AND status='pending'
+           AND (?=0 OR NOT EXISTS(SELECT 1 FROM blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?)))`,
+      ).bind(body.accept ? "accepted" : "rejected", decidedAt, requestId, user.id, body.accept ? 1 : 0, request.from_id, request.to_id, request.to_id, request.from_id),
       ...(body.accept ? [c.env.DB.prepare(
         `INSERT INTO conversations(id,request_id,from_id,to_id,status,last_activity)
-         SELECT ?,id,from_id,to_id,'active',? FROM contact_requests WHERE id=? AND status='accepted'`,
+         SELECT ?,id,from_id,to_id,'active',? FROM contact_requests
+         WHERE id=? AND status='accepted' AND NOT EXISTS(
+           SELECT 1 FROM blocks WHERE (user_id=contact_requests.from_id AND blocked_id=contact_requests.to_id) OR (user_id=contact_requests.to_id AND blocked_id=contact_requests.from_id)
+         )`,
       ).bind(conversationId, decidedAt, requestId)] : []),
-      c.env.DB.prepare("INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)").bind(`notification-${uid()}`, request.from_id, "Contact request decided", body.accept ? "Your contact request was accepted for a 24-hour text session." : "Your contact request was not accepted.", decidedAt),
+      c.env.DB.prepare(
+        `INSERT INTO notifications(id,user_id,title,body,created_at)
+         SELECT ?,from_id,?,?,? FROM contact_requests WHERE id=? AND to_id=? AND status=? AND decided_at=?`,
+      ).bind(`notification-${uid()}`, "Contact request decided", body.accept ? "Your contact request was accepted for a 24-hour text session." : "Your contact request was not accepted.", decidedAt, requestId, user.id, body.accept ? "accepted" : "rejected", decidedAt),
     ];
     const results = await c.env.DB.batch(statements);
     if (!changed(results[0])) fail(409, "This request is no longer awaiting a decision", "request_stale");
+    if (body.accept && !changed(results[1])) fail(403, "Contact is blocked for this pair", "blocked");
+    await audit(c, "contact.decision", `contact:${requestId}`, JSON.stringify({ accept: body.accept, from: request.from_id, to: user.id }));
     return c.json({ requestId, status: body.accept ? "accepted" : "rejected", conversationId: body.accept ? conversationId : null });
   });
 
@@ -1332,6 +1506,7 @@ export function registerOperations(app: App): void {
     await run(c, "UPDATE conversations SET status='expired' WHERE id=? AND status='active' AND last_activity<?", id, clock - MESSAGE_WINDOW);
     const conversation = await one<Record<string, unknown>>(c, "SELECT * FROM conversations WHERE id=? AND (from_id=? OR to_id=?)", id, user.id, user.id);
     if (!conversation) fail(404, "Conversation not found", "not_found");
+    if (conversation.status === "expired") fail(410, "This conversation has expired; message history is unavailable", "conversation_expired");
     const messages = await all<Record<string, unknown>>(c, "SELECT id,conversation_id,sender_id,body,created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC", id);
     return c.json({ conversation, messages });
   });
@@ -1353,7 +1528,11 @@ export function registerOperations(app: App): void {
     if (await pairBlocked(c, user.id, other)) fail(403, "Messaging is blocked for this pair", "blocked");
     const messageId = `message-${uid()}`;
     const results = await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE conversations SET last_activity=? WHERE id=? AND status='active' AND last_activity>=?").bind(clock, id, clock - MESSAGE_WINDOW),
+      c.env.DB.prepare(
+        `UPDATE conversations SET last_activity=?
+         WHERE id=? AND status='active' AND last_activity>=?
+           AND NOT EXISTS(SELECT 1 FROM blocks WHERE (user_id=? AND blocked_id=?) OR (user_id=? AND blocked_id=?))`,
+      ).bind(clock, id, clock - MESSAGE_WINDOW, user.id, other, other, user.id),
       c.env.DB.prepare(
         `INSERT INTO messages(id,conversation_id,sender_id,body,created_at)
          SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND status='active' AND last_activity=?)`,
@@ -1368,6 +1547,7 @@ export function registerOperations(app: App): void {
     const id = c.req.param("id");
     const result = await run(c, "UPDATE conversations SET status='ended' WHERE id=? AND status='active' AND (from_id=? OR to_id=?)", id, user.id, user.id);
     if (!changed(result)) fail(409, "This conversation is not active", "conversation_ended");
+    await audit(c, "conversation.end", `conversation:${id}`, JSON.stringify({ actor: user.id }));
     return c.json({ conversationId: id, status: "ended" });
   });
 
@@ -1384,6 +1564,7 @@ export function registerOperations(app: App): void {
       c.env.DB.prepare(`UPDATE conversations SET status='ended' WHERE status='active' AND ${contactPairSql()}`).bind(user.id, blocked, blocked, user.id),
       c.env.DB.prepare(`UPDATE contact_requests SET status='cancelled',decided_at=? WHERE status='pending' AND ${contactPairSql()}`).bind(createdAt, user.id, blocked, blocked, user.id),
     ]);
+    await audit(c, "conversation.block", `user:${blocked}`, JSON.stringify({ actor: user.id }));
     return c.json({ block: { userId: user.id, blockedId: blocked, createdAt }, conversationsEnded: true });
   });
 

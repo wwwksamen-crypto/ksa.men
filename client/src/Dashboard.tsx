@@ -102,6 +102,7 @@ type Site = {
   status?: string;
   published_version?: number;
   analytics?: unknown;
+  lock?: { enabled?: boolean; message?: string };
   [key: string]: unknown;
 };
 
@@ -142,11 +143,28 @@ type Notification = {
   created_at?: number;
 };
 
-type QuickLink = { id: string; url?: string; expires_at?: number; revoked?: boolean | number; [key: string]: unknown };
+type QuickLink = { id: string; url?: string; expires_at?: number; revoked?: boolean | number; fields?: string[]; [key: string]: unknown };
 type UploadResult = { id: string; url: string };
-type Conversation = { id: string; status?: string; last_activity?: number; other_user?: { id?: number; name?: string }; [key: string]: unknown };
+type Conversation = {
+  id: string;
+  status?: string;
+  last_activity?: number;
+  other_user?: { id?: number; name?: string };
+  other_id?: number | string;
+  other_name?: string;
+  [key: string]: unknown;
+};
 type Message = { id: string; body: string; sender_id: number; created_at: number };
 type ConversationDetail = Conversation & { messages?: Message[] };
+type QuickMode = 'professional' | 'business' | 'quick';
+type Quality = { score: number; recommendations: string[]; completed: string[] };
+type IdentityInsights = {
+  siteId?: string | null;
+  periodDays?: number;
+  events?: { visits?: number; contactClicks?: number; vcardDownloads?: number; qrInteractions?: number; total?: number };
+  activity?: { last7Days?: number; last30Days?: number };
+  quality?: Quality;
+};
 
 const tabs: Array<{ key: Tab; ar: string; en: string; icon: typeof PencilLine }> = [
   { key: 'editor', ar: 'المحرر', en: 'Editor', icon: PencilLine },
@@ -223,16 +241,72 @@ function formatDate(value?: number, locale = 'ar-SA') {
 function createIdempotencyKey() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `dash-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
+function routeParams() {
+  const query = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  return { tab: query.get('tab') ?? hash.get('tab'), site: query.get('site') ?? hash.get('site') };
+}
 function getInitialTab(): Tab {
-  const tab = new URLSearchParams(window.location.search).get('tab') as Tab | null;
+  const tab = routeParams().tab as Tab | null;
   return tabs.some((item) => item.key === tab) ? tab! : 'editor';
+}
+function requestedSiteId() {
+  const site = routeParams().site?.trim() ?? '';
+  return site.length > 0 && site.length <= 128 ? site : '';
 }
 function socialHost(url: string) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
+function numericId(value: unknown): number | undefined {
+  const text = String(value ?? '').replace(/^C/i, '');
+  const number = Number(text);
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+function normalizeConversation(value: Conversation): Conversation {
+  const raw = value as Record<string, unknown>;
+  const other = raw.other_user && typeof raw.other_user === 'object' ? raw.other_user as Record<string, unknown> : {};
+  const id = numericId(other.id ?? raw.other_id ?? raw.otherId);
+  const name = asText(other.name ?? raw.other_name ?? raw.otherName);
+  return {
+    ...value,
+    id: asText(raw.id),
+    status: asText(raw.status),
+    last_activity: Number(raw.last_activity ?? raw.lastActivity ?? 0),
+    other_user: { id, name },
+  };
+}
+function normalizeMessage(value: Message): Message {
+  const raw = value as unknown as Record<string, unknown>;
+  return { id: asText(raw.id), body: asText(raw.body), sender_id: Number(raw.sender_id ?? raw.senderId), created_at: Number(raw.created_at ?? raw.createdAt) };
+}
+function qualityCopy(value: string, tr: (ar: string, en: string) => string) {
+  const copy: Record<string, [string, string]> = {
+    'professional identity': ['الهوية المهنية', 'Professional identity'],
+    'professional bio': ['النبذة المهنية', 'Professional bio'],
+    'contact method': ['وسيلة التواصل', 'Contact method'],
+    location: ['الموقع', 'Location'],
+    experience: ['الخبرات', 'Experience'],
+    'education or training': ['التعليم أو التدريب', 'Education or training'],
+    skills: ['المهارات', 'Skills'],
+    'work evidence': ['إثبات المهارات أو نماذج الأعمال', 'Work evidence'],
+    'share links': ['روابط المشاركة', 'Share links'],
+    'visual identity': ['الهوية البصرية', 'Visual identity'],
+    'Add a clear professional title.': ['أضف مسمى مهنياً واضحاً.', 'Add a clear professional title.'],
+    'Write a concise professional bio of at least a few sentences.': ['اكتب نبذة مهنية موجزة من عدة جمل.', 'Write a concise professional bio of at least a few sentences.'],
+    'Add at least one contact method.': ['أضف وسيلة تواصل واحدة على الأقل.', 'Add at least one contact method.'],
+    'Add city and country.': ['أضف المدينة والدولة.', 'Add city and country.'],
+    'Add at least one professional experience.': ['أضف خبرة مهنية واحدة على الأقل.', 'Add at least one professional experience.'],
+    'Add education or training details.': ['أضف تفاصيل التعليم أو التدريب.', 'Add education or training details.'],
+    'List at least three skills.': ['أضف ثلاث مهارات على الأقل.', 'List at least three skills.'],
+    'Add skill or work samples.': ['أضف إثبات مهارة أو نموذج عمل.', 'Add skill or work samples.'],
+    'Add a professional social or custom link.': ['أضف رابطاً مهنياً أو زراً مخصصاً.', 'Add a professional social or custom link.'],
+    'Add a profile photo or cover.': ['أضف صورة شخصية أو غلافاً.', 'Add a profile photo or cover.'],
+  };
+  return copy[value] ? tr(...copy[value]) : value;
+}
 
 export default function Dashboard() {
-  const { user, lang, t, refresh, notify } = useApp();
+  const { user, lang, t, notify } = useApp();
   const [activeTab, setActiveTab] = useState<Tab>(getInitialTab);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -263,6 +337,12 @@ export default function Dashboard() {
   const [paymentForm, setPaymentForm] = useState({ amount: '', days: '', notes: '', receiptId: '', receiptUrl: '' });
   const [quickFields, setQuickFields] = useState<Record<string, boolean>>({ name: true, title: true, whatsapp: false, email: false, site: true });
   const [quickDays, setQuickDays] = useState('7');
+  const [quickMode, setQuickMode] = useState<QuickMode>('professional');
+  const [exportLanguage, setExportLanguage] = useState<'ar' | 'en'>(lang);
+  const [identityInsights, setIdentityInsights] = useState<IdentityInsights | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState('');
+  const [pinConfirm, setPinConfirm] = useState('');
 
   const draftRef = useRef(draft);
   const siteIdRef = useRef<string | null>(null);
@@ -283,7 +363,10 @@ export default function Dashboard() {
       const receivedServices = asArray<Service>(data.services);
       if (receivedServices.length) setServices(receivedServices);
       const candidates = asArray<Site>(data.sites);
-      if (!siteIdRef.current && candidates[0]) await openSite(candidates[0]);
+      const explicitSite = requestedSiteId();
+      // A delegated editor link is always resolved by the server route; it is never fabricated from URL data.
+      if (!siteIdRef.current && explicitSite) await openSite({ id: explicitSite });
+      else if (!siteIdRef.current && candidates[0]) await openSite(candidates[0]);
     } catch (error) {
       setLoadError(errorMessage(error));
     } finally {
@@ -302,8 +385,10 @@ export default function Dashboard() {
   }, []);
 
   const loadMessages = useCallback(async () => {
-    try { setMessagesData(await api<Record<string, unknown>>('/api/messages')); }
-    catch (error) { if (activeTab === 'messages') notify(errorMessage(error)); }
+    try {
+      const response = await api<Record<string, unknown>>('/api/messages');
+      setMessagesData({ ...response, conversations: asArray<Conversation>(response.conversations).map(normalizeConversation) });
+    } catch (error) { if (activeTab === 'messages') notify(errorMessage(error)); }
   }, [activeTab, notify]);
 
   const openSite = useCallback(async (summary: Site) => {
@@ -312,6 +397,7 @@ export default function Dashboard() {
       const response = await api<Site | { site?: Site }>(`/api/sites/${encodeURIComponent(summary.id)}`);
       const site = ('site' in response && response.site ? response.site : response) as Site;
       setActiveSite(site);
+      setLockForm({ enabled: Boolean(site.lock?.enabled), password: '', message: asText(site.lock?.message) });
       const nextDraft = parseDraft(site.draft);
       setDraft(nextDraft);
       draftRef.current = nextDraft;
@@ -320,22 +406,48 @@ export default function Dashboard() {
       dirtyRef.current = false;
       setSaveState('saved');
     } catch (error) {
-      setActiveSite(summary);
-      const nextDraft = parseDraft(summary.draft);
-      setDraft(nextDraft);
-      draftRef.current = nextDraft;
-      versionRef.current = Number(summary.draft_version ?? summary.version ?? 0);
+      // Dashboard summaries can offer a safe local fallback. A delegated URL has no draft and must not become a fake editable site.
+      if (summary.draft !== undefined) {
+        setActiveSite(summary);
+        setLockForm({ enabled: Boolean(summary.lock?.enabled), password: '', message: asText(summary.lock?.message) });
+        const nextDraft = parseDraft(summary.draft);
+        setDraft(nextDraft);
+        draftRef.current = nextDraft;
+        versionRef.current = Number(summary.draft_version ?? summary.version ?? 0);
+      } else {
+        siteIdRef.current = null;
+        setActiveSite(null);
+        const nextDraft = emptyDraft();
+        setDraft(nextDraft);
+        draftRef.current = nextDraft;
+        versionRef.current = 0;
+        dirtyRef.current = false;
+        setSaveState('saved');
+      }
       notify(errorMessage(error));
     }
   }, [notify]);
 
   useEffect(() => { void loadDashboard(); void loadServices(); }, [loadDashboard, loadServices]);
   useEffect(() => { if (activeTab === 'messages') void loadMessages(); }, [activeTab, loadMessages]);
+  const loadIdentityInsights = useCallback(async () => {
+    if (!activeSite) { setIdentityInsights(null); return; }
+    setInsightsLoading(true);
+    setInsightsError('');
+    try { setIdentityInsights(await api<IdentityInsights>('/api/analytics')); }
+    catch (error) { setIdentityInsights(null); setInsightsError(errorMessage(error)); }
+    finally { setInsightsLoading(false); }
+  }, [activeSite?.id]);
+  useEffect(() => { if (activeTab === 'services' && activeSite) void loadIdentityInsights(); }, [activeTab, activeSite?.id, loadIdentityInsights]);
   useEffect(() => {
-    const onPopState = () => setActiveTab(getInitialTab());
+    const onPopState = () => {
+      setActiveTab(getInitialTab());
+      const explicitSite = requestedSiteId();
+      if (explicitSite && explicitSite !== siteIdRef.current) void openSite({ id: explicitSite });
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, []);
+  }, [openSite]);
 
   const changeTab = (tab: Tab) => {
     setActiveTab(tab);
@@ -489,7 +601,7 @@ export default function Dashboard() {
   const translateDraft = async () => {
     if (!activeSite || !translationConsent) return;
     try {
-      const response = await api<{ draft?: ProfileDraft; site?: Site; translations?: unknown }>(`/api/translate`, { method: 'POST', body: JSON.stringify({ siteId: activeSite.id, target: 'en', consent: true }) });
+      const response = await api<{ draft?: ProfileDraft; site?: Site; translations?: unknown; version?: number; draft_version?: number }>(`/api/translate`, { method: 'POST', body: JSON.stringify({ siteId: activeSite.id, target: 'en', consent: true }) });
       const received = response.draft ?? response.site?.draft;
       if (!received) {
         await openSite(activeSite);
@@ -498,11 +610,24 @@ export default function Dashboard() {
       } else {
         const nextDraft = parseDraft(received);
         if (!nextDraft.translations?.en) throw new Error(tr('لم تتضمن الاستجابة الترجمة المحفوظة.', 'The response did not include saved translations.'));
-        setDraft(nextDraft); draftRef.current = nextDraft; dirtyRef.current = false; setSaveState('saved');
+        const nextVersion = Number(response.version ?? response.draft_version ?? response.site?.draft_version ?? response.site?.version);
+        if (Number.isFinite(nextVersion) && nextVersion >= 0) versionRef.current = nextVersion;
+        setActiveSite((current) => current ? { ...current, ...(response.site ?? {}), draft_version: Number.isFinite(nextVersion) ? nextVersion : current.draft_version } : current);
+        setDraft(nextDraft);
+        draftRef.current = nextDraft;
+        dirtyRef.current = false;
+        setSaveState('saved');
       }
       notify(tr('تم التحقق من حفظ الترجمة الإنجليزية في المسودة.', 'English translation was verified in the draft.'));
     } catch (error) { notify(errorMessage(error)); }
   };
+
+  const updateSavedTranslation = useCallback((patch: Partial<ProfileDraft>) => {
+    changeDraft((current) => {
+      const saved = parseDraft(current.translations?.en ?? current);
+      return { ...current, translations: { ...current.translations, en: { ...saved, ...patch } } };
+    });
+  }, [changeDraft]);
 
   const createQuickLink = async () => {
     if (!activeSite) return;
@@ -535,8 +660,11 @@ export default function Dashboard() {
 
   const openConversation = async (conversation: Conversation) => {
     try {
-      const response = await api<ConversationDetail | { conversation?: ConversationDetail }>(`/api/conversations/${encodeURIComponent(conversation.id)}`);
-      setSelectedConversation(('conversation' in response && response.conversation ? response.conversation : response) as ConversationDetail);
+      const response = await api<ConversationDetail | { conversation?: Conversation; messages?: Message[] }>(`/api/conversations/${encodeURIComponent(conversation.id)}`);
+      const wrapped = response as { conversation?: Conversation; messages?: Message[] };
+      const detail = wrapped.conversation ?? response as ConversationDetail;
+      const messages = wrapped.conversation ? wrapped.messages : (detail as ConversationDetail).messages;
+      setSelectedConversation({ ...normalizeConversation(detail), messages: asArray<Message>(messages).map(normalizeMessage) });
     } catch (error) { notify(errorMessage(error)); }
   };
 
@@ -597,8 +725,13 @@ export default function Dashboard() {
 
   const savePin = async () => {
     if (!/^\d{6}$/.test(pin)) { notify(tr('أدخل PIN من ستة أرقام.', 'Enter a 6-digit PIN.')); return; }
-    try { await api('/api/auth/pin', { method: 'POST', body: JSON.stringify({ pin }) }); setPinValue(''); notify(tr('تم تعيين PIN لهذا الجهاز الموثوق بعد التحقق الحديث.', 'PIN set for this trusted device after fresh verification.')); }
-    catch (error) { notify(errorMessage(error)); }
+    if (pin !== pinConfirm) { notify(tr('لا يتطابق تأكيد PIN.', 'PIN confirmation does not match.')); return; }
+    try {
+      await api('/api/auth/pin', { method: 'POST', body: JSON.stringify({ pin }) });
+      setPinValue('');
+      setPinConfirm('');
+      notify(tr('تم حفظ PIN للجهاز الموثوق بعد التحقق الحديث.', 'PIN was saved for this trusted device after fresh verification.'));
+    } catch (error) { notify(errorMessage(error)); }
   };
 
   const requestDeletion = async () => {
@@ -646,12 +779,18 @@ export default function Dashboard() {
     const signals = [draft.name, draft.title, draft.bio, draft.city, draft.photo, draft.experience.length, draft.skills.length, draft.languages.length, draft.socials.length, draft.workImages.length];
     return Math.round((signals.filter(Boolean).length / signals.length) * 100);
   }, [draft]);
-  const qualitySignals = useMemo(() => [
-    [Boolean(draft.title && draft.bio.length >= 80), tr('تعريف مهني واضح ونبذة كافية', 'Clear professional definition and sufficient bio')],
-    [Boolean(draft.email || draft.phone || draft.whatsapp), tr('وسيلة اتصال واحدة على الأقل', 'At least one contact channel')],
-    [Boolean(draft.skills.length && draft.skillImages.length), tr('مهارات مع إثبات مرئي', 'Skills with visual evidence')],
-    [Boolean(draft.experience.length && draft.workImages.length), tr('خبرة ونماذج أعمال منظمة', 'Organized experience and work samples')],
-  ], [draft, tr]);
+  const isScopedProxySite = Boolean(activeSite && numericId(activeSite.userId) !== numericId(user?.id));
+  const insightsMatchActiveSite = Boolean(activeSite && identityInsights?.siteId === activeSite.id);
+  const serverQuality = insightsMatchActiveSite ? identityInsights?.quality : undefined;
+  const presenceMeasurements = insightsMatchActiveSite && identityInsights?.events
+    ? Object.entries({
+      visits: Number(identityInsights.events.visits ?? 0),
+      contactClicks: Number(identityInsights.events.contactClicks ?? 0),
+      vcardDownloads: Number(identityInsights.events.vcardDownloads ?? 0),
+      qrInteractions: Number(identityInsights.events.qrInteractions ?? 0),
+      last30Days: Number(identityInsights.activity?.last30Days ?? identityInsights.events.total ?? 0),
+    })
+    : analyticsEntries;
 
   const statusText: Record<SaveState, [string, string]> = {
     saved: ['محفوظ', 'Saved'], unsaved: ['تغييرات غير محفوظة', 'Unsaved changes'], saving: ['جارٍ الحفظ...', 'Saving...'], error: ['تعذر الحفظ', 'Save failed'],
@@ -690,7 +829,7 @@ export default function Dashboard() {
       {activeTab === 'editor' && <section className="dashboard-editor">
         <div className="dashboard-editor-top card">
           <div className="dashboard-site-row">
-            <div><p className="dashboard-kicker"><PanelTop size={15}/>{tr('محرر الهوية الرقمية', 'Digital identity editor')}</p><h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2></div>
+            <div><p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير مفوّض ضمن صلاحيات حسابك', 'Delegated editing within your account scope') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p><h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2></div>
             {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
               {asArray<Site>(dashboard?.sites).map((site) => <option key={site.id} value={site.id}>{site.name || site.id}</option>)}
             </select>}
@@ -736,17 +875,18 @@ export default function Dashboard() {
       {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} redeemDays={redeemDays} setRedeemDays={setRedeemDays} onTransfer={doTransfer} onRedeem={redeem} onCopyReferral={copyReferral} locale={locale} tr={tr} />}
 
       {activeTab === 'services' && <section className="dashboard-services stack">
-        <section className="dashboard-quality-grid">
-          <article className="card dashboard-completion"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('اكتمال الهوية', 'Identity completeness')}</h2></div><strong>{profileCompletion}%</strong></div><div className="dashboard-progress"><span style={{ width: `${profileCompletion}%` }}/></div><p className="muted">{tr('النسبة مستندة إلى الحقول المملوءة في مسودتك الحالية، وليست تقييماً مهنياً أو ضماناً للفرص.', 'This figure is based on populated fields in the current draft; it is not a professional evaluation or opportunity guarantee.')}</p></article>
-          <article className="card dashboard-quality"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('جودة الهوية', 'Identity quality')}</h2></div></div><ul>{qualitySignals.map(([met, label]) => <li key={String(label)} className={met ? 'is-ready' : ''}>{met ? <Check size={16}/> : <CircleHelp size={16}/>}<span>{label}</span></li>)}</ul></article>
+        <section className="dashboard-quality-grid dashboard-quality-grid--three">
+          <article className="card dashboard-completion"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('اكتمال الهوية', 'Identity completeness')}</h2></div><strong>{profileCompletion}%</strong></div><div className="dashboard-progress"><span style={{ width: `${profileCompletion}%` }}/></div><p className="muted">{tr('مساعد التحرير يقيس الحقول المملوءة في مسودتك الحالية ويقودك للخطوة التالية.', 'The editing assistant measures populated fields in your current draft and guides your next step.')}</p></article>
+          <article className="card dashboard-quality"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('جودة الهوية', 'Identity quality')}</h2></div><button className="dashboard-icon-button" onClick={() => void loadIdentityInsights()} disabled={insightsLoading} aria-label={tr('تحديث تقييم الجودة', 'Refresh quality assessment')}><RefreshCw className={insightsLoading ? 'spin' : ''} size={16}/></button></div>{insightsError ? <p className="dashboard-error">{insightsError}</p> : serverQuality ? <><div className="dashboard-quality-score"><strong>{serverQuality.score}%</strong><span>{tr('تقييم خادمي للمسودة', 'Server-assessed draft')}</span></div><ul>{serverQuality.completed.map((item) => <li className="is-ready" key={item}><Check size={16}/><span>{qualityCopy(item, tr)}</span></li>)}{serverQuality.recommendations.map((item) => <li key={item}><CircleHelp size={16}/><span>{qualityCopy(item, tr)}</span></li>)}</ul></> : <EmptyInline text={insightsLoading ? tr('نحدّث التقييم من الخادم…', 'Refreshing the server assessment…') : tr('لا تتوفر نتيجة جودة معتمدة للموقع المحدد.', 'No server-approved quality result is available for the selected site.')} />}</article>
+          <article className="card dashboard-opportunity"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('مؤشر الفرص', 'Opportunity indicator')}</h2></div></div>{serverQuality ? <><strong>{serverQuality.score}%</strong><div className="dashboard-progress"><span style={{ width: `${serverQuality.score}%` }}/></div><p className="muted">{tr('مؤشر إرشادي لجاهزية ملفك مبني على تقييم الجودة الخادمي؛ لا يضمن وظيفة أو نتيجة خارج المنصة.', 'A guidance signal for profile readiness based on the server quality assessment; it does not guarantee a job or external outcome.')}</p></> : <EmptyInline text={tr('يظهر عند توفر تقييم الجودة الفعلي.', 'Shown when a live quality assessment is available.')} />}</article>
         </section>
-        <section className="card"><div className="dashboard-section-heading"><div><Languages size={18}/><h2>{tr('الترجمة المحفوظة', 'Saved translation')}</h2></div></div><p className="muted">{tr('بموافقتك، يُرسل محتوى مسودتك إلى خدمة الترجمة المهيأة من المنصة لحفظ نسخة إنجليزية قابلة للتعديل. لن ندّعي نجاحها ما لم تعُد المسودة المترجمة من الخادم.', 'With your consent, your draft content is sent to the platform-configured translation service to save an editable English version. Success is only shown when the translated draft returns from the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)} />{tr('أوافق على معالجة محتوى مسودتي لترجمته إلى الإنجليزية.', 'I consent to processing my draft content for English translation.')}</label><button className="button" disabled={!activeSite || !translationConsent} onClick={() => void translateDraft()}><Languages size={17}/>{tr('ترجمة وحفظ الإنجليزية', 'Translate and save English')}</button></section>
-        <section className="card"><div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('التصديرات الفعلية', 'Live exports')}</h2></div></div><p className="muted">{tr('تنشئ هذه الروابط التصدير من البيانات الفعلية المخزنة. لا تعرض نتائج ثابتة أو نماذج وهمية.', 'These links generate exports from the stored data. They do not display static or fabricated samples.')}</p><div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite?.id || '')}&lang=${lang}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('سيرة ATS', 'ATS résumé') : kind.toUpperCase()}<ExternalLink size={13}/></a>)}</div></section>
+        <section className="card dashboard-translation"><div className="dashboard-section-heading"><div><Languages size={18}/><h2>{tr('الترجمة المحفوظة', 'Saved translation')}</h2></div>{draft.translations?.en && <span className="dashboard-status">{tr('الإنجليزية محفوظة', 'English saved')}</span>}</div>{!draft.translations?.en ? <><p className="muted">{tr('بموافقتك، يُرسل محتوى مسودتك إلى خدمة الترجمة المهيأة من المنصة لحفظ نسخة إنجليزية قابلة للتعديل. لن ندّعي نجاحها ما لم تعُد المسودة المترجمة من الخادم.', 'With your consent, your draft content is sent to the platform-configured translation service to save an editable English version. Success is only shown when the translated draft returns from the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)} />{tr('أوافق على معالجة محتوى مسودتي لترجمته إلى الإنجليزية.', 'I consent to processing my draft content for English translation.')}</label><button className="button" disabled={!activeSite || !translationConsent} onClick={() => void translateDraft()}><Languages size={17}/>{tr('ترجمة وحفظ الإنجليزية', 'Translate and save English')}</button></> : <TranslationEditor translation={parseDraft(draft.translations.en)} onChange={updateSavedTranslation} tr={tr} />}</section>
+        <section className="card dashboard-exports"><div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('التصديرات الفعلية', 'Live exports')}</h2></div></div><p className="muted">{tr('اختَر مصدر التصدير. النسخة الإنجليزية لا تتاح هنا إلا بعد حفظها وتظل قابلة للتعديل أعلاه.', 'Choose an export source. English is available here only after it has been saved and remains editable above.')}</p><div className="dashboard-export-language" role="group" aria-label={tr('لغة التصدير', 'Export language')}><button className={`button button--quiet ${exportLanguage === 'ar' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'ar'} onClick={() => setExportLanguage('ar')}>العربية</button><button className={`button button--quiet ${exportLanguage === 'en' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'en'} onClick={() => setExportLanguage('en')}>English {draft.translations?.en ? <Check size={15}/> : <Lock size={15}/>}</button></div><div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => activeSite && (exportLanguage === 'ar' || draft.translations?.en) ? <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite.id)}&lang=${exportLanguage}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('سيرة ATS', 'ATS résumé') : kind === 'profile' ? tr('PDF تعريفي', 'Identity PDF') : kind.toUpperCase()}<ExternalLink size={13}/></a> : <span className="button button--quiet dashboard-export-disabled" key={kind}><Lock size={16}/>{tr('احفظ الترجمة أولاً', 'Save translation first')}</span>)}</div></section>
         <section className="dashboard-services-list card"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('إتاحة الخدمات', 'Service availability')}</h2></div><button className="button button--quiet" onClick={() => void loadServices()}><RefreshCw size={15}/>{tr('تحديث', 'Refresh')}</button></div>{services.length ? <div className="dashboard-service-grid">{services.map((service) => { const enabled = Boolean(service.enabled); const entitled = service.entitled !== false; return <article key={service.key} className={!enabled || !entitled ? 'is-unavailable' : ''}><div><strong>{lang === 'ar' ? service.name_ar || service.key : service.name_en || service.key}</strong><small>{!enabled ? tr('معلّقة على مستوى المنصة', 'Suspended platform-wide') : !entitled ? tr('تتطلب استحقاقاً', 'Entitlement required') : tr('متاحة لحسابك', 'Available to your account')}</small></div><span>{enabled && entitled ? <Check size={17}/> : <Lock size={16}/>}</span></article>; })}</div> : <EmptyInline text={tr('لا توجد حالة خدمات مؤكدة من الخادم حالياً.', 'No server-confirmed service status is available yet.')} />}</section>
-        <section className="dashboard-insights-grid"><article className="card"><div className="dashboard-section-heading"><div><BookOpen size={18}/><h2>{tr('قياسات الحضور', 'Presence measurements')}</h2></div></div>{analyticsEntries.length ? <dl className="dashboard-metrics">{analyticsEntries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'number' ? value.toLocaleString(locale) : String(value)}</dd></div>)}</dl> : <EmptyInline text={tr('لا توجد قياسات مسجلة بعد. لا نعرض تقديرات كأنها قياسات.', 'No measurements are recorded yet. Estimates are not shown as measurements.')} />}</article><QuickLinkPanel fields={quickFields} setFields={setQuickFields} days={quickDays} setDays={setQuickDays} activeLink={quickLink} existing={existingQuickLinks} onCreate={createQuickLink} onRevoke={revokeQuickLink} tr={tr} /></section>
+        <section className="dashboard-insights-grid"><article className="card"><div className="dashboard-section-heading"><div><BookOpen size={18}/><h2>{tr('قياسات الحضور', 'Presence measurements')}</h2></div></div>{presenceMeasurements.length ? <dl className="dashboard-metrics">{presenceMeasurements.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'number' ? value.toLocaleString(locale) : String(value)}</dd></div>)}</dl> : <EmptyInline text={tr('لا توجد قياسات مسجلة بعد. لا نعرض تقديرات كأنها قياسات.', 'No measurements are recorded yet. Estimates are not shown as measurements.')} />}</article><QuickLinkPanel mode={quickMode} setMode={setQuickMode} fields={quickFields} setFields={setQuickFields} days={quickDays} setDays={setQuickDays} activeLink={quickLink} existing={existingQuickLinks} onCreate={createQuickLink} onRevoke={revokeQuickLink} tr={tr} /></section>
       </section>}
 
-      {activeTab === 'messages' && <MessagesPanel tr={tr} requests={requests} conversations={conversations} selected={selectedConversation} recipient={messageRecipient} setRecipient={setMessageRecipient} body={messageBody} setBody={setMessageBody} onRequest={requestContact} onDecision={decideContact} onOpen={openConversation} onSend={sendMessage} onEnd={endConversation} onBlock={blockConversationUser} onReport={reportConversation} expired={sessionExpired} locale={locale} />}
+      {activeTab === 'messages' && <MessagesPanel tr={tr} userId={numericId(user?.id)} requests={requests} blocks={asArray<Record<string, unknown>>(messagesData?.blocks)} conversations={conversations} selected={selectedConversation} recipient={messageRecipient} setRecipient={setMessageRecipient} body={messageBody} setBody={setMessageBody} onRequest={requestContact} onDecision={decideContact} onOpen={openConversation} onSend={sendMessage} onEmoji={(emoji) => setMessageBody((current) => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${emoji}`.slice(0, 1_000))} onEnd={endConversation} onBlock={blockConversationUser} onReport={reportConversation} expired={sessionExpired} locale={locale} />}
 
       {activeTab === 'subscription' && <section className="dashboard-subscription stack">
         <section className="card dashboard-entitlement"><div><p className="dashboard-kicker"><CreditCard size={15}/>{tr('الاستحقاق', 'Entitlement')}</p><h2>{tr('التجربة والاشتراك', 'Trial and subscription')}</h2><p className="muted">{tr('يبقى موقعك الأساسي وبياناته وQR متاحين بعد انتهاء التجربة ما لم تعلّقه الإدارة. الخدمات الإضافية تتبع الاستحقاق الفعلي.', 'Your core site, data, and QR remain available after trial expiration unless administration suspends it. Additional services follow actual entitlement.')}</p></div><dl><div><dt>{tr('نهاية التجربة', 'Trial end')}</dt><dd>{formatDate(Number(user?.trial_until), locale)}</dd></div><div><dt>{tr('نهاية الاستحقاق', 'Entitlement end')}</dt><dd>{formatDate(Number(user?.entitlement_until), locale)}</dd></div></dl></section>
@@ -756,7 +896,7 @@ export default function Dashboard() {
 
       {activeTab === 'settings' && <section className="dashboard-settings stack">
         <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
-        <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div></div><p className="muted">{tr('PIN المكوّن من ستة أرقام مخصص للدخول السريع على جهاز موثوق فقط. تعيينه يتطلب تحققاً حديثاً من الخادم.', 'A six-digit PIN is only for quick entry on a trusted device. Setting it requires fresh server verification.')}</p><div className="dashboard-inline-form"><input className="field" inputMode="numeric" maxLength={6} autoComplete="one-time-code" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('تعيين PIN', 'Set PIN')}</button></div></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
         <section className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('نقل الاسم المميز', 'Distinctive name transfer')}</h2></div></div><p className="muted">{tr('يُنقل الاسم فقط؛ لا تنتقل المسودة أو المحتوى أو الصور أو روابط QR تلقائياً، وقد تتأثر الروابط القديمة.', 'Only the name transfers. Draft, content, images, and QR links do not transfer automatically, and old links may be affected.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الاسم المملوك', 'Owned name')}</span><input className="field" value={nameTransfer.name} onChange={(event) => setNameTransfer({ ...nameTransfer, name: event.target.value })}/></label><label><span>{tr('المستفيد (C# أو اسم)', 'Recipient (C# or name)')}</span><input className="field" value={nameTransfer.recipient} onChange={(event) => setNameTransfer({ ...nameTransfer, recipient: event.target.value })}/></label></div><label className="dashboard-check"><input type="checkbox" checked={nameTransfer.confirmed} onChange={(event) => setNameTransfer({ ...nameTransfer, confirmed: event.target.checked })}/>{tr('أفهم أثر النقل وفصل الاسم عن بيانات الموقع.', 'I understand the transfer consequences and separation from site data.')}</label><button className="button" disabled={!nameTransfer.confirmed} onClick={() => void beginNameTransfer()}><ArrowLeftRight size={16}/>{tr('إنشاء طلب نقل', 'Create transfer request')}</button>{pendingTransfers.length > 0 && <div className="dashboard-pending-list">{pendingTransfers.map((transfer, index) => <div key={String(transfer.id ?? index)}><span>{String(transfer.name ?? tr('اسم مميز', 'Distinctive name'))}</span><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(transfer.id))}>{tr('قبول النقل', 'Accept transfer')}</button></div>)}</div>}</section>
         {handovers.length > 0 && <section className="card"><div className="dashboard-section-heading"><div><UsersRound size={18}/><h2>{tr('تسليمات بانتظار قبولك', 'Handovers awaiting your acceptance')}</h2></div></div>{handovers.map((handover, index) => <div className="dashboard-history-row" key={String(handover.id ?? index)}><p>{String(handover.site_id ?? '')}</p><time>{formatDate(Number(handover.created_at), locale)}</time><button className="button button--quiet" onClick={() => void acceptHandover(String(handover.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}</section>}
         <section className="card dashboard-danger"><div className="dashboard-section-heading"><div><Trash2 size={18}/><h2>{tr('طلب حذف الحساب والبيانات', 'Request account and data deletion')}</h2></div></div><p>{tr('لا يحذف هذا الزر بياناتك فوراً. يرسل طلباً موثقاً للمراجعة والمعالجة وفق السياسة.', 'This does not immediately erase your data. It submits a documented request for review and handling under policy.')}</p><textarea className="field" rows={3} value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} placeholder={tr('سبب اختياري لطلب الحذف', 'Optional deletion reason')}/><label className="dashboard-check"><input type="checkbox" checked={deletionConfirmed} onChange={(event) => setDeletionConfirmed(event.target.checked)}/>{tr('أفهم أن الطلب يحتاج مراجعة ولا يعني الحذف الفوري.', 'I understand the request needs review and does not mean immediate deletion.')}</label><button className="button button--danger" disabled={!deletionConfirmed} onClick={() => void requestDeletion()}><Trash2 size={16}/>{tr('إرسال طلب الحذف', 'Submit deletion request')}</button></section>
@@ -794,8 +934,40 @@ function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hi
 function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]]; const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] }); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div><label><span>{tr('طلب إعادة توجيه خارجي', 'External redirect request')}</span><input className="field" type="url" placeholder="https://" value={draft.redirect} onChange={(event) => onChange({ redirect: event.target.value })}/><small className="muted">{tr('تُنفذ إعادة التوجيه بعد موافقة الإدارة والتحقق من الوجهة.', 'Redirect is applied only after administration approval and destination validation.')}</small></label></>;
 }
 function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept={purpose === 'receipt' ? 'application/pdf,image/png,image/jpeg,image/webp' : 'image/png,image/jpeg,image/webp'} onChange={onChange} disabled={Boolean(uploading)}/></label>; }
-function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; locale: string; tr: (ar: string, en: string) => string }) { return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('نقاط الوسط', 'Mid Points')}</p><h2>{balance.toLocaleString(locale)}</h2><p>{tr('نقاط غير نقدية؛ لا تُسحب أو تُستبدل بالنقد.', 'Non-cash points; they cannot be withdrawn or exchanged for cash.')}</p></div><div className="dashboard-wallet-mark"><Gift size={28}/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('تحويل نقاط', 'Transfer points')}</h2></div></div><p className="muted">{tr('100 إلى 1,000 نقطة للعملية، بلا رسوم أو حدّ لعدد العمليات. لا يمكن الإرسال إلى حسابك نفسه أو فوق رصيدك.', '100 to 1,000 points per transfer, no fee and no count limit. You cannot send to yourself or above your balance.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} placeholder="100–1,000"/><button className="button" onClick={onTransfer}><Send size={16}/>{tr('تحويل', 'Transfer')}</button></div></article><article className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('استبدال الاستحقاق', 'Redeem entitlement')}</h2></div></div><p className="muted">{tr('كل 100 نقطة تضيف يوماً كاملاً إلى استحقاق الخدمات. تُطبّق العملية ذرّياً لدى الخادم.', 'Every 100 points adds a full entitlement day. The server applies this atomically.')}</p><div className="dashboard-inline-form"><input className="field" type="number" min="1" step="1" value={redeemDays} onChange={(event) => setRedeemDays(event.target.value)} aria-label={tr('عدد الأيام', 'Number of days')}/><button className="button" onClick={onRedeem}><Gift size={16}/>{tr('استبدال 100 نقطة/يوم', 'Redeem 100 points/day')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('تُضاف 1,000 نقطة مرة واحدة فقط عند أول اشتراك مدفوع مؤهل ومعتمد للشخص المُحال، وليس عند التسجيل.', '1,000 points are added once only when the referred person’s first eligible paid subscription is approved, not at registration.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('دفتر الحركات', 'Ledger')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><strong>{Number(entry.amount ?? 0).toLocaleString(locale)}</strong><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed ledger entries to show yet.')} />}</section></section>; }
-function QuickLinkPanel({ fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) { const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] }; const links = activeLink ? [activeLink] : existing.filter((item) => !item.revoked); return <article className="card"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('رابط التعارف السريع', 'Quick introduction link')}</h2></div></div><p className="muted">{tr('يشارك حقولاً محددة فقط ولا يغير خصوصية موقعك الأساسي.', 'Shares only selected fields and never changes core-site privacy.')}</p><div className="dashboard-quick-fields">{Object.keys(fields).map((key) => <label key={key}><input type="checkbox" checked={fields[key]} onChange={(event) => setFields({ ...fields, [key]: event.target.checked })}/>{tr(...labels[key])}</label>)}</div><div className="dashboard-inline-form"><input className="field" type="number" min="1" value={days} onChange={(event) => setDays(event.target.value)} aria-label={tr('مدة الصلاحية بالأيام', 'Lifetime in days')}/><button className="button" onClick={onCreate}><Link2 size={16}/>{tr('إنشاء الرابط', 'Create link')}</button></div>{links.map((link) => <div className="dashboard-created-link" key={link.id}><a href={link.url} target="_blank" rel="noreferrer">{link.url || link.id}</a><button className="dashboard-icon-button" onClick={() => onRevoke(link.id)} aria-label={tr('إلغاء الرابط', 'Revoke link')}><Ban size={16}/></button></div>)}</article>; }
-function MessagesPanel({ tr, requests, conversations, selected, recipient, setRecipient, body, setBody, onRequest, onDecision, onOpen, onSend, onEnd, onBlock, onReport, expired, locale }: { tr: (ar: string, en: string) => string; requests: Record<string, unknown>[]; conversations: Conversation[]; selected: ConversationDetail | null; recipient: string; setRecipient: (value: string) => void; body: string; setBody: (value: string) => void; onRequest: () => void; onDecision: (id: string, accept: boolean) => void; onOpen: (conversation: Conversation) => void; onSend: () => void; onEnd: () => void; onBlock: () => void; onReport: () => void; expired: boolean; locale: string }) { return <section className="dashboard-messages"><aside className="dashboard-message-sidebar stack"><section className="card"><div className="dashboard-section-heading"><div><Send size={18}/><h2>{tr('طلب تواصل', 'Contact request')}</h2></div></div><p className="muted">{tr('لن تبدأ أي محادثة قبل قبول المستفيد الصريح.', 'No conversation starts without explicit recipient acceptance.')}</p><div className="dashboard-inline-form"><input className="field" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={tr('معرّف المستفيد C#', 'Recipient ID C#')}/><button className="button" onClick={onRequest}><Send size={16}/>{tr('إرسال', 'Send')}</button></div></section><section className="card"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('طلبات بانتظار قرارك', 'Requests awaiting you')}</h2></div></div>{requests.length ? <div className="dashboard-request-list">{requests.map((request, index) => <div key={String(request.id ?? index)}><div><strong>{String(request.from_name ?? request.from_id ?? '')}</strong><small>{formatDate(Number(request.created_at), locale)}</small></div><button className="dashboard-icon-button" aria-label={tr('قبول', 'Accept')} onClick={() => onDecision(String(request.id), true)}><Check size={16}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('رفض', 'Decline')} onClick={() => onDecision(String(request.id), false)}><X size={16}/></button></div>)}</div> : <EmptyInline text={tr('لا توجد طلبات.', 'No requests.')} />}</section><section className="card"><div className="dashboard-section-heading"><div><MessageCircle size={18}/><h2>{tr('جلساتك', 'Your sessions')}</h2></div></div>{conversations.length ? <div className="dashboard-conversation-list">{conversations.map((conversation) => <button key={conversation.id} className={selected?.id === conversation.id ? 'is-active' : ''} onClick={() => void onOpen(conversation)}><span><strong>{conversation.other_user?.name || `C${conversation.other_user?.id ?? ''}` || conversation.id}</strong><small>{conversation.status === 'active' ? tr('جلسة نشطة', 'Active session') : String(conversation.status || '')}</small></span><time>{formatDate(Number(conversation.last_activity), locale)}</time></button>)}</div> : <EmptyInline text={tr('لا توجد جلسات مراسلة.', 'No messaging sessions.')} />}</section></aside><section className="card dashboard-chat">{!selected ? <div className="dashboard-empty"><MessageCircle size={28}/><h2>{tr('اختر جلسة مراسلة', 'Choose a messaging session')}</h2><p className="muted">{tr('جلسة النصوص تنتهي بعد 24 ساعة من آخر نشاط.', 'Text-only sessions expire 24 hours after last activity.')}</p></div> : <><header className="dashboard-chat-header"><div><h2>{selected.other_user?.name || `C${selected.other_user?.id ?? ''}`}</h2><p className={expired ? 'dashboard-error' : 'muted'}>{expired ? tr('انتهت هذه الجلسة؛ يلزم طلب جديد.', 'This session has expired; a new request is required.') : tr('نشطة لمدة 24 ساعة من آخر نشاط.', 'Active for 24 hours from last activity.')}</p></div><div><button className="dashboard-icon-button" aria-label={tr('إبلاغ', 'Report')} onClick={onReport}><AlertTriangle size={17}/></button><button className="dashboard-icon-button" aria-label={tr('حظر', 'Block')} onClick={onBlock}><Ban size={17}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('إنهاء الجلسة', 'End session')} onClick={onEnd}><X size={17}/></button></div></header><div className="dashboard-chat-log">{asArray<Message>(selected.messages).map((message) => <div key={message.id} className={message.sender_id === undefined ? '' : 'is-message'}><p>{message.body}</p><time>{formatDate(message.created_at, locale)}</time></div>)}</div><div className="dashboard-chat-compose"><textarea className="field" rows={2} value={body} onChange={(event) => setBody(event.target.value)} disabled={expired} placeholder={tr('اكتب رسالة نصية مهنية...', 'Write a professional text message...')}/><button className="button" disabled={expired || !body.trim()} onClick={onSend}><Send size={17}/>{tr('إرسال', 'Send')}</button></div></>}</section></section>; }
+function MidPointMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="MIDPOINT"><Gift size={compact ? 13 : 16}/><span>MIDPOINT</span></span>; }
+function MidPointAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><MidPointMark compact/></span>; }
+function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; locale: string; tr: (ar: string, en: string) => string }) {
+  const amount = Number(transferForm.amount);
+  const days = Number(redeemDays);
+  return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('نقاط الوسط', 'Mid Points')}</p><h2><MidPointAmount value={balance} locale={locale}/></h2><p>{tr('نقاط غير نقدية؛ لا تُسحب أو تُستبدل بالنقد.', 'Non-cash points; they cannot be withdrawn or exchanged for cash.')}</p></div><div className="dashboard-wallet-mark"><MidPointMark/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('تحويل نقاط', 'Transfer points')}</h2></div></div><p className="muted">{tr('من 100 إلى 1,000 MIDPOINT للعملية، بلا رسوم أو حدّ لعدد العمليات. لا يمكن الإرسال إلى حسابك نفسه أو فوق رصيدك.', '100 to 1,000 MIDPOINT per transfer, no fee and no count limit. You cannot send to yourself or above your balance.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} placeholder="100–1,000"/><MidPointMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><MidPointAmount value={amount} locale={locale}/></span>}<button className="button" onClick={onTransfer}><Send size={16}/>{tr('تحويل', 'Transfer')}</button></div></article><article className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('استبدال الاستحقاق', 'Redeem entitlement')}</h2></div></div><p className="muted">{tr('كل 100 MIDPOINT تضيف يوماً كاملاً إلى استحقاق الخدمات. تُطبّق العملية ذرّياً لدى الخادم.', 'Every 100 MIDPOINT adds a full entitlement day. The server applies this atomically.')}</p><div className="dashboard-inline-form"><input className="field" type="number" min="1" step="1" value={redeemDays} onChange={(event) => setRedeemDays(event.target.value)} aria-label={tr('عدد الأيام', 'Number of days')}/>{Number.isInteger(days) && days > 0 && <span className="dashboard-point-preview"><MidPointAmount value={days * 100} locale={locale}/><small>{tr('مقابل', 'for')} {days} {tr('يوم', 'day(s)')}</small></span>}<button className="button" onClick={onRedeem}><Gift size={16}/><MidPointMark compact/>{tr('استبدال', 'Redeem')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('تُضاف', 'A')} <MidPointAmount value={1000} locale={locale}/> {tr('مرة واحدة فقط عند أول اشتراك مدفوع مؤهل ومعتمد للشخص المُحال، وليس عند التسجيل.', 'is added once only when the referred person’s first eligible paid subscription is approved, not at registration.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('دفتر الحركات', 'Ledger')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><MidPointAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed ledger entries to show yet.')} />}</section></section>;
+}
+function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { mode: QuickMode; setMode: (value: QuickMode) => void; fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) {
+  const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] };
+  const modes: Array<{ key: QuickMode; ar: string; en: string; fields: string[] }> = [
+    { key: 'professional', ar: 'مهني', en: 'Professional', fields: ['name', 'title', 'email', 'site'] },
+    { key: 'business', ar: 'تجاري', en: 'Business', fields: ['name', 'title', 'whatsapp', 'site'] },
+    { key: 'quick', ar: 'تعارف سريع', en: 'Quick intro', fields: ['name', 'title', 'whatsapp'] },
+  ];
+  const chooseMode = (next: typeof modes[number]) => { setMode(next.key); setFields(Object.fromEntries(Object.keys(fields).map((key) => [key, next.fields.includes(key)]))); };
+  const links = activeLink ? [activeLink] : existing.filter((item) => !item.revoked);
+  return <article className="card dashboard-quick-link"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('بطاقة ورابط التعارف', 'Introduction card and link')}</h2></div></div><p className="muted">{tr('اختر وضعاً ثم راجع الحقول المشتركة. الرابط مستقل عن خصوصية موقعك الأساسي ويمكن إلغاؤه فوراً.', 'Choose a mode, then review the shared fields. The link is independent of core-site privacy and can be revoked immediately.')}</p><div className="dashboard-intro-modes" role="group" aria-label={tr('وضع التعارف', 'Introduction mode')}>{modes.map((item) => <button key={item.key} className={`button button--quiet ${mode === item.key ? 'is-active' : ''}`} aria-pressed={mode === item.key} onClick={() => chooseMode(item)}><UsersRound size={15}/>{tr(item.ar, item.en)}</button>)}</div><div className="dashboard-quick-fields">{Object.keys(fields).map((key) => <label key={key}><input type="checkbox" checked={fields[key]} onChange={(event) => setFields({ ...fields, [key]: event.target.checked })}/>{tr(...labels[key])}</label>)}</div><div className="dashboard-inline-form"><input className="field" type="number" min="1" value={days} onChange={(event) => setDays(event.target.value)} aria-label={tr('مدة الصلاحية بالأيام', 'Lifetime in days')}/><button className="button" onClick={onCreate}><Link2 size={16}/>{tr('إنشاء الرابط', 'Create link')}</button></div>{links.map((link) => <div className="dashboard-created-link" key={link.id}><a href={link.url} target="_blank" rel="noreferrer">{link.url || link.id}</a><button className="dashboard-icon-button" onClick={() => onRevoke(link.id)} aria-label={tr('إلغاء الرابط', 'Revoke link')}><Ban size={16}/></button></div>)}</article>;
+}
+function MessagesPanel({ tr, userId, requests, blocks, conversations, selected, recipient, setRecipient, body, setBody, onRequest, onDecision, onOpen, onSend, onEmoji, onEnd, onBlock, onReport, expired, locale }: { tr: (ar: string, en: string) => string; userId?: number; requests: Record<string, unknown>[]; blocks: Record<string, unknown>[]; conversations: Conversation[]; selected: ConversationDetail | null; recipient: string; setRecipient: (value: string) => void; body: string; setBody: (value: string) => void; onRequest: () => void; onDecision: (id: string, accept: boolean) => void; onOpen: (conversation: Conversation) => void; onSend: () => void; onEmoji: (emoji: string) => void; onEnd: () => void; onBlock: () => void; onReport: () => void; expired: boolean; locale: string }) {
+  const incoming = requests.filter((request) => request.status === 'pending' && numericId(request.to_id ?? request.toId) === userId);
+  const outgoing = requests.filter((request) => request.status === 'pending' && numericId(request.from_id ?? request.fromId) === userId);
+  const positiveEmoji = ['🙂', '😊', '👍', '🙏', '✨', '🌟', '🎉', '🤝', '💚', '❤️'];
+  return <section className="dashboard-messages"><aside className="dashboard-message-sidebar stack"><section className="card"><div className="dashboard-section-heading"><div><Send size={18}/><h2>{tr('طلب تواصل', 'Contact request')}</h2></div></div><p className="muted">{tr('لن تبدأ أي محادثة قبل قبول المستفيد الصريح. النص والرموز الإيجابية المنتقاة فقط مسموحة في الجلسة.', 'No conversation starts without explicit recipient acceptance. Only text and selected positive emoji are allowed in a session.')}</p><div className="dashboard-inline-form"><input className="field" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={tr('معرّف المستفيد C#', 'Recipient ID C#')}/><button className="button" onClick={onRequest}><Send size={16}/>{tr('إرسال', 'Send')}</button></div></section><section className="card"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('طلبات بانتظار قرارك', 'Requests awaiting you')}</h2></div></div>{incoming.length ? <div className="dashboard-request-list">{incoming.map((request, index) => <div key={String(request.id ?? index)}><div><strong>{String(request.from_name ?? request.fromName ?? request.from_id ?? '')}</strong><small>{formatDate(Number(request.created_at ?? request.createdAt), locale)}</small></div><button className="dashboard-icon-button" aria-label={tr('قبول', 'Accept')} onClick={() => onDecision(String(request.id), true)}><Check size={16}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('رفض', 'Decline')} onClick={() => onDecision(String(request.id), false)}><X size={16}/></button></div>)}</div> : <EmptyInline text={tr('لا توجد طلبات تحتاج قرارك.', 'No requests need your decision.')} />}{outgoing.length > 0 && <p className="dashboard-pending-note">{tr(`لديك ${outgoing.length} طلب/طلبات مرسلة بانتظار موافقة المستفيد.`, `You have ${outgoing.length} sent request(s) awaiting recipient approval.`)}</p>}</section><section className="card"><div className="dashboard-section-heading"><div><MessageCircle size={18}/><h2>{tr('جلساتك', 'Your sessions')}</h2></div></div>{conversations.length ? <div className="dashboard-conversation-list">{conversations.map((conversation) => <button key={conversation.id} className={selected?.id === conversation.id ? 'is-active' : ''} onClick={() => void onOpen(conversation)}><span><strong>{conversation.other_user?.name || (conversation.other_user?.id ? `C${conversation.other_user.id}` : conversation.id)}</strong><small>{conversation.status === 'active' ? tr('جلسة نشطة', 'Active session') : String(conversation.status || '')}</small></span><time>{formatDate(Number(conversation.last_activity), locale)}</time></button>)}</div> : <EmptyInline text={tr('لا توجد جلسات مراسلة.', 'No messaging sessions.')} />}</section>{blocks.length > 0 && <section className="card dashboard-block-list"><div className="dashboard-section-heading"><div><Ban size={18}/><h2>{tr('حسابات محظورة', 'Blocked accounts')}</h2></div></div>{blocks.map((block, index) => <p key={String(block.blocked_id ?? index)}>{String(block.blocked_name ?? `C${block.blocked_id ?? ''}`)}</p>)}</section>}</aside><section className="card dashboard-chat">{!selected ? <div className="dashboard-empty"><MessageCircle size={28}/><h2>{tr('اختر جلسة مراسلة', 'Choose a messaging session')}</h2><p className="muted">{tr('جلسة النصوص تنتهي بعد 24 ساعة من آخر نشاط.', 'Text-only sessions expire 24 hours after last activity.')}</p></div> : <><header className="dashboard-chat-header"><div><h2>{selected.other_user?.name || (selected.other_user?.id ? `C${selected.other_user.id}` : '')}</h2><p className={expired ? 'dashboard-error' : 'muted'}>{expired ? tr('انتهت هذه الجلسة؛ يلزم طلب جديد.', 'This session has expired; a new request is required.') : tr('نشطة لمدة 24 ساعة من آخر نشاط.', 'Active for 24 hours from last activity.')}</p></div><div><button className="dashboard-icon-button" aria-label={tr('إبلاغ', 'Report')} onClick={onReport}><AlertTriangle size={17}/></button><button className="dashboard-icon-button" aria-label={tr('حظر', 'Block')} onClick={onBlock}><Ban size={17}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('إنهاء الجلسة', 'End session')} onClick={onEnd}><X size={17}/></button></div></header><div className="dashboard-chat-log">{asArray<Message>(selected.messages).map((message) => <div key={message.id} className={message.sender_id === userId ? 'is-mine' : ''}><p>{message.body}</p><time>{formatDate(message.created_at, locale)}</time></div>)}</div><div className="dashboard-chat-compose"><textarea className="field" rows={2} maxLength={1000} value={body} onChange={(event) => setBody(event.target.value)} disabled={expired} placeholder={tr('اكتب رسالة نصية مهنية...', 'Write a professional text message...')}/><div className="dashboard-chat-actions"><div className="dashboard-emoji-picker" aria-label={tr('رموز إيجابية مسموحة', 'Allowed positive emoji')}>{positiveEmoji.map((emoji) => <button key={emoji} className="dashboard-icon-button" type="button" disabled={expired} onClick={() => onEmoji(emoji)} aria-label={emoji}>{emoji}</button>)}</div><button className="button" disabled={expired || !body.trim()} onClick={onSend}><Send size={17}/>{tr('إرسال', 'Send')}</button></div></div></>}</section></section>;
+}
+function TranslationEditor({ translation, onChange, tr }: { translation: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string }) {
+  const updateStrings = (key: 'skills' | 'hobbies', text: string) => onChange({ [key]: text.split(/[,\n]/).map((item) => item.trim()).filter(Boolean) });
+  const updateStructured = (key: 'experience' | 'education' | 'training' | 'timeline', index: number, patch: Partial<ResumeItem>) => onChange({ [key]: translation[key].map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
+  const sections: Array<{ key: 'experience' | 'education' | 'training' | 'timeline'; ar: string; en: string; titles: boolean }> = [
+    { key: 'experience', ar: 'الخبرات', en: 'Experience', titles: true },
+    { key: 'education', ar: 'التعليم', en: 'Education', titles: false },
+    { key: 'training', ar: 'التدريب', en: 'Training', titles: false },
+    { key: 'timeline', ar: 'السجل الزمني', en: 'Timeline', titles: true },
+  ];
+  return <div className="dashboard-translation-editor"><p className="muted">{tr('حرر النصوص الإنجليزية المحفوظة ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.', 'Edit the saved English text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.')}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى الإنجليزي', 'English title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة الإنجليزية', 'English city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة الإنجليزية', 'English country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة الإنجليزية', 'English biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات الإنجليزية، مفصولة بفواصل', 'English skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات الإنجليزية، مفصولة بفواصل', 'English hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
+}
 function PaymentInstructions({ value, tr }: { value: unknown; tr: (ar: string, en: string) => string }) { const hasValues = value && (typeof value === 'string' ? value.trim().length > 0 : typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0); if (!hasValues) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>; if (typeof value === 'string') return <pre className="dashboard-bank-details">{value}</pre>; const raw = value as Record<string, unknown>; const details = raw.instructions ?? raw.bank ?? raw; return <dl className="dashboard-bank-details">{typeof details === 'object' && details ? Object.entries(details as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{typeof item === 'string' || typeof item === 'number' ? item : JSON.stringify(item)}</dd></div>) : <div><dd>{String(details)}</dd></div>}</dl>; }
 function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) { return <div className="dashboard-modal-backdrop" role="presentation" onMouseDown={onClose}><section className="dashboard-preview-modal" role="dialog" aria-modal="true" aria-label={tr('معاينة المسودة', 'Draft preview')} onMouseDown={(event) => event.stopPropagation()}><header><div><p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة محلية للمسودة', 'Local draft preview')}</p><h2>{draft.name || tr('اسمك', 'Your name')}</h2></div><button className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button></header>{draft.cover && <img className="dashboard-preview-cover" src={draft.cover} alt=""/>}<div className="dashboard-preview-body">{draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}<p className="dashboard-preview-title">{draft.title}</p>{draft.bio && <p>{draft.bio}</p>}<div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill) => <span key={skill}>{skill}</span>)}</div>{site && <small>{site.name}</small>}</div><footer><p className="muted">{tr('هذه معاينة للمسودة فقط. إرسالها ينشئ لقطة مراجعة مستقلة ولا ينشرها.', 'This previews only your draft. Submitting creates an independent review snapshot and does not publish it.')}</p><div><button className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button><button className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('إرسال للمراجعة', 'Submit for review')}</button></div></footer></section></div>; }

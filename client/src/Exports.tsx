@@ -21,6 +21,7 @@ import './exports.css';
 
 type Language = 'ar' | 'en';
 type ExportKind = 'profile' | 'pdf' | 'ats' | 'badge' | 'card' | 'social' | 'vcard' | 'qr';
+type SmartCardMode = 'professional' | 'business' | 'quick';
 
 type StructuredItem = {
   title?: string;
@@ -79,12 +80,8 @@ const routeAliases: Record<string, ExportKind> = {
   conference: 'badge',
   identity: 'profile',
 };
-const pdfKindFor = (kind: ExportKind): 'pdf' | 'ats' | 'qr' | 'vcard' => {
-  if (kind === 'ats') return 'ats';
-  if (kind === 'qr') return 'qr';
-  if (kind === 'vcard') return 'vcard';
-  return 'pdf';
-};
+// The server maps card, badge and social to digital_card; do not collapse them to PDF.
+const exportDataKindFor = (kind: ExportKind): ExportKind => kind;
 
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
 const list = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
@@ -185,15 +182,86 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   anchor.remove();
 }
 
-async function qrDataUrl(value: string, width = 1800) {
+async function waitForCardAssets(node: HTMLElement) {
+  await document.fonts?.ready;
+  await Promise.all([...node.querySelectorAll('img')].map((image) => {
+    if (image.complete && image.naturalWidth) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      image.addEventListener('load', () => resolve(), { once: true });
+      image.addEventListener('error', () => resolve(), { once: true });
+    });
+  }));
+}
+
+const QR_BRAND_ICON = '/assets/icon-192.png';
+
+function ownedImage(value: string) {
+  return value.startsWith('/api/media/') || value.startsWith('/assets/') ? value : QR_BRAND_ICON;
+}
+
+function profileImage(profile: Profile) {
+  return ownedImage(field(profile, 'photo'));
+}
+
+function loadImage(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Unable to load the QR centre image.'));
+    image.src = source;
+  });
+}
+
+type QrOptions = { width?: number; centerImage?: string };
+
+/**
+ * Creates a print-sized QR code. The circular centre covers less than 3% of the
+ * symbol area and is protected by H-level correction; an image failure returns
+ * the unmodified QR instead of preventing a scan or download.
+ */
+async function qrDataUrl(value: string, options: QrOptions = {}) {
+  const width = options.width ?? 1800;
   const imported: any = await import('qrcode');
   const QRCode = imported.default ?? imported;
-  return QRCode.toDataURL(value, {
+  const qr = await QRCode.toDataURL(value, {
     errorCorrectionLevel: 'H',
-    margin: 2,
+    margin: 4,
     width,
     color: { dark: '#004422', light: '#FFFFFFFF' },
   });
+  if (!options.centerImage || typeof document === 'undefined') return qr;
+  try {
+    const [image, symbol] = await Promise.all([loadImage(ownedImage(options.centerImage)), loadImage(qr)]);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = width;
+    const context = canvas.getContext('2d');
+    if (!context) return qr;
+    context.drawImage(symbol, 0, 0, width, width);
+    const disc = Math.round(width * .165);
+    const radius = disc / 2;
+    const x = Math.round((width - disc) / 2);
+    const y = Math.round((width - disc) / 2);
+    context.save();
+    context.beginPath();
+    context.arc(x + radius, y + radius, radius, 0, Math.PI * 2);
+    context.fillStyle = '#ffffff';
+    context.fill();
+    context.clip();
+    const scale = Math.max(disc / image.naturalWidth, disc / image.naturalHeight);
+    const drawnWidth = image.naturalWidth * scale;
+    const drawnHeight = image.naturalHeight * scale;
+    context.drawImage(image, x + (disc - drawnWidth) / 2, y + (disc - drawnHeight) / 2, drawnWidth, drawnHeight);
+    context.restore();
+    context.beginPath();
+    context.arc(x + radius, y + radius, radius, 0, Math.PI * 2);
+    context.lineWidth = Math.max(3, Math.round(width * .002));
+    context.strokeStyle = '#ffffff';
+    context.stroke();
+    return canvas.toDataURL('image/png');
+  } catch {
+    return qr;
+  }
 }
 
 function bufferToBase64(bytes: Uint8Array) {
@@ -274,15 +342,33 @@ const labels = {
   },
 } as const;
 
+type PdfInlineText = string | Array<{ text: string }>;
+
+/**
+ * PDFMake shapes Arabic glyphs but does not expose a paragraph-direction option.
+ * Reversing word runs for its visual layout, while keeping every word as live
+ * Unicode text, produces a right-to-left PDF that pdftotext can still extract.
+ */
+function pdfText(value: string, rtl: boolean): PdfInlineText {
+  if (!rtl || !value.trim()) return value;
+  const lines = value.split(/\r?\n/);
+  return lines.flatMap((line, lineIndex) => {
+    const words = line.trim().split(/\s+/u).filter(Boolean).reverse();
+    const output = words.flatMap((word, wordIndex) => wordIndex ? [{ text: ' ' }, { text: word }] : [{ text: word }]);
+    if (lineIndex < lines.length - 1) output.push({ text: '\n' });
+    return output;
+  });
+}
+
 function profileSections(profile: Profile, lang: Language) {
   const copy = labels[lang];
   const structured = (key: keyof Profile, title: string) => isVisible(profile, String(key))
-    ? list<StructuredItem | string>(profile[key]).map(structuredLine).filter(Boolean).map((line) => ({ text: line, margin: [0, 0, 0, 6] }))
+    ? list<StructuredItem | string>(profile[key]).map(structuredLine).filter(Boolean).map((line) => ({ text: pdfText(line, lang === 'ar'), margin: [0, 0, 0, 6] }))
     : [];
   const strings = (key: keyof Profile, title: string) => isVisible(profile, String(key))
-    ? list<string>(profile[key]).map(text).filter(Boolean).map((line) => ({ text: line, margin: [0, 0, 0, 6] }))
+    ? list<string>(profile[key]).map(text).filter(Boolean).map((line) => ({ text: pdfText(line, lang === 'ar'), margin: [0, 0, 0, 6] }))
     : [];
-  const sections: Array<[string, Array<{ text: string; margin: number[] }>]> = [
+  const sections: Array<[string, Array<{ text: PdfInlineText; margin: number[] }>]> = [
     [copy.experience, structured('experience', copy.experience)],
     [copy.education, structured('education', copy.education)],
     [copy.training, structured('training', copy.training)],
@@ -292,6 +378,76 @@ function profileSections(profile: Profile, lang: Language) {
     [copy.achievements, strings('achievements', copy.achievements)],
   ];
   return sections.filter(([, entries]) => entries.length);
+}
+
+const smartCardLabels = {
+  ar: {
+    professional: 'مهني',
+    business: 'تجاري',
+    quick: 'تعارف سريع',
+    professionalKicker: 'هوية مهنية',
+    businessKicker: 'بطاقة أعمال',
+    quickKicker: 'بطاقة تعارف سريعة',
+    publicProfile: 'الملف العام',
+  },
+  en: {
+    professional: 'Professional',
+    business: 'Business',
+    quick: 'Quick introduction',
+    professionalKicker: 'Professional identity',
+    businessKicker: 'Business card',
+    quickKicker: 'Quick introduction',
+    publicProfile: 'Public profile',
+  },
+} as const;
+
+function publicLink(profile: Profile) {
+  if (!isVisible(profile, 'buttons')) return null;
+  for (const item of list<LinkItem>(profile.buttons)) {
+    const url = text(item.url);
+    if (!url) continue;
+    try {
+      const parsed = new URL(url);
+      if (!isWebUrl(parsed)) continue;
+      return { label: text(item.label) || parsed.hostname, url: parsed.toString() };
+    } catch {
+      // An invalid custom button must never become an export destination.
+    }
+  }
+  return null;
+}
+
+function isWebUrl(url: URL) {
+  return url.protocol === 'https:' || url.protocol === 'http:';
+}
+
+function validWebUrl(value: string) {
+  try { return isWebUrl(new URL(value)); } catch { return false; }
+}
+
+function smartCardDetails(profile: Profile, publicUrl: string, mode: SmartCardMode, lang: Language) {
+  const copy = smartCardLabels[lang];
+  const location = [field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(lang === 'ar' ? '، ' : ', ');
+  const contact = [field(profile, 'email'), field(profile, 'phone')].filter(Boolean).join(' · ');
+  const business = publicLink(profile);
+  if (mode === 'business') return {
+    kicker: copy.businessKicker,
+    title: field(profile, 'title'),
+    detail: business?.label || location || copy.publicProfile,
+    destination: business?.url || publicUrl,
+  };
+  if (mode === 'quick') return {
+    kicker: copy.quickKicker,
+    title: field(profile, 'title'),
+    detail: contact || location || publicUrl,
+    destination: publicUrl,
+  };
+  return {
+    kicker: copy.professionalKicker,
+    title: field(profile, 'title'),
+    detail: location || copy.publicProfile,
+    destination: publicUrl,
+  };
 }
 
 function luxuryPdf(profile: Profile, data: ExportData, lang: Language) {
@@ -308,39 +464,39 @@ function luxuryPdf(profile: Profile, data: ExportData, lang: Language) {
     {
       columns: rtl
         ? [
-          { width: '*', stack: [{ text: name, style: 'name' }, title ? { text: title, style: 'title' } : {}, { text: copy.professional, style: 'eyebrow' }] },
+          { width: '*', stack: [{ text: pdfText(name, rtl), style: 'name' }, title ? { text: pdfText(title, rtl), style: 'title' } : {}, { text: pdfText(copy.professional, rtl), style: 'eyebrow' }] },
           { width: 118, text: 'KSA.MEN', style: 'brand', alignment: 'left' },
         ]
         : [
           { width: 118, text: 'KSA.MEN', style: 'brand' },
-          { width: '*', stack: [{ text: name, style: 'name' }, title ? { text: title, style: 'title' } : {}, { text: copy.professional, style: 'eyebrow' }], alignment: 'right' },
+          { width: '*', stack: [{ text: pdfText(name, rtl), style: 'name' }, title ? { text: pdfText(title, rtl), style: 'title' } : {}, { text: pdfText(copy.professional, rtl), style: 'eyebrow' }], alignment: 'right' },
         ],
       margin: [0, 0, 0, 24],
     },
   ];
-  if (bio) content.push({ text: copy.summary, style: 'heading' }, { text: bio, style: 'body', margin: [0, 0, 0, 18] });
+  if (bio) content.push({ text: pdfText(copy.summary, rtl), style: 'heading' }, { text: pdfText(bio, rtl), style: 'body', margin: [0, 0, 0, 18] });
   if (contact || location) {
     content.push({
       columns: rtl
         ? [
-          { width: '*', stack: [contact ? { text: `${copy.contact}: ${contact}`, style: 'meta' } : {}, location ? { text: `${copy.location}: ${location}`, style: 'meta' } : {}] },
+          { width: '*', stack: [contact ? { text: pdfText(`${copy.contact}: ${contact}`, rtl), style: 'meta' } : {}, location ? { text: pdfText(`${copy.location}: ${location}`, rtl), style: 'meta' } : {}] },
           { width: 10, canvas: [{ type: 'rect', x: 0, y: 0, w: 3, h: 34, color: '#C89D4D' }] },
         ]
         : [
           { width: 10, canvas: [{ type: 'rect', x: 0, y: 0, w: 3, h: 34, color: '#C89D4D' }] },
-          { width: '*', stack: [contact ? { text: `${copy.contact}: ${contact}`, style: 'meta' } : {}, location ? { text: `${copy.location}: ${location}`, style: 'meta' } : {}] },
+          { width: '*', stack: [contact ? { text: pdfText(`${copy.contact}: ${contact}`, rtl), style: 'meta' } : {}, location ? { text: pdfText(`${copy.location}: ${location}`, rtl), style: 'meta' } : {}] },
         ],
       margin: [0, 0, 0, 22],
     });
   }
-  sections.forEach(([heading, entries]) => content.push({ text: heading, style: 'heading' }, { stack: entries, margin: [0, 0, 0, 14] }));
-  if (content.length === 2) content.push({ text: copy.noContent, style: 'body' });
+  sections.forEach(([heading, entries]) => content.push({ text: pdfText(heading, rtl), style: 'heading' }, { stack: entries, margin: [0, 0, 0, 14] }));
+  if (content.length === 2) content.push({ text: pdfText(copy.noContent, rtl), style: 'body' });
   return {
     pageSize: 'A4',
     pageMargins: [40, 38, 40, 44],
     info: { title: `${name} — ${copy.profile}`, author: 'KSA.MEN', subject: copy.professional },
     defaultStyle: { font: 'Tajawal', fontSize: 10, color: '#173529', alignment: rtl ? 'right' : 'left', lineHeight: 1.32 },
-    footer: () => ({ text: copy.generated, font: 'Tajawal', fontSize: 8, color: '#587164', alignment: 'center', margin: [0, 12, 0, 0] }),
+    footer: () => ({ text: pdfText(copy.generated, rtl), font: 'Tajawal', fontSize: 8, color: '#587164', alignment: 'center', margin: [0, 12, 0, 0] }),
     styles: {
       name: { font: 'Tajawal', bold: true, fontSize: 25, color: '#004422', alignment: rtl ? 'right' : 'left' },
       title: { font: 'Tajawal', fontSize: 13, color: '#236645', margin: [0, 4, 0, 4], alignment: rtl ? 'right' : 'left' },
@@ -361,14 +517,14 @@ function atsPdf(profile: Profile, data: ExportData, lang: Language) {
   const title = field(profile, 'title');
   const bio = field(profile, 'bio');
   const contact = [field(profile, 'email'), field(profile, 'phone'), field(profile, 'whatsapp'), [field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(', ')].filter(Boolean).join(' | ');
-  const content: any[] = [{ text: name, style: 'name' }];
-  if (title) content.push({ text: title, style: 'role' });
-  if (contact) content.push({ text: contact, style: 'contact' });
-  if (bio) content.push({ text: copy.summary, style: 'heading' }, { text: bio, style: 'body' });
+  const content: any[] = [{ text: pdfText(name, rtl), style: 'name' }];
+  if (title) content.push({ text: pdfText(title, rtl), style: 'role' });
+  if (contact) content.push({ text: pdfText(contact, rtl), style: 'contact' });
+  if (bio) content.push({ text: pdfText(copy.summary, rtl), style: 'heading' }, { text: pdfText(bio, rtl), style: 'body' });
   profileSections(profile, lang).forEach(([heading, entries]) => {
-    content.push({ text: heading, style: 'heading' }, ...entries.map((entry) => ({ ...entry, style: 'entry' })));
+    content.push({ text: pdfText(heading, rtl), style: 'heading' }, ...entries.map((entry) => ({ ...entry, style: 'entry' })));
   });
-  if (content.length === 1) content.push({ text: copy.noContent, style: 'body' });
+  if (content.length === 1) content.push({ text: pdfText(copy.noContent, rtl), style: 'body' });
   return {
     pageSize: 'A4',
     pageMargins: [42, 42, 42, 42],
@@ -399,6 +555,8 @@ export default function Exports() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [translationConsent, setTranslationConsent] = useState(false);
+  const [cardMode, setCardMode] = useState<SmartCardMode>('professional');
+  const [profileQr, setProfileQr] = useState('');
   const badgeRef = useRef<HTMLDivElement>(null);
   const socialRef = useRef<HTMLDivElement>(null);
   const site = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('site') || '';
@@ -408,7 +566,7 @@ export default function Exports() {
     setLoading(true);
     setError('');
     try {
-      const query = new URLSearchParams({ lang: exportLang, kind: pdfKindFor(kind) });
+      const query = new URLSearchParams({ lang: exportLang, kind: exportDataKindFor(kind) });
       const response = await api<ExportData>(`/api/export-data/${encodeURIComponent(site)}?${query}`);
       if (!response.allowed) throw new Error(t('لا تملك صلاحية هذا التصدير.', 'You are not allowed to create this export.'));
       setData(response);
@@ -430,7 +588,23 @@ export default function Exports() {
   const profile = verified && data ? data.profile : null;
   const identity = profile && data ? displayName(data, profile) : '';
   const publicUrl = data ? profileUrl(data.name) : '';
+  const avatar = profile ? profileImage(profile) : QR_BRAND_ICON;
   const filename = useCallback((suffix: string, extension: string) => `${cleanFilename(data?.name || identity || data?.site || 'ksa-men')}-${kind}-${suffix}.${extension}`, [data?.name, data?.site, identity, kind]);
+  const buildProfileQr = useCallback(async () => {
+    if (!publicUrl) throw new Error('A public profile URL is required for QR export.');
+    return qrDataUrl(publicUrl, { width: 1800, centerImage: avatar });
+  }, [avatar, publicUrl]);
+
+  useEffect(() => {
+    let disposed = false;
+    if (!profile || !publicUrl) {
+      setProfileQr('');
+      return () => { disposed = true; };
+    }
+    setProfileQr('');
+    void buildProfileQr().then((value) => { if (!disposed) setProfileQr(value); }).catch(() => { if (!disposed) setProfileQr(''); });
+    return () => { disposed = true; };
+  }, [buildProfileQr, profile, publicUrl]);
 
   const selectKind = (next: ExportKind) => {
     setKind(next);
@@ -484,7 +658,7 @@ export default function Exports() {
     if (!data || !publicUrl) return;
     setBusy('qr');
     try {
-      downloadDataUrl(await qrDataUrl(publicUrl), filename('qr', 'png'));
+      downloadDataUrl(profileQr || await buildProfileQr(), filename('qr', 'png'));
       notify(t('تم تجهيز QR عالي الدقة للطباعة.', 'A high-resolution print QR has been prepared.'));
     } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر إنشاء QR.', 'Could not create the QR code.')); }
     finally { setBusy(''); }
@@ -495,6 +669,11 @@ export default function Exports() {
     if (!node) return;
     setBusy(target);
     try {
+      if (!profileQr) {
+        setProfileQr(await buildProfileQr());
+        await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      }
+      await waitForCardAssets(node);
       const imageModule: any = await import('html-to-image');
       const toPng = imageModule.toPng ?? imageModule.default?.toPng;
       const dimensions = target === 'social' ? { width: 1200, height: 630 } : { width: 900, height: 1200 };
@@ -524,6 +703,7 @@ export default function Exports() {
     if (!profile) return [];
     return [field(profile, 'title'), field(profile, 'city'), field(profile, 'email')].filter(Boolean);
   }, [profile]);
+  const cardDetails = useMemo(() => profile ? smartCardDetails(profile, publicUrl, cardMode, exportLang) : null, [cardMode, exportLang, profile, publicUrl]);
 
   return <div className="exports-shell" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
     <main className="exports-main">
@@ -577,6 +757,13 @@ export default function Exports() {
           <article className="exports-detail card"><ContactRound size={19}/><div><h3>{t('بطاقة اتصال vCard', 'vCard contact file')}</h3><p>{t('تتضمن فقط وسائل الاتصال والحقول غير المخفية في ملفك.', 'Includes only non-hidden contact channels and profile fields.')}</p></div><Button className="button-quiet" onClick={downloadVCard}><Download size={15}/>vCard</Button></article>
         </section>
 
+        {kind === 'card' && <section className="exports-mode-panel card">
+          <div><p className="exports-kicker"><IdCard size={15}/>{t('بطاقة التعارف الذكية', 'Smart introduction card')}</p><h2>{t('اختر سياق بطاقتك', 'Choose your card context')}</h2><p>{t('كل وضع يعيد ترتيب معلوماتك العامة فقط؛ لا ينشئ مؤهلات أو روابط جديدة.', 'Each mode rearranges only your public information; it never invents qualifications or links.')}</p></div>
+          <div className="exports-mode-switch" aria-label={t('أوضاع بطاقة التعارف', 'Smart-card modes')}>
+            {(['professional', 'business', 'quick'] as SmartCardMode[]).map((mode) => <button type="button" key={mode} onClick={() => setCardMode(mode)} className={cardMode === mode ? 'is-active' : ''} aria-pressed={cardMode === mode}>{smartCardLabels[exportLang][mode]}</button>)}
+          </div>
+        </section>}
+
         <section className="exports-card-actions card">
           <div><p className="exports-kicker"><IdCard size={15}/>{t('بطاقات قابلة للاستخدام', 'Ready-to-use cards')}</p><h2>{t('شارة مؤتمر وبطاقات مشاركة', 'Conference badge and share cards')}</h2><p>{t('اطبع الشارة أو نزّل بطاقات PNG رقمية واجتماعية من تصميم HTML حيّ.', 'Print the badge or download digital and social PNG cards rendered from live HTML.')}</p></div>
           <div className="exports-card-actions__buttons"><Button className="button-quiet" onClick={printBadge}><Printer size={16}/>{t('طباعة الشارة', 'Print badge')}</Button><Button className="button-quiet" onClick={() => void imageFromCard('badge')} disabled={Boolean(busy)}><ImageDown size={16}/>{t('PNG رقمي', 'Digital PNG')}</Button><Button className="button-quiet" onClick={() => void imageFromCard('social')} disabled={Boolean(busy)}><ImageDown size={16}/>{t('PNG مشاركة', 'Social PNG')}</Button></div>
@@ -587,15 +774,15 @@ export default function Exports() {
     {profile && data && verified && <>
       <section className="export-print-sheet" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
         <div className="export-print-sheet__top"><span>KSA.MEN</span><span>{t('شارة مؤتمر', 'Conference badge')}</span></div>
-        <div className="export-print-sheet__body"><span className="export-print-sheet__mark">{identity.slice(0, 1) || 'K'}</span><h1>{identity}</h1><p>{field(profile, 'title')}</p><small>{[field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(' · ')}</small></div>
-        <div className="export-print-sheet__bottom">{publicUrl}</div>
+        <div className="export-print-sheet__body"><img className="export-print-sheet__photo" src={avatar} alt=""/><h1>{identity}</h1><p>{field(profile, 'title')}</p><small>{[field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(' · ')}</small>{profileQr && <div className="export-print-sheet__qr"><img src={profileQr} alt={t('رمز QR للملف العام', 'QR code for the public profile')}/><span>{t('امسح لفتح الملف', 'Scan to open profile')}</span></div>}</div>
+        <div className="export-print-sheet__bottom"><span>{publicUrl}</span><span>{t('هوية مؤتمر', 'Conference identity')}</span></div>
       </section>
       <div className="exports-capture-stage" aria-hidden="true">
-        <div ref={badgeRef} className="export-digital-card" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
-          <div className="export-digital-card__mesh"/><span className="export-digital-card__brand">KSA.MEN</span><span className="export-digital-card__monogram">{identity.slice(0, 1) || 'K'}</span><div className="export-digital-card__content"><p>{t('هوية رقمية', 'DIGITAL IDENTITY')}</p><h2>{identity}</h2><strong>{field(profile, 'title')}</strong><small>{[field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(' · ')}</small></div><div className="export-digital-card__foot">{publicUrl}</div>
+        <div ref={badgeRef} className="export-digital-card" data-mode={cardMode} dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
+          <div className="export-digital-card__mesh"/><span className="export-digital-card__brand">KSA.MEN</span><div className="export-digital-card__portrait"><img src={avatar} alt=""/></div>{profileQr && <img className="export-digital-card__qr" src={profileQr} alt=""/>}<div className="export-digital-card__content"><p>{cardDetails?.kicker}</p><h2>{identity}</h2>{cardDetails?.title && <strong>{cardDetails.title}</strong>}<small>{cardDetails?.detail}</small></div><div className="export-digital-card__foot">{cardDetails?.destination || publicUrl}</div>
         </div>
         <div ref={socialRef} className="export-social-card" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
-          <div className="export-social-card__arc export-social-card__arc--one"/><div className="export-social-card__arc export-social-card__arc--two"/><p className="export-social-card__brand">KSA.MEN</p><div className="export-social-card__content"><span>{t('ظهور رقمي يليق بك', 'A digital presence worthy of you')}</span><h2>{identity}</h2><strong>{field(profile, 'title')}</strong><p>{field(profile, 'bio').slice(0, 210)}</p></div><div className="export-social-card__foot">{publicUrl}</div>
+          <div className="export-social-card__arc export-social-card__arc--one"/><div className="export-social-card__arc export-social-card__arc--two"/><p className="export-social-card__brand">KSA.MEN</p><div className="export-social-card__portrait"><img src={avatar} alt=""/></div>{profileQr && <img className="export-social-card__qr" src={profileQr} alt=""/>}<div className="export-social-card__content"><span>{t('ظهور رقمي يليق بك', 'A digital presence worthy of you')}</span><h2>{identity}</h2><strong>{field(profile, 'title')}</strong><p>{field(profile, 'bio').slice(0, 210)}</p></div><div className="export-social-card__foot">{publicUrl}</div>
         </div>
       </div>
     </>}
@@ -612,19 +799,31 @@ export function QRTools() {
   const content = mode === 'url'
     ? url.trim()
     : profileVCard({ name: form.name, title: form.title, email: form.email, phone: form.phone }, form.organization, form.website.trim());
-  const canCreate = mode === 'url' ? Boolean(url.trim()) : Boolean(form.name.trim() || form.phone.trim() || form.email.trim() || form.website.trim());
+  const hasValidWebUrl = !url.trim() || validWebUrl(url.trim());
+  const hasValidVCardWebsite = !form.website.trim() || validWebUrl(form.website.trim());
+  const canCreate = mode === 'url'
+    ? Boolean(url.trim()) && hasValidWebUrl
+    : Boolean(form.name.trim() || form.phone.trim() || form.email.trim() || form.website.trim()) && hasValidVCardWebsite;
+
+  const createQr = async () => qrDataUrl(content, { width: 1800, centerImage: QR_BRAND_ICON });
 
   const create = async () => {
     if (!canCreate) return;
     setBusy(true);
-    try { setPreview(await qrDataUrl(content)); }
+    try { setPreview(await createQr()); }
     catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر إنشاء QR.', 'Could not create the QR code.')); }
     finally { setBusy(false); }
   };
 
   const download = async () => {
-    if (!preview) { await create(); return; }
-    downloadDataUrl(preview, `ksa-men-${mode}-qr.png`);
+    if (!canCreate) return;
+    setBusy(true);
+    try {
+      const image = preview || await createQr();
+      if (!preview) setPreview(image);
+      downloadDataUrl(image, `ksa-men-${mode}-qr.png`);
+    } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر إنشاء QR.', 'Could not create the QR code.')); }
+    finally { setBusy(false); }
   };
 
   const downloadContact = () => {
@@ -633,11 +832,11 @@ export function QRTools() {
   };
 
   return <main className="qr-tools" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-    <section className="qr-tools__hero card"><div><p className="exports-kicker"><QrCode size={16}/>{t('خدمة مجانية', 'Free tool')}</p><h1>{t('أنشئ QR أو vCard في ثوانٍ', 'Create a QR or vCard in seconds')}</h1><p>{t('تعمل هذه الأداة محلياً في متصفحك ولا تتطلب تسجيلاً أو طلب API.', 'This tool runs locally in your browser and needs no sign-in or API request.')}</p></div><QrCode size={72} strokeWidth={1.1}/></section>
+    <section className="qr-tools__hero card"><div><p className="exports-kicker"><QrCode size={16}/>{t('خدمة مجانية', 'Free tool')}</p><h1>{t('أنشئ QR أو vCard في ثوانٍ', 'Create a QR or vCard in seconds')}</h1><p>{t('تعمل هذه الأداة محلياً في متصفحك ولا تتطلب تسجيلاً أو طلب API. تحمل الرموز شعار KSA.MEN في المركز مع تصحيح H وهامش للطباعة.', 'This tool runs locally in your browser and needs no sign-in or API request. Codes include the KSA.MEN mark, H-level correction and a print-safe quiet zone.')}</p></div><QrCode size={72} strokeWidth={1.1}/></section>
     <section className="qr-tools__workspace card">
       <div className="qr-tools__tabs"><button type="button" onClick={() => { setMode('url'); setPreview(''); }} className={mode === 'url' ? 'is-active' : ''}><Share2 size={16}/>{t('رابط', 'URL')}</button><button type="button" onClick={() => { setMode('vcard'); setPreview(''); }} className={mode === 'vcard' ? 'is-active' : ''}><ContactRound size={16}/>vCard</button></div>
-      {mode === 'url' ? <label className="qr-tools__field"><span>{t('الرابط المراد ترميزه', 'URL to encode')}</span><input value={url} onChange={(event) => { setUrl(event.target.value); setPreview(''); }} dir="ltr" type="url" placeholder="https://example.com"/></label> : <div className="qr-tools__fields"><label className="qr-tools__field"><span>{t('الاسم', 'Name')}</span><input value={form.name} onChange={(event) => { setForm({ ...form, name: event.target.value }); setPreview(''); }}/></label><label className="qr-tools__field"><span>{t('المسمى', 'Title')}</span><input value={form.title} onChange={(event) => { setForm({ ...form, title: event.target.value }); setPreview(''); }}/></label><label className="qr-tools__field"><span>{t('الجهة', 'Organization')}</span><input value={form.organization} onChange={(event) => { setForm({ ...form, organization: event.target.value }); setPreview(''); }}/></label><label className="qr-tools__field"><span>{t('البريد', 'Email')}</span><input value={form.email} onChange={(event) => { setForm({ ...form, email: event.target.value }); setPreview(''); }} dir="ltr" type="email"/></label><label className="qr-tools__field"><span>{t('الهاتف', 'Phone')}</span><input value={form.phone} onChange={(event) => { setForm({ ...form, phone: event.target.value }); setPreview(''); }} dir="ltr" type="tel"/></label><label className="qr-tools__field"><span>{t('الموقع', 'Website')}</span><input value={form.website} onChange={(event) => { setForm({ ...form, website: event.target.value }); setPreview(''); }} dir="ltr" type="url" placeholder="https://example.com"/></label></div>}
-      <div className="qr-tools__actions"><Button onClick={() => void create()} disabled={!canCreate || busy}>{busy ? <LoaderCircle className="exports-spin" size={17}/> : <QrCode size={17}/>} {t('إنشاء QR عالي الدقة', 'Create high-res QR')}</Button>{preview && <Button className="button-quiet" onClick={() => void download()}><Download size={17}/>{t('تنزيل PNG', 'Download PNG')}</Button>}{mode === 'vcard' && <Button className="button-quiet" onClick={downloadContact} disabled={!canCreate}><ContactRound size={17}/>{t('تنزيل vCard', 'Download vCard')}</Button>}</div>
+      {mode === 'url' ? <><label className="qr-tools__field"><span>{t('الرابط المراد ترميزه', 'URL to encode')}</span><input value={url} onChange={(event) => { setUrl(event.target.value); setPreview(''); }} dir="ltr" type="url" placeholder="https://example.com" aria-invalid={!hasValidWebUrl}/></label>{!hasValidWebUrl && <p className="qr-tools__validation" role="alert">{t('استخدم رابط ويب كاملاً يبدأ بـ http:// أو https://.', 'Use a complete website URL beginning with http:// or https://.')}</p>}</> : <><div className="qr-tools__fields"><label className="qr-tools__field"><span>{t('الاسم', 'Name')}</span><input value={form.name} onChange={(event) => { setForm({ ...form, name: event.target.value }); setPreview(''); }}/></label><label className="qr-tools__field"><span>{t('المسمى', 'Title')}</span><input value={form.title} onChange={(event) => { setForm({ ...form, title: event.target.value }); setPreview(''); }}/></label><label className="qr-tools__field"><span>{t('الجهة', 'Organization')}</span><input value={form.organization} onChange={(event) => { setForm({ ...form, organization: event.target.value }); setPreview(''); }}/></label><label className="qr-tools__field"><span>{t('البريد', 'Email')}</span><input value={form.email} onChange={(event) => { setForm({ ...form, email: event.target.value }); setPreview(''); }} dir="ltr" type="email"/></label><label className="qr-tools__field"><span>{t('الهاتف', 'Phone')}</span><input value={form.phone} onChange={(event) => { setForm({ ...form, phone: event.target.value }); setPreview(''); }} dir="ltr" type="tel"/></label><label className="qr-tools__field"><span>{t('الموقع', 'Website')}</span><input value={form.website} onChange={(event) => { setForm({ ...form, website: event.target.value }); setPreview(''); }} dir="ltr" type="url" placeholder="https://example.com" aria-invalid={!hasValidVCardWebsite}/></label></div>{!hasValidVCardWebsite && <p className="qr-tools__validation" role="alert">{t('رابط الموقع في vCard يجب أن يبدأ بـ http:// أو https://.', 'The vCard website must begin with http:// or https://.')}</p>}</>}
+      <div className="qr-tools__actions"><Button onClick={() => void create()} disabled={!canCreate || busy}>{busy ? <LoaderCircle className="exports-spin" size={17}/> : <QrCode size={17}/>} {t('إنشاء QR عالي الدقة', 'Create high-res QR')}</Button>{preview && <Button className="button-quiet" onClick={() => void download()} disabled={busy}><Download size={17}/>{t('تنزيل PNG', 'Download PNG')}</Button>}{mode === 'vcard' && <Button className="button-quiet" onClick={downloadContact} disabled={!canCreate || busy}><ContactRound size={17}/>{t('تنزيل vCard', 'Download vCard')}</Button>}</div>
       {preview && <div className="qr-tools__preview"><img src={preview} alt={t('رمز QR تم إنشاؤه', 'Generated QR code')}/><p>{t('جاهز للطباعة أو المشاركة. يحمل الرمز مستوى تصحيح عالياً.', 'Ready to print or share. The code uses a high error-correction level.')}</p></div>}
     </section>
   </main>;

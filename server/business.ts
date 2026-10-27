@@ -10,7 +10,7 @@ import {
   one,
   run,
   service,
-  siteFor,
+  serviceState,
   uid,
 } from './core';
 
@@ -70,8 +70,9 @@ type Profile = {
 type NamedUser = { id: number; email: string; name: string; status: string };
 type D1ResultLike = { meta?: { changes?: number } };
 
+// DNS labels are stored canonically: lowercase, 1–63 characters, with no edge hyphen.
+// Consecutive internal hyphens are valid DNS syntax; the legacy database guard is recorded below.
 const NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9_-]{1,160}$/;
 const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/cover-1600.webp']);
 const PROFILE_KEYS = new Set([
@@ -92,6 +93,7 @@ const RESUME_LISTS = [
   'hobbies', 'achievements', 'timeline',
 ] as const;
 const QUICK_FIELDS = new Set(['name', 'title', 'whatsapp', 'email', 'site']);
+const QUICK_LINK_MODES = new Set(['professional', 'business', 'quick']);
 
 function apiError(status: number, error: string, code?: string): never {
   throw new HTTPException(status as 400, {
@@ -362,30 +364,62 @@ function mediaIds(profile: Profile): string[] {
   return [...ids];
 }
 
-async function assertProfileMediaOwned(c: App extends never ? never : any, profile: Profile, userId: number): Promise<void> {
+async function assertProfileMediaEditable(
+  c: any,
+  profile: Profile,
+  editorId: number,
+  site: Pick<SiteRow, 'id' | 'user_id'>,
+): Promise<void> {
   const ids = mediaIds(profile);
   if (!ids.length) return;
   const placeholders = ids.map(() => '?').join(',');
   const rows = await all<{ id: string }>(
     c,
-    `SELECT id FROM media WHERE owner_id=? AND id IN (${placeholders})`,
-    userId,
+    `SELECT id FROM media
+     WHERE id IN (${placeholders})
+       AND purpose IN ('photo','cover','skill','work')
+       AND (owner_id=? OR site_id=? OR (? IS NOT NULL AND owner_id=?))`,
     ...ids,
+    editorId,
+    site.id,
+    site.user_id,
+    site.user_id,
   );
   if (rows.length !== ids.length) {
-    apiError(403, 'A profile may only reference media you own', 'MEDIA_FORBIDDEN');
+    apiError(403, 'A profile may only reference permitted profile media for this site', 'MEDIA_FORBIDDEN');
   }
+}
+
+function normalizedName(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
 function safeName(value: unknown): string {
-  if (typeof value !== 'string' || !NAME_RE.test(value)) {
+  const name = normalizedName(value);
+  if (!name || !NAME_RE.test(name)) {
     apiError(422, 'Name must be lowercase DNS text from 1 to 63 characters', 'INVALID_NAME');
   }
-  return value;
+  return name;
+}
+
+function isUuid(value: string): boolean {
+  if (value.length !== 36) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (index === 8 || index === 13 || index === 18 || index === 23) {
+      if (value[index] !== '-') return false;
+      continue;
+    }
+    const code = value.charCodeAt(index);
+    const hexadecimal = (code >= 48 && code <= 57) || (code >= 65 && code <= 70) || (code >= 97 && code <= 102);
+    if (!hexadecimal) return false;
+  }
+  const version = value[14].toLowerCase();
+  const variant = value[19].toLowerCase();
+  return '12345678'.includes(version) && '89ab'.includes(variant);
 }
 
 function safeIdempotencyKey(value: unknown): string {
-  if (typeof value !== 'string' || !UUID_RE.test(value)) {
+  if (typeof value !== 'string' || !isUuid(value)) {
     apiError(422, 'idempotencyKey must be a UUID', 'INVALID_IDEMPOTENCY_KEY');
   }
   return value.toLowerCase();
@@ -426,15 +460,15 @@ function toReview(review: Record<string, unknown>): Json {
     draftVersion: Number(review.draft_version),
     base_version: Number(review.base_version),
     baseVersion: Number(review.base_version),
-    status: review.status,
+    status: review.decision_status ?? review.status,
     kind: review.kind,
     reviewer_id: review.reviewer_id === null || review.reviewer_id === undefined ? null : `C${review.reviewer_id}`,
     reviewerId: review.reviewer_id === null || review.reviewer_id === undefined ? null : `C${review.reviewer_id}`,
-    reason: review.reason ?? null,
+    reason: review.decision_reason ?? review.reason ?? null,
     created_at: Number(review.created_at),
     createdAt: Number(review.created_at),
-    decided_at: review.decided_at ?? null,
-    decidedAt: review.decided_at ?? null,
+    decided_at: review.decision_decided_at ?? review.decided_at ?? null,
+    decidedAt: review.decision_decided_at ?? review.decided_at ?? null,
   };
 }
 
@@ -487,7 +521,7 @@ async function resolveRecipient(c: any, value: unknown): Promise<NamedUser> {
       c,
       `SELECT DISTINCT u.id,u.email,u.name,u.status
        FROM users u
-       LEFT JOIN names n ON n.owner_id=u.id
+       LEFT JOIN dns_names n ON n.owner_id=u.id
        WHERE u.status='active' AND (lower(u.email)=? OR lower(u.name)=? OR n.name=?)
        ORDER BY u.id ASC LIMIT 2`,
       lookup,
@@ -504,7 +538,7 @@ async function primarySite(c: any, userId: number): Promise<(SiteRow & { name?: 
   return one<SiteRow & { name?: string | null }>(
     c,
     `SELECT s.*, (
-       SELECT n.name FROM names n WHERE n.site_id=s.id AND n.owner_id=? ORDER BY n.created_at ASC LIMIT 1
+       SELECT n.name FROM dns_names n WHERE n.site_id=s.id AND n.owner_id=? ORDER BY n.created_at ASC LIMIT 1
      ) AS name
      FROM sites s WHERE s.user_id=? ORDER BY s.created_at ASC LIMIT 1`,
     userId,
@@ -513,42 +547,63 @@ async function primarySite(c: any, userId: number): Promise<(SiteRow & { name?: 
 }
 
 async function withSiteName(c: any, site: SiteRow): Promise<SiteRow> {
-  const named = await one<{ name: string }>(c, 'SELECT name FROM names WHERE site_id=? ORDER BY created_at ASC LIMIT 1', site.id);
+  const named = await one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE site_id=? ORDER BY created_at ASC LIMIT 1', site.id);
   return { ...site, name: named?.name ?? null };
 }
 
-function toDashboardService(item: Record<string, unknown>, user: Record<string, unknown>): Json {
-  const checkedAt = now();
-  const enabled = Boolean(item.enabled);
-  const premium = Boolean(item.premium);
-  const mode = typeof item.override_mode === 'string' ? item.override_mode : null;
-  const untilAt = Number(item.override_until ?? 0);
-  const grantActive = mode === 'grant' && (!untilAt || untilAt > checkedAt);
-  const suspended = mode === 'suspended';
-  const activeEntitlement = Number(user.trial_until ?? 0) > checkedAt || Number(user.entitlement_until ?? 0) > checkedAt;
-  const entitled = !suspended && (!premium || activeEntitlement || grantActive);
-  const override = mode ? { mode, untilAt: untilAt || null } : null;
+/** Allows only an owner, site owner, explicit site manager/proxy creator, or assigned manager to edit. */
+async function editableSiteFor(c: any, id: string, editor: Record<string, unknown>): Promise<SiteRow> {
+  const site = await one<SiteRow>(c, 'SELECT * FROM sites WHERE id=?', id);
+  if (!site) apiError(404, 'Site not found', 'SITE_NOT_FOUND');
+  const editorId = Number(editor.id);
+  if (String(editor.role) === 'owner' || site.user_id === editorId || site.manager_id === editorId) return site;
+  if (String(editor.role) === 'manager' && site.user_id !== null) {
+    const assigned = await one<{ id: number }>(
+      c,
+      'SELECT id FROM users WHERE id=? AND assigned_to=? AND status=\'active\'',
+      site.user_id,
+      editorId,
+    );
+    if (assigned) return site;
+  }
+  apiError(403, 'This site is outside your editing scope', 'SITE_FORBIDDEN');
+}
+
+async function toDashboardService(c: any, item: Record<string, unknown>, userId: number): Promise<Json> {
+  const state = await serviceState(c, String(item.key), userId) as {
+    enabled: boolean;
+    entitled: boolean;
+    policy?: unknown;
+    override?: unknown;
+    sources?: unknown;
+    reason?: unknown;
+  };
+  const override = isRecord(state.override) ? state.override : null;
   return {
     key: item.key,
     name_ar: item.name_ar,
     name_en: item.name_en,
     nameAr: item.name_ar,
     nameEn: item.name_en,
-    enabled,
-    premium,
-    entitled,
-    until_at: untilAt || null,
-    policy: parseJson<Json>(item.policy, {}),
+    enabled: state.enabled,
+    premium: Boolean(item.premium),
+    entitled: state.entitled,
+    until_at: typeof override?.untilAt === 'number' && override.untilAt > 0 ? override.untilAt : null,
+    policy: isRecord(state.policy) ? state.policy : parseJson<Json>(item.policy, {}),
     override,
+    sources: Array.isArray(state.sources) ? state.sources : [],
+    reason: typeof state.reason === 'string' ? state.reason : null,
   };
 }
 
 function toQuickLink(row: Record<string, unknown>, rootDomain: string): Json {
-  const payload = parseJson<{ fields?: unknown }>(row.payload, {});
+  const payload = parseJson<{ fields?: unknown; mode?: unknown }>(row.payload, {});
   const fields = Array.isArray(payload.fields) ? payload.fields.filter((field): field is string => typeof field === 'string') : [];
+  const mode = typeof payload.mode === 'string' && QUICK_LINK_MODES.has(payload.mode) ? payload.mode : 'professional';
   return {
     id: row.id,
     url: `https://${rootDomain}/quick/${row.id}`,
+    mode,
     fields,
     expires_at: Number(row.expires_at),
     expiresAt: Number(row.expires_at),
@@ -593,13 +648,18 @@ export function registerBusiness(app: App): void {
       all<SiteRow>(
         c,
         `SELECT s.*,(
-           SELECT n.name FROM names n WHERE n.site_id=s.id ORDER BY n.created_at ASC LIMIT 1
+           SELECT n.name FROM dns_names n WHERE n.site_id=s.id ORDER BY n.created_at ASC LIMIT 1
          ) AS name
-         FROM sites s WHERE s.user_id=? OR s.manager_id=? ORDER BY s.updated_at DESC`,
+         FROM sites s
+         LEFT JOIN users site_owner ON site_owner.id=s.user_id
+         WHERE s.user_id=? OR s.manager_id=? OR (?='manager' AND site_owner.assigned_to=?)
+         ORDER BY s.updated_at DESC`,
         userId,
+        userId,
+        String(user.role ?? ''),
         userId,
       ),
-      all<Record<string, unknown>>(c, 'SELECT * FROM reviews WHERE user_id=? ORDER BY created_at DESC LIMIT 100', userId),
+      all<Record<string, unknown>>(c, 'SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.user_id=? ORDER BY r.created_at DESC LIMIT 100', userId),
       one<{ balance: number }>(c, 'SELECT balance FROM wallets WHERE user_id=?', userId),
       all<Record<string, unknown>>(
         c,
@@ -641,11 +701,16 @@ export function registerBusiness(app: App): void {
         c,
         `SELECT a.site_id,a.event,COUNT(*) AS total,
           SUM(CASE WHEN a.created_at>=? THEN 1 ELSE 0 END) AS last7
-         FROM analytics a JOIN sites s ON s.id=a.site_id
-         WHERE (s.user_id=? OR s.manager_id=?) AND a.created_at>=?
+         FROM analytics a
+         JOIN sites s ON s.id=a.site_id
+         LEFT JOIN users site_owner ON site_owner.id=s.user_id
+         WHERE (s.user_id=? OR s.manager_id=? OR (?='manager' AND site_owner.assigned_to=?))
+           AND a.created_at>=?
          GROUP BY a.site_id,a.event`,
         checkedAt - 7 * 86_400,
         userId,
+        userId,
+        String(user.role ?? ''),
         userId,
         checkedAt - 30 * 86_400,
       ),
@@ -668,6 +733,7 @@ export function registerBusiness(app: App): void {
       if (event === 'qr' || event === 'qr_scan' || event === 'qr_interaction') metrics.qrInteractions += count;
       analytics[siteId] = metrics;
     }
+    const serviceStates = await Promise.all(services.map((item) => toDashboardService(c, item, userId)));
 
     return c.json({
       sites: sites.map(toSite),
@@ -705,8 +771,8 @@ export function registerBusiness(app: App): void {
         reversed_at: payment.reversed_at ?? null,
         reversedAt: payment.reversed_at ?? null,
       })),
-      // Enforcement remains centralized in core.service; this is configuration/status for the dashboard.
-      services: services.map((item) => toDashboardService(item, user)),
+      // This mirrors core.serviceState, while core.service remains the enforcement boundary.
+      services: serviceStates,
       notifications: notifications.map((notification) => ({
         id: notification.id,
         title: notification.title,
@@ -740,7 +806,7 @@ export function registerBusiness(app: App): void {
 
   app.get('/api/names/check', async (c) => {
     me(c);
-    const candidate = c.req.query('name') ?? '';
+    const candidate = normalizedName(c.req.query('name'));
     if (!NAME_RE.test(candidate)) {
       return c.json({
         name: candidate,
@@ -752,7 +818,7 @@ export function registerBusiness(app: App): void {
     }
     const [reserved, existing] = await Promise.all([
       one<{ name: string }>(c, 'SELECT name FROM reserved_names WHERE name=? AND active=1', candidate),
-      one<{ name: string }>(c, 'SELECT name FROM names WHERE name=?', candidate),
+      one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE name=?', candidate),
     ]);
     const available = !reserved && !existing;
     const suffixes = ['-sa', '1', '-pro'];
@@ -775,7 +841,7 @@ export function registerBusiness(app: App): void {
     const name = safeName(body.name);
     const [reserved, existing] = await Promise.all([
       one<{ name: string }>(c, 'SELECT name FROM reserved_names WHERE name=? AND active=1', name),
-      one<{ name: string }>(c, 'SELECT name FROM names WHERE name=?', name),
+      one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE name=?', name),
     ]);
     if (reserved) apiError(409, 'This name is reserved', 'NAME_RESERVED');
     if (existing) apiError(409, 'This name is already registered', 'NAME_TAKEN');
@@ -791,13 +857,13 @@ export function registerBusiness(app: App): void {
            WHERE NOT EXISTS (SELECT 1 FROM sites WHERE user_id=?)`,
         ).bind(proposedSiteId, userId, initialDraft, createdAt, createdAt, userId),
         c.env.DB.prepare(
-          `INSERT INTO names(name,owner_id,site_id,created_at)
+          `INSERT INTO dns_names(name,owner_id,site_id,created_at)
            SELECT ?,?,id,? FROM sites WHERE user_id=?`,
         ).bind(name, userId, createdAt, userId),
       ]);
     } catch {
       // The database name trigger/unique key is the authority under concurrent reservations.
-      const winner = await one<{ name: string }>(c, 'SELECT name FROM names WHERE name=?', name);
+      const winner = await one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE name=?', name);
       if (winner) apiError(409, 'This name was just registered by another account', 'NAME_CONFLICT');
       const blocked = await one<{ name: string }>(c, 'SELECT name FROM reserved_names WHERE name=? AND active=1', name);
       if (blocked) apiError(409, 'This name is reserved', 'NAME_RESERVED');
@@ -805,7 +871,7 @@ export function registerBusiness(app: App): void {
     }
     const reservedName = await one<{ name: string; site_id: string; created_at: number }>(
       c,
-      'SELECT name,site_id,created_at FROM names WHERE name=? AND owner_id=?',
+      'SELECT name,site_id,created_at FROM dns_names WHERE name=? AND owner_id=?',
       name,
       userId,
     );
@@ -817,22 +883,22 @@ export function registerBusiness(app: App): void {
   });
 
   app.get('/api/sites/:id', async (c) => {
-    me(c);
-    const site = await siteFor(c, c.req.param('id')) as unknown as SiteRow;
+    const user = me(c) as unknown as Record<string, unknown>;
+    const site = await editableSiteFor(c, c.req.param('id'), user);
     return c.json({ site: toSite(await withSiteName(c, site)) });
   });
 
   app.put('/api/sites/:id/draft', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const body = await requestBody(c);
-    const site = await siteFor(c, c.req.param('id')) as unknown as SiteRow;
+    const site = await editableSiteFor(c, c.req.param('id'), user);
     const version = asInteger(body.version, 'version');
     if (version !== Number(site.draft_version)) {
       apiError(409, 'This draft has changed. Reload before saving.', 'DRAFT_CONFLICT');
     }
     const previous = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
     const profile = normalizeProfile(body.draft, previous.name || String(user.name ?? ''));
-    await assertProfileMediaOwned(c, profile, Number(user.id));
+    await assertProfileMediaEditable(c, profile, Number(user.id), site);
     const updatedAt = now();
     const result = await run(
       c,
@@ -860,10 +926,10 @@ export function registerBusiness(app: App): void {
 
   app.post('/api/sites/:id/submit', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
-    const site = await siteFor(c, c.req.param('id')) as unknown as SiteRow;
+    const site = await editableSiteFor(c, c.req.param('id'), user);
     const existing = await one<{ id: string }>(
       c,
-      "SELECT id FROM reviews WHERE site_id=? AND draft_version=? AND status='pending'",
+      "SELECT r.id FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL",
       site.id,
       site.draft_version,
     );
@@ -892,7 +958,7 @@ export function registerBusiness(app: App): void {
       if (error instanceof HTTPException) throw error;
       const pending = await one<{ id: string }>(
         c,
-        "SELECT id FROM reviews WHERE site_id=? AND draft_version=? AND status='pending'",
+        "SELECT r.id FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL",
         site.id,
         site.draft_version,
       );
@@ -911,7 +977,7 @@ export function registerBusiness(app: App): void {
   app.post('/api/sites/:id/lock', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const body = await requestBody(c);
-    const site = await siteFor(c, c.req.param('id')) as unknown as SiteRow;
+    const site = await editableSiteFor(c, c.req.param('id'), user);
     const enabled = asBoolean(body.enabled, 'enabled', false);
     const message = asString(body.message, 'message', 300);
     let lockHash: string | null = null;
@@ -937,7 +1003,7 @@ export function registerBusiness(app: App): void {
   app.post('/api/sites/:id/redirect', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const body = await requestBody(c);
-    const site = await siteFor(c, c.req.param('id')) as unknown as SiteRow;
+    const site = await editableSiteFor(c, c.req.param('id'), user);
     const redirect = httpUrl(body.url, 'url');
     if (!redirect) apiError(422, 'url is required', 'VALIDATION');
     const current = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
@@ -982,14 +1048,15 @@ export function registerBusiness(app: App): void {
 
   app.get('/api/services', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
+    const userId = Number(user.id);
     const rows = await all<Record<string, unknown>>(
       c,
       `SELECT s.*,us.mode AS override_mode,us.until_at AS override_until
        FROM services s LEFT JOIN user_services us ON us.key=s.key AND us.user_id=? ORDER BY s.key`,
-      Number(user.id),
+      userId,
     );
     return c.json({
-      services: rows.map((row) => toDashboardService(row, user)),
+      services: await Promise.all(rows.map((row) => toDashboardService(c, row, userId))),
     });
   });
 
@@ -1055,6 +1122,20 @@ export function registerBusiness(app: App): void {
     try {
       await c.env.DB.batch([
         c.env.DB.prepare('INSERT INTO redemptions(id,user_id,days,created_at) VALUES(?,?,?,?)').bind(redemptionId, userId, days, createdAt),
+        // The redemption trigger moves points and advances the aggregate entitlement first; this
+        // statement records that resulting point-backed window in the same atomic D1 batch.
+        c.env.DB.prepare(
+          `INSERT INTO entitlement_sources(id,user_id,source_kind,starts_at,ends_at,reference,detail,created_by,created_at)
+           SELECT ?,?,'points',?,entitlement_until,?,?,NULL,? FROM users WHERE id=?`,
+        ).bind(
+          `entitlement-points-${redemptionId}`,
+          userId,
+          createdAt,
+          `redemption-${redemptionId}`,
+          `${days} point-redemption day(s)`,
+          createdAt,
+          userId,
+        ),
         c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
           uid(), userId, 'تم استبدال نقاط الوسط', `تم استبدال ${days * 100} نقطة مقابل ${days} يوم.`, createdAt,
         ),
@@ -1171,6 +1252,10 @@ export function registerBusiness(app: App): void {
     const userId = Number(user.id);
     await service(c, 'quick_link', userId);
     const body = await requestBody(c);
+    const mode = body.mode === undefined ? 'professional' : asString(body.mode, 'mode', 32, true).toLowerCase();
+    if (!QUICK_LINK_MODES.has(mode)) {
+      apiError(422, 'mode must be professional, business, or quick', 'VALIDATION');
+    }
     if (!Array.isArray(body.fields) || !body.fields.length || body.fields.length > QUICK_FIELDS.size) {
       apiError(422, 'fields must be a non-empty selection of permitted quick-link fields', 'VALIDATION');
     }
@@ -1197,7 +1282,7 @@ export function registerBusiness(app: App): void {
     const id = uid();
     const expiresAt = createdAt + expiresDays * 86_400;
     // This payload is deliberately independent of hidden fields: the owner explicitly selected every item here.
-    const payload = { fields, values };
+    const payload = { mode, fields, values };
     await run(c, 'INSERT INTO quick_links(id,user_id,payload,expires_at,revoked,created_at) VALUES(?,?,?,?,0,?)', id, userId, JSON.stringify(payload), expiresAt, createdAt);
     await audit(c, 'quick_link.create', id, { fields, expiresAt });
     return c.json(toQuickLink({ id, payload: JSON.stringify(payload), expires_at: expiresAt, created_at: createdAt, revoked: 0 }, c.env.ROOT_DOMAIN), 201);
@@ -1223,7 +1308,7 @@ export function registerBusiness(app: App): void {
     const name = safeName(body.name);
     const recipient = await resolveRecipient(c, body.recipient);
     if (recipient.id === userId) apiError(422, 'You cannot transfer a name to yourself', 'SELF_TRANSFER');
-    const owned = await one<{ name: string; site_id: string | null }>(c, 'SELECT name,site_id FROM names WHERE name=? AND owner_id=?', name, userId);
+    const owned = await one<{ name: string; site_id: string | null }>(c, 'SELECT name,site_id FROM dns_names WHERE name=? AND owner_id=?', name, userId);
     if (!owned) apiError(404, 'You do not own this name', 'NAME_NOT_OWNED');
     const pending = await one<{ id: string }>(c, "SELECT id FROM transfers WHERE name=? AND status IN ('pending','accepted')", name);
     if (pending) apiError(409, 'A transfer for this name is already in progress', 'TRANSFER_PENDING');

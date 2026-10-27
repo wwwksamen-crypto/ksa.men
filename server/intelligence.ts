@@ -6,7 +6,9 @@ import { all, audit, me, now, one, role, run, service, siteFor, type App, type E
 const MODEL = '@cf/meta/m2m100-1.2b';
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
 const FEED_TIMEOUT_MS = 15_000;
-const MAX_FEED_BYTES = 1_500_000;
+// The largest verified approved feed is Forbes Middle East at 1,947,574 bytes
+// (checked 2026-10-27). The stream is still hard-capped before XML parsing.
+const MAX_FEED_BYTES = 2_000_000;
 const MAX_ITEMS_PER_FEED = 50;
 const MAX_RADAR_ITEMS = 100;
 const DAILY_CHARACTER_LIMIT = 50_000;
@@ -37,7 +39,31 @@ type RadarRefreshResult = {
   inserted: number;
   errors: number;
   updatedAt: number;
+  status: 'ok' | 'partial' | 'unavailable';
 };
+
+type RadarStatus = 'fresh' | 'stale' | 'unavailable' | 'empty' | 'partial';
+
+/**
+ * The database may only enable these publisher RSS endpoints. This prevents an
+ * edited source row or a redirect from becoming an arbitrary internal fetch.
+ * Additions require a reviewed migration plus evidence that the publisher
+ * permits the feed's intended public metadata use.
+ */
+const approvedRadarFeeds: Readonly<Record<string, string>> = {
+  'hbr-arabic': 'https://hbrarabic.com/feed/',
+  wamda: 'https://www.wamda.com/feed',
+  'forbes-middle-east': 'https://www.forbesmiddleeast.com/feed',
+};
+
+const radarCategories = {
+  hackathon: /\b(?:hackathon|hackathons)\b|هاكاثون/iu,
+  jobs: /\b(?:job|jobs|hiring|vacancy|vacancies|career|careers|recruitment|recruiting)\b|وظائ[فف]|توظيف|شواغر|فرص\s+عمل|فرص\s+وظيف/iu,
+  conference: /\b(?:conference|summit|forum)\b|مؤتمر|قمة|منتدى|ملتقى/iu,
+  training: /\b(?:training|course|workshop|bootcamp|certification|webinar)\b|تدريب|دورة|ورشة|معسكر|شهادة/iu,
+  hr: /\b(?:human resources|workforce|talent|employee|employees|hr)\b|موارد\s+بشرية|رأس\s+المال\s+البشري|القوى\s+العاملة/iu,
+  events: /\b(?:event|events|exhibition|expo|fair)\b|فعالية|فعاليات|معرض/iu,
+} as const;
 
 const translationRequest = z.object({
   siteId: z.string().uuid(),
@@ -59,9 +85,12 @@ const xmlParser = new XMLParser({
 });
 
 const translatableRootFields = new Set(['title', 'bio', 'city', 'country']);
-const translatableSimpleLists = new Set(['skills', 'hobbies']);
-const translatableStructuredLists = new Set(['experience', 'education', 'training', 'timeline']);
+const translatableContentLists = new Set([
+  'experience', 'education', 'training', 'skills', 'memberships',
+  'languages', 'hobbies', 'achievements', 'timeline',
+]);
 const qualificationLists = new Set(['education', 'training']);
+const officialNameLists = new Set(['education', 'training', 'memberships', 'achievements']);
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -108,11 +137,23 @@ function canonicalHttpUrl(value: unknown, base?: string): string | null {
   }
 }
 
-function safeFeedUrl(value: string): string | null {
+function publicHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.$/, '');
+  if (!normalized || normalized === 'localhost' || normalized.endsWith('.localhost') || normalized.endsWith('.local')) return false;
+  // URL normalisation converts integer/octal IPv4 forms; reject every literal
+  // IP form so this worker never fetches loopback, link-local, or RFC1918 hosts.
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(normalized) || normalized.includes(':')) return false;
+  return true;
+}
+
+function safeFeedUrl(source: RadarSource): string | null {
+  const expected = approvedRadarFeeds[source.id];
+  if (!expected || source.url !== expected) return null;
+  const value = source.url;
   const url = canonicalHttpUrl(value);
   if (!url) return null;
   const parsed = new URL(url);
-  if (parsed.protocol !== 'https:' || parsed.hostname === 'localhost' || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(parsed.hostname)) return null;
+  if (parsed.protocol !== 'https:' || !publicHostname(parsed.hostname) || parsed.href !== expected) return null;
   return parsed.href;
 }
 
@@ -169,7 +210,9 @@ export function processFeedXML(xml: string, feedUrl: string, fetchedAt = now()):
   }
 
   const cutoff = fetchedAt - WEEK_SECONDS;
-  const latestAllowed = fetchedAt + 24 * 60 * 60;
+  // The feed's publication time, not this worker's fetch time, is authoritative.
+  // A future publication is not displayed even when the publisher clock is ahead.
+  const latestAllowed = fetchedAt;
   const candidates: RadarItem[] = [];
   const rss = isRecord(document.rss) ? document.rss : null;
   const atom = isRecord(document.feed) ? document.feed : null;
@@ -198,7 +241,10 @@ export function processFeedXML(xml: string, feedUrl: string, fetchedAt = now()):
   }
 
   const deduplicated = new Map<string, RadarItem>();
-  for (const item of candidates) if (!deduplicated.has(item.link)) deduplicated.set(item.link, item);
+  for (const item of candidates) {
+    const key = `${item.link}\n${item.title.normalize('NFKC').toLocaleLowerCase()}\n${item.published_at}`;
+    if (!deduplicated.has(key)) deduplicated.set(key, item);
+  }
   return [...deduplicated.values()]
     .sort((a, b) => b.published_at - a.published_at)
     .slice(0, MAX_ITEMS_PER_FEED);
@@ -206,14 +252,47 @@ export function processFeedXML(xml: string, feedUrl: string, fetchedAt = now()):
 
 function errorCode(error: unknown): string {
   const message = error instanceof Error ? error.message : '';
-  if (['feed_too_large', 'feed_parse_error', 'feed_unsupported'].includes(message)) return message;
+  if (['feed_invalid_url', 'feed_too_large', 'feed_empty', 'feed_parse_error', 'feed_unsupported', 'feed_redirect_blocked', 'feed_content_type'].includes(message)) return message;
   if (message.startsWith('feed_http_')) return message;
   if (message === 'feed_timeout') return message;
   return 'feed_fetch_error';
 }
 
+async function readFeedBody(response: Response): Promise<string> {
+  const declaredSize = Number(response.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declaredSize) && declaredSize > MAX_FEED_BYTES) throw new Error('feed_too_large');
+  if (!response.body) throw new Error('feed_empty');
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > MAX_FEED_BYTES) {
+        await reader.cancel();
+        throw new Error('feed_too_large');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!total) throw new Error('feed_empty');
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 async function fetchFeed(source: RadarSource, fetchedAt: number): Promise<RadarItem[]> {
-  const feedUrl = safeFeedUrl(source.url);
+  const feedUrl = safeFeedUrl(source);
   if (!feedUrl) throw new Error('feed_invalid_url');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FEED_TIMEOUT_MS);
@@ -223,13 +302,18 @@ async function fetchFeed(source: RadarSource, fetchedAt: number): Promise<RadarI
         Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9',
         'User-Agent': 'KSA-MEN-Radar/1.0 (+https://ksa.men)',
       },
-      redirect: 'follow',
+      // Approved feeds are direct publisher endpoints. Do not follow a redirect
+      // into another hostname, including a private address obtained via DNS.
+      redirect: 'manual',
       signal: controller.signal,
     });
+    if (response.status >= 300 && response.status < 400) throw new Error('feed_redirect_blocked');
     if (!response.ok) throw new Error(`feed_http_${response.status}`);
-    const declaredSize = Number(response.headers.get('content-length') ?? '0');
-    if (Number.isFinite(declaredSize) && declaredSize > MAX_FEED_BYTES) throw new Error('feed_too_large');
-    const xml = await response.text();
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (contentType && !/(?:application|text)\/(?:rss\+xml|atom\+xml|xml)|\+xml/.test(contentType)) {
+      throw new Error('feed_content_type');
+    }
+    const xml = await readFeedBody(response);
     return processFeedXML(xml, feedUrl, fetchedAt);
   } catch (error) {
     if (controller.signal.aborted) throw new Error('feed_timeout');
@@ -237,6 +321,31 @@ async function fetchFeed(source: RadarSource, fetchedAt: number): Promise<RadarI
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Maps titles only; no article bodies or inferred qualifications are collected. */
+export function classifyRadarCategory(title: string, fallback = 'professional'): string {
+  for (const [category, expression] of Object.entries(radarCategories)) {
+    if (expression.test(title)) return category;
+  }
+  const normalized = fallback.trim().toLowerCase();
+  if (normalized === 'management') return 'professional-development';
+  if (normalized === 'entrepreneurship') return 'professional-opportunities';
+  if (normalized === 'business') return 'professional-information';
+  return normalized || 'professional';
+}
+
+/** Region values are normalised for the Saudi → Gulf → Arab → world ordering. */
+export function normalizeRadarRegion(region: string): 'saudi' | 'gulf' | 'arab' | 'world' {
+  const value = region.trim().toLowerCase();
+  if (/(?:saudi|ksa|السعود)/u.test(value)) return 'saudi';
+  if (/(?:gulf|gcc|الخليج)/u.test(value)) return 'gulf';
+  if (/(?:arab|mena|arabic|العرب|الشرق الأوسط)/u.test(value)) return 'arab';
+  return 'world';
+}
+
+function radarDeduplicationKey(item: RadarItem): string {
+  return `${item.title.normalize('NFKC').toLocaleLowerCase()}\n${item.published_at}`;
 }
 
 /** Fetches configured publisher feeds and records only real, recent RSS/Atom metadata. */
@@ -247,14 +356,35 @@ export async function fetchRadar(env: Env): Promise<RadarRefreshResult> {
   ).all<RadarSource>()).results;
   let inserted = 0;
   let errors = 0;
+  const seenItems = new Set<string>();
 
   for (const source of sources) {
     try {
-      const items = await fetchFeed(source, fetchedAt);
+      const items = (await fetchFeed(source, fetchedAt)).filter((item) => {
+        const key = radarDeduplicationKey(item);
+        if (seenItems.has(key)) return false;
+        seenItems.add(key);
+        return true;
+      });
       const statements = items.map((item) => env.DB.prepare(
         `INSERT OR IGNORE INTO radar_items(id,title,url,source_id,category,region,published_at,created_at)
-         VALUES(?,?,?,?,?,?,?,?)`,
-      ).bind(crypto.randomUUID(), item.title, item.link, source.id, source.category, source.region, item.published_at, fetchedAt));
+         SELECT ?,?,?,?,?,?,?,?
+         WHERE NOT EXISTS (
+           SELECT 1 FROM radar_items WHERE url=? OR (title=? AND published_at=?)
+         )`,
+      ).bind(
+        crypto.randomUUID(),
+        item.title,
+        item.link,
+        source.id,
+        classifyRadarCategory(item.title, source.category),
+        normalizeRadarRegion(source.region),
+        item.published_at,
+        fetchedAt,
+        item.link,
+        item.title,
+        item.published_at,
+      ));
       statements.push(env.DB.prepare(
         'UPDATE radar_sources SET last_fetched=?,last_error=NULL WHERE id=?',
       ).bind(fetchedAt, source.id));
@@ -267,14 +397,34 @@ export async function fetchRadar(env: Env): Promise<RadarRefreshResult> {
     }
   }
 
-  return { processed: sources.length, inserted, errors, updatedAt: fetchedAt };
+  return {
+    processed: sources.length,
+    inserted,
+    errors,
+    updatedAt: fetchedAt,
+    status: !sources.length || errors === sources.length ? 'unavailable' : errors ? 'partial' : 'ok',
+  };
 }
 
-function radarStatus(sources: Array<Pick<RadarSource, 'last_fetched' | 'last_error'>>, updatedAt: number | null): 'fresh' | 'stale' | 'unavailable' | 'empty' {
-  if (!sources.length) return 'empty';
-  if (updatedAt && updatedAt >= now() - 7 * 60 * 60) return 'fresh';
+function radarStatus(
+  sources: Array<Pick<RadarSource, 'last_fetched' | 'last_error'>>,
+  updatedAt: number | null,
+  itemCount: number,
+): RadarStatus {
+  if (!sources.length) return 'unavailable';
+  const successfulSources = sources.filter((source) => source.last_fetched !== null && !source.last_error);
+  if (!successfulSources.length) return 'unavailable';
+  if (sources.some((source) => source.last_error)) return 'partial';
+  if (updatedAt && updatedAt >= now() - 7 * 60 * 60) return itemCount ? 'fresh' : 'empty';
   if (updatedAt) return 'stale';
   return 'unavailable';
+}
+
+function radarStatusReason(sources: Array<Pick<RadarSource, 'last_fetched' | 'last_error'>>, status: RadarStatus): string | null {
+  if (status === 'unavailable') return sources.length ? 'RADAR_SOURCES_UNAVAILABLE' : 'RADAR_NO_ENABLED_SOURCES';
+  if (status === 'partial') return 'RADAR_PARTIAL_SOURCES';
+  if (status === 'empty') return 'RADAR_NO_RECENT_ITEMS';
+  return null;
 }
 
 function cloneProfile(value: unknown): JsonRecord {
@@ -317,26 +467,33 @@ function setPath(value: JsonRecord, path: Array<string | number>, next: string):
   if (typeof finalSegment === 'string' && isRecord(current)) current[finalSegment] = next;
 }
 
-function collectTranslationFields(profile: JsonRecord): TranslationField[] {
+export function collectTranslationFields(profile: JsonRecord): TranslationField[] {
   const fields: TranslationField[] = [];
-  for (const key of translatableRootFields) {
-    if (typeof profile[key] === 'string' && profile[key].trim()) fields.push({ path: [key], text: profile[key] });
-  }
-  for (const key of translatableSimpleLists) {
+  const add = (path: Array<string | number>, value: unknown) => {
+    if (typeof value === 'string' && value.trim()) fields.push({ path, text: value });
+  };
+  for (const key of translatableRootFields) add([key], profile[key]);
+
+  for (const key of translatableContentLists) {
     for (const [index, value] of asArray(profile[key]).entries()) {
-      if (typeof value === 'string' && value.trim()) fields.push({ path: [key, index], text: value });
+      if (typeof value === 'string') {
+        // A string education/training entry is an official qualification title.
+        if (!qualificationLists.has(key)) add([key, index], value);
+        continue;
+      }
+      if (!isRecord(value)) continue;
+      // Qualification titles and every organisation remain source-exact. Other
+      // structured content feeds the bilingual CV, including title and detail.
+      if (!officialNameLists.has(key)) add([key, index, 'title'], value.title);
+      add([key, index, 'description'], value.description);
     }
   }
-  for (const key of translatableStructuredLists) {
+
+  // A social/button URL is never translated or regenerated. Only an explicitly
+  // supplied display label is eligible for translation.
+  for (const key of ['socials', 'buttons']) {
     for (const [index, value] of asArray(profile[key]).entries()) {
-      if (!isRecord(value)) continue;
-      // Education and training titles are official qualifications. They and all organisations stay exact.
-      if (!qualificationLists.has(key) && typeof value.title === 'string' && value.title.trim()) {
-        fields.push({ path: [key, index, 'title'], text: value.title });
-      }
-      if (typeof value.description === 'string' && value.description.trim()) {
-        fields.push({ path: [key, index, 'description'], text: value.description });
-      }
+      if (isRecord(value)) add([key, index, 'label'], value.label);
     }
   }
   return fields;
@@ -348,10 +505,10 @@ function protectedTerms(profile: JsonRecord): string[] {
     if (typeof value === 'string' && value.trim().length >= 3) terms.add(value.trim());
   };
   add(profile.name);
-  for (const list of ['experience', 'education', 'training']) {
+  for (const list of ['experience', 'education', 'training', 'memberships', 'achievements']) {
     for (const entry of asArray(profile[list])) if (isRecord(entry)) {
       add(entry.organization);
-      if (qualificationLists.has(list)) add(entry.title);
+      if (officialNameLists.has(list)) add(entry.title);
     }
   }
   for (const list of ['memberships', 'achievements']) for (const entry of asArray(profile[list])) add(entry);
@@ -420,14 +577,32 @@ async function translateText(env: Env, text: string, sourceLang: 'ar' | 'en', ta
   return translated.join('');
 }
 
+function inferredProfileLanguage(profile: JsonRecord, fallback: 'ar' | 'en'): 'ar' | 'en' {
+  const text = collectTranslationFields(profile).map((field) => field.text).join(' ');
+  const arabic = (text.match(/[\u0600-\u06ff]/g) ?? []).length;
+  const latin = (text.match(/[a-z]/gi) ?? []).length;
+  if (arabic > latin) return 'ar';
+  if (latin > arabic) return 'en';
+  return fallback;
+}
+
 function translationSource(draft: JsonRecord, target: 'ar' | 'en'): { source: JsonRecord; existing: JsonRecord | undefined; sourceLang: 'ar' | 'en' } {
   const translations = isRecord(draft.translations) ? draft.translations : {};
   const sourceVariant = target === 'en' ? translations.ar : translations.en;
+  const source = cloneProfile(isRecord(sourceVariant) ? sourceVariant : draft);
   return {
-    source: cloneProfile(isRecord(sourceVariant) ? sourceVariant : draft),
+    source,
     existing: isRecord(translations[target]) ? cloneProfile(translations[target]) : undefined,
-    sourceLang: target === 'en' ? 'ar' : 'en',
+    sourceLang: isRecord(sourceVariant)
+      ? target === 'en' ? 'ar' : 'en'
+      : inferredProfileLanguage(source, target === 'en' ? 'ar' : 'en'),
   };
+}
+
+function translationTargetProfile(source: JsonRecord, existing: JsonRecord | undefined): JsonRecord {
+  // Keep every manual correction, including a reviewed official rendering, while
+  // using the source profile as the first complete target-language baseline.
+  return existing ? { ...cloneProfile(source), ...structuredClone(existing) } : cloneProfile(source);
 }
 
 function estimatedNeurons(characters: number): number {
@@ -464,7 +639,13 @@ export function registerIntelligence(app: App): void {
       }>(c,
         `SELECT i.id,i.title,i.url AS link,i.published_at AS published_date,s.name AS source,s.url AS source_url,i.category,i.region
          FROM radar_items i JOIN radar_sources s ON s.id=i.source_id
-         WHERE i.published_at>=? ORDER BY i.published_at DESC LIMIT ?`,
+         WHERE i.published_at>=?
+         ORDER BY CASE
+           WHEN lower(i.region) IN ('saudi','saudi arabia','ksa') THEN 1
+           WHEN lower(i.region) IN ('gulf','gcc') THEN 2
+           WHEN lower(i.region) IN ('arab','mena','arab world') THEN 3
+           ELSE 4
+         END ASC, i.published_at DESC LIMIT ?`,
         cutoff,
         MAX_RADAR_ITEMS,
       ),
@@ -473,28 +654,34 @@ export function registerIntelligence(app: App): void {
       ),
     ]);
     const updatedAt = sources.reduce<number | null>((latest, source) => Math.max(latest ?? 0, Number(source.last_fetched ?? 0)) || null, null);
+    const status = radarStatus(sources, updatedAt, items.length);
     return c.json({
       items: items.map((item) => ({
         id: item.id,
         title: item.title,
         link: item.link,
+        // Current mobile Radar consumes url/published_at; retain documented
+        // link/published_date aliases for callers already using them.
+        url: item.link,
         published_date: Number(item.published_date),
+        published_at: Number(item.published_date),
         source: item.source,
         sourceURL: item.source_url,
-        category: item.category,
-        region: item.region,
+        category: classifyRadarCategory(item.title, item.category),
+        region: normalizeRadarRegion(item.region),
       })),
       sources: sources.map((source) => ({
         id: source.id,
         name: source.name,
         url: source.url,
         category: source.category,
-        region: source.region,
+        region: normalizeRadarRegion(source.region),
         lastFetched: source.last_fetched === null ? null : Number(source.last_fetched),
         lastError: source.last_error,
       })),
       updatedAt,
-      status: radarStatus(sources, updatedAt),
+      status,
+      reason: radarStatusReason(sources, status),
     });
   });
 
@@ -502,7 +689,7 @@ export function registerIntelligence(app: App): void {
     const user = role(c, ['owner', 'manager']);
     const result = await fetchRadar(c.env);
     await audit(c, 'radar.refresh', 'all', { ...result, requestedBy: user.id });
-    return c.json({ status: result.errors ? 'partial' : 'ok', ...result });
+    return c.json(result);
   });
 
   app.post('/api/translate', async (c) => {
@@ -520,30 +707,32 @@ export function registerIntelligence(app: App): void {
     }
 
     const { source, existing, sourceLang } = translationSource(draft, request.target);
-    const targetProfile = cloneProfile(source);
+    const targetProfile = translationTargetProfile(source, existing);
     const fields = collectTranslationFields(source);
     const pending = fields.filter((field) => typeof getPath(existing, field.path) !== 'string' || !(getPath(existing, field.path) as string).trim());
 
-    for (const field of fields) {
-      const current = getPath(existing, field.path);
-      if (typeof current === 'string' && current.trim()) setPath(targetProfile, field.path, current);
-    }
-
-    if (!pending.length) {
+    // A profile without free-text still needs a stored target-language baseline
+    // so its bilingual CV/export is truthful rather than a false success.
+    if (!pending.length && existing) {
       return c.json({ draft, version: Number(site.draft_version), translated: true });
     }
 
     const characterCount = pending.reduce((sum, field) => sum + field.text.length, 0);
-    if (characterCount > DAILY_CHARACTER_LIMIT || estimatedNeurons(characterCount) > DAILY_NEURON_LIMIT) {
-      return c.json({ error: 'النص أكبر من الحد اليومي المجاني للترجمة', code: 'TRANSLATION_REQUEST_TOO_LARGE' }, 413);
-    }
-    if (!await reserveTranslationQuota(c.env, characterCount)) {
-      return c.json({ error: 'تم بلوغ الحد اليومي المجاني للترجمة لهذه المنصة', code: 'TRANSLATION_QUOTA_EXCEEDED' }, 429);
+    const requiresAI = sourceLang !== request.target && characterCount > 0;
+    if (requiresAI) {
+      if (characterCount > DAILY_CHARACTER_LIMIT || estimatedNeurons(characterCount) > DAILY_NEURON_LIMIT) {
+        return c.json({ error: 'النص أكبر من الحد اليومي المجاني للترجمة', code: 'TRANSLATION_REQUEST_TOO_LARGE' }, 413);
+      }
+      if (!await reserveTranslationQuota(c.env, characterCount)) {
+        return c.json({ error: 'تم بلوغ الحد اليومي المجاني للترجمة لهذه المنصة', code: 'TRANSLATION_QUOTA_EXCEEDED' }, 429);
+      }
     }
 
     const protectedProfileTerms = protectedTerms(source);
     for (const field of pending) {
-      const translated = await translateText(c.env, field.text, sourceLang, request.target, protectedProfileTerms);
+      const translated = requiresAI
+        ? await translateText(c.env, field.text, sourceLang, request.target, protectedProfileTerms)
+        : field.text;
       setPath(targetProfile, field.path, translated);
     }
 
@@ -568,7 +757,7 @@ export function registerIntelligence(app: App): void {
       target: request.target,
       version,
       characters: characterCount,
-      estimatedNeurons: estimatedNeurons(characterCount),
+      estimatedNeurons: requiresAI ? estimatedNeurons(characterCount) : 0,
       consent: true,
       userId: user.id,
     });

@@ -312,3 +312,101 @@
 @media (prefers-reduced-motion: reduce) {
   .dashboard *, .dashboard *::before, .dashboard *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Scoped completion: theme parity, 44px touch targets, saved translation, MIDPOINT, and messaging controls. */
+[data-theme='light'] .dashboard {
+  --dash-emerald: #006837;
+  --dash-deep: #004422;
+  --dash-mint: #056e3b;
+  --dash-ink: #153326;
+  --dash-dim: #557264;
+  --dash-line: rgba(0, 68, 34, .16);
+  --dash-panel: rgba(255, 255, 255, .9);
+  --dash-warn: #8a5f14;
+  --dash-danger: #ac3030;
+}
+[data-theme='light'] .dashboard .field,
+[data-theme='light'] .dashboard .button--quiet,
+[data-theme='light'] .dashboard-site-switch,
+[data-theme='light'] .dashboard-upload span,
+[data-theme='light'] .dashboard-preview-modal {
+  background: #fff;
+  color: var(--dash-ink);
+}
+[data-theme='light'] .dashboard-wallet-hero,
+[data-theme='light'] .dashboard-preview-modal { background: linear-gradient(135deg, #eaf7ee, #fff); }
+[data-theme='light'] .dashboard-stepper button.is-active,
+[data-theme='light'] .dashboard-review-rail,
+[data-theme='light'] .dashboard-service-grid article,
+[data-theme='light'] .dashboard-structured-list article { background: rgba(0, 104, 55, .06); }
+
+.dashboard .field { min-height: 44px; }
+.dashboard-tabs button,
+.dashboard-stepper button,
+.dashboard-check,
+.dashboard-quick-fields label { min-height: 44px; }
+.dashboard-icon-button { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+.dashboard-upload.is-compact { min-height: 44px; }
+
+.dashboard-quality-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dashboard-quality-score { display: flex; align-items: baseline; gap: 8px; margin: 0 0 13px; }
+.dashboard-quality-score strong,
+.dashboard-opportunity > strong { color: var(--dash-mint); font-size: 1.65rem; }
+.dashboard-quality-score span { color: var(--dash-dim); font-size: .78rem; }
+.dashboard-opportunity .dashboard-progress { margin: 10px 0 12px; }
+.dashboard-opportunity .muted { margin: 0; font-size: .84rem; }
+.dashboard-translation,
+.dashboard-exports { padding: clamp(18px, 3vw, 24px); }
+.dashboard-translation-editor { display: grid; gap: 15px; margin-top: 16px; }
+.dashboard-translation-editor > .muted { margin: 0; }
+.dashboard-translation-lists { display: grid; gap: 12px; }
+.dashboard-translation-lists > section { border-top: 1px solid var(--dash-line); padding-top: 14px; }
+.dashboard-translation-lists h3 { margin: 0 0 11px; font-size: .96rem; }
+.dashboard-translation-item { display: grid; gap: 10px; padding: 12px; border-radius: 12px; border: 1px solid var(--dash-line); background: rgba(0, 64, 33, .07); }
+.dashboard-export-language,
+.dashboard-intro-modes { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+.dashboard-export-language .button,
+.dashboard-intro-modes .button { min-height: 44px; padding: 9px 13px; }
+.dashboard-export-language .button.is-active,
+.dashboard-intro-modes .button.is-active { color: #fff; background: linear-gradient(135deg, #007b40, #006135); border-color: #007b40; }
+.dashboard-export-disabled { opacity: .56; cursor: not-allowed; }
+
+.midpoint-mark,
+.midpoint-amount { display: inline-flex; align-items: center; gap: 6px; }
+.midpoint-mark { color: var(--dash-mint); font-family: Arial, sans-serif; font-size: .68rem; font-weight: 800; letter-spacing: .055em; white-space: nowrap; }
+.midpoint-mark svg { color: #e7c46e; fill: rgba(231, 196, 110, .17); }
+.midpoint-mark.is-compact { font-size: .6rem; gap: 4px; }
+.midpoint-amount > strong { color: inherit; font-variant-numeric: tabular-nums; }
+.dashboard-wallet-hero h2 .midpoint-amount { gap: 10px; }
+.dashboard-wallet-hero h2 .midpoint-mark { font-size: .69rem; }
+.dashboard-wallet-mark .midpoint-mark { color: var(--dash-deep); flex-direction: column; gap: 1px; font-size: .56rem; }
+.dashboard-wallet-mark .midpoint-mark svg { width: 28px; height: 28px; color: var(--dash-deep); }
+.dashboard-point-input { position: relative; flex: 1 1 150px; }
+.dashboard-point-input .field { padding-inline-end: 84px; }
+.dashboard-point-input .midpoint-mark { position: absolute; inset-inline-end: 11px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.dashboard-point-preview { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 7px 9px; color: var(--dash-mint); border: 1px solid var(--dash-line); border-radius: 10px; background: rgba(0, 104, 55, .08); }
+.dashboard-point-preview small { color: var(--dash-dim); }
+.dashboard-referral .midpoint-amount { display: inline-flex; margin-inline: 4px; color: var(--dash-mint); }
+.dashboard-ledger .midpoint-amount { justify-self: end; color: var(--dash-mint); }
+
+.dashboard-pin-form label { flex: 1 1 150px; }
+.dashboard-pin-form label > span { display: block; color: var(--dash-dim); font-size: .78rem; margin-bottom: 5px; }
+.dashboard-pending-note { margin: 12px 0 0; padding-top: 11px; border-top: 1px solid var(--dash-line); color: var(--dash-dim); font-size: .8rem; }
+.dashboard-block-list p { margin: 0; padding: 8px 0; border-top: 1px solid var(--dash-line); color: var(--dash-dim); font-size: .85rem; }
+.dashboard-chat-log > div.is-mine { margin-inline-start: auto; border-radius: 12px 12px 3px 12px; background: rgba(0, 135, 74, .23); }
+.dashboard-chat-actions { display: grid; gap: 8px; }
+.dashboard-chat-actions > .button { width: 100%; }
+.dashboard-emoji-picker { display: flex; flex-wrap: wrap; gap: 4px; }
+.dashboard-emoji-picker .dashboard-icon-button { font-size: 1.05rem; }
+
+@media (max-width: 960px) {
+  .dashboard-quality-grid--three { grid-template-columns: 1fr; }
+}
+@media (max-width: 540px) {
+  .dashboard-export-language .button,
+  .dashboard-intro-modes .button { flex: 1 1 calc(50% - 8px); }
+  .dashboard-point-preview { width: 100%; justify-content: space-between; }
+  .dashboard-chat-actions { grid-template-columns: 1fr; }
+  .dashboard-emoji-picker { justify-content: space-between; }
+  .dashboard-emoji-picker .dashboard-icon-button { flex: 1 0 44px; }
+}

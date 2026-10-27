@@ -2,49 +2,64 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { api, useApp } from './lib';
 import './admin.css';
 
-type AdminTab =
-  | 'overview'
-  | 'users'
-  | 'reviews'
-  | 'payments'
-  | 'services'
-  | 'names'
-  | 'content'
-  | 'lock'
-  | 'economics'
-  | 'audit'
-  | 'backup';
-
+type AdminRole = 'owner' | 'manager' | 'moderator';
+type AdminTab = 'overview' | 'users' | 'reviews' | 'payments' | 'services' | 'names' | 'content' | 'pricing' | 'lock' | 'economics' | 'audit' | 'backup';
 type JsonRecord = Record<string, unknown>;
 type MaybeRecord = JsonRecord | null | undefined;
+type UserAction = 'status' | 'role' | 'grant' | 'points' | 'service' | 'assign' | 'branding';
 
-type AdminData = Partial<Record<Exclude<AdminTab, 'content' | 'lock' | 'backup'>, unknown>> & {
+type AdminData = Partial<Record<Exclude<AdminTab, 'content' | 'pricing' | 'lock' | 'backup'>, unknown>> & {
   settings?: unknown;
   transfers?: unknown;
 };
 
-const tabs: { id: AdminTab; ar: string; en: string; owner?: boolean }[] = [
-  { id: 'overview', ar: 'نظرة تنفيذية', en: 'Overview' },
-  { id: 'users', ar: 'المستخدمون', en: 'Users' },
-  { id: 'reviews', ar: 'المراجعات', en: 'Reviews' },
-  { id: 'payments', ar: 'المدفوعات', en: 'Payments' },
-  { id: 'services', ar: 'الخدمات', en: 'Services' },
-  { id: 'names', ar: 'الأسماء', en: 'Names' },
-  { id: 'content', ar: 'المحتوى', en: 'Content', owner: true },
-  { id: 'lock', ar: 'قفل المنصة', en: 'Platform lock', owner: true },
-  { id: 'economics', ar: 'الاقتصاديات', en: 'Economics', owner: true },
-  { id: 'audit', ar: 'سجل التدقيق', en: 'Audit' },
-  { id: 'backup', ar: 'النسخ الاحتياطي', en: 'Backup', owner: true },
+type ContentDraft = {
+  title_ar: string;
+  title_en: string;
+  body_ar: string;
+  body_en: string;
+};
+
+type SeasonalForm = {
+  enabled: boolean;
+  occasion: string;
+  startsAt: string;
+  endsAt: string;
+};
+
+type BackupItem = {
+  id: string;
+  bytes?: number;
+  createdAt?: unknown;
+  sha256?: unknown;
+};
+
+const tabs: Array<{ id: AdminTab; ar: string; en: string; roles: AdminRole[] }> = [
+  { id: 'overview', ar: 'نظرة تنفيذية', en: 'Overview', roles: ['owner', 'manager', 'moderator'] },
+  { id: 'users', ar: 'المستخدمون', en: 'Users', roles: ['owner', 'manager'] },
+  { id: 'reviews', ar: 'المراجعات', en: 'Reviews', roles: ['owner', 'manager', 'moderator'] },
+  { id: 'payments', ar: 'المدفوعات', en: 'Payments', roles: ['owner', 'manager'] },
+  { id: 'services', ar: 'الخدمات', en: 'Services', roles: ['owner', 'manager'] },
+  { id: 'names', ar: 'الأسماء', en: 'Names', roles: ['owner'] },
+  { id: 'content', ar: 'المحتوى', en: 'Content', roles: ['owner'] },
+  { id: 'pricing', ar: 'التسعير الداخلي', en: 'Internal pricing', roles: ['owner'] },
+  { id: 'lock', ar: 'قفل المنصة', en: 'Platform lock', roles: ['owner'] },
+  { id: 'economics', ar: 'الاقتصاديات', en: 'Economics', roles: ['owner'] },
+  { id: 'audit', ar: 'سجل التدقيق', en: 'Audit', roles: ['owner'] },
+  { id: 'backup', ar: 'النسخ الاحتياطي', en: 'Backup', roles: ['owner'] },
 ];
 
 const contentSlugs = [
+  ['home', 'الصفحة الرئيسية', 'Home'],
   ['about', 'من نحن', 'About'],
-  ['terms', 'الشروط', 'Terms'],
-  ['privacy', 'الخصوصية', 'Privacy'],
-  ['blog', 'المدونة', 'Blog'],
-  ['campaigns', 'الحملات والعروض', 'Campaigns'],
-  ['footer', 'التذييل وبيانات التواصل', 'Footer & contact'],
-  ['branding', 'الهوية البصرية', 'Branding'],
+  ['terms', 'شروط الاستخدام', 'Terms of use'],
+  ['privacy', 'سياسة الخصوصية', 'Privacy policy'],
+  ['blog', 'المدونة', 'Journal'],
+  ['features', 'مزايا المنصة', 'Platform features'],
+  ['campaigns', 'الحملات والعروض', 'Campaigns & offers'],
+  ['contact', 'بيانات التواصل', 'Contact details'],
+  ['footer', 'التذييل', 'Footer'],
+  ['qr', 'أداة QR', 'QR tool'],
 ] as const;
 
 const lockModes = [
@@ -90,24 +105,30 @@ const economicMetrics = [
 ] as const;
 
 function record(value: unknown): MaybeRecord {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonRecord) : undefined;
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : undefined;
 }
 
 function records(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.filter((item): item is JsonRecord => Boolean(record(item)));
-  const obj = record(value);
-  if (!obj) return [];
-  for (const key of ['items', 'users', 'reviews', 'payments', 'services', 'names', 'transfers', 'entries', 'audit', 'data']) {
-    if (Array.isArray(obj[key])) return records(obj[key]);
+  const object = record(value);
+  if (!object) return [];
+  for (const key of ['items', 'users', 'reviews', 'payments', 'services', 'names', 'transfers', 'entries', 'audit', 'data', 'backups']) {
+    if (Array.isArray(object[key])) return records(object[key]);
   }
   return [];
+}
+
+function field(item: MaybeRecord, ...keys: string[]): unknown {
+  if (!item) return undefined;
+  for (const key of keys) if (item[key] !== undefined) return item[key];
+  return undefined;
 }
 
 function valueAt(source: unknown, key: string): unknown {
   const direct = record(source);
   if (!direct) return undefined;
   if (key in direct) return direct[key];
-  for (const parent of ['metrics', 'stats', 'summary', 'data', 'totals']) {
+  for (const parent of ['metrics', 'stats', 'summary', 'data', 'totals', 'economics']) {
     const nested = record(direct[parent]);
     if (nested && key in nested) return nested[key];
   }
@@ -125,12 +146,38 @@ function idOf(item: MaybeRecord): string {
   return text(item?.id ?? item?.user_id ?? item?.site_id ?? item?.payment_id, '');
 }
 
+function displayJson(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return '—';
+  }
+}
+
 function asDate(value: unknown, lang: 'ar' | 'en'): string {
   if (value === null || value === undefined || value === '') return '—';
-  const numeric = typeof value === 'number' ? value : Number(value);
-  const date = Number.isFinite(numeric) && numeric > 100000000 ? new Date(numeric * 1000) : new Date(String(value));
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  const date = Number.isFinite(numberValue)
+    ? new Date((numberValue > 100_000_000_000 ? numberValue : numberValue * 1000))
+    : new Date(String(value));
   if (Number.isNaN(date.getTime())) return text(value);
-  return new Intl.DateTimeFormat(lang === 'ar' ? 'ar-SA' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
+  return new Intl.DateTimeFormat(lang === 'ar' ? 'ar-SA' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Riyadh' }).format(date);
+}
+
+/** datetime-local has no zone. These helpers intentionally model its visible value as Asia/Riyadh (UTC+03:00). */
+function epochToRiyadhInput(value: unknown): string {
+  const epoch = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(epoch) || epoch <= 0) return '';
+  return new Date(epoch * 1000 + 3 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function riyadhInputToEpoch(value: string): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day, hour, minute] = match;
+  const timestamp = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 3, Number(minute));
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null;
 }
 
 function statusTone(status: unknown): string {
@@ -145,23 +192,64 @@ function prettyKey(key: string): string {
   return key.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function field(item: MaybeRecord, ...keys: string[]): unknown {
-  if (!item) return undefined;
-  for (const key of keys) if (item[key] !== undefined) return item[key];
-  return undefined;
+function isLocalMediaUrl(value: unknown): value is string {
+  return typeof value === 'string' && /^\/api\/media\/[A-Za-z0-9-]+(?:\?.*)?$/.test(value);
 }
 
-function safeJson(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
+function changedImage(value: unknown): string {
+  if (isLocalMediaUrl(value)) return value;
+  const object = record(value);
+  if (!object) return '';
+  for (const [key, nested] of Object.entries(object)) {
+    if (/(photo|avatar|cover|image|logo)/i.test(key)) {
+      const image = changedImage(nested);
+      if (image) return image;
+    }
   }
+  return '';
+}
+
+function contentDraftFrom(response: unknown): ContentDraft {
+  const outer = record(response);
+  const source = record(field(outer, 'content')) ?? outer;
+  return {
+    title_ar: text(field(source, 'title_ar', 'titleAr'), ''),
+    title_en: text(field(source, 'title_en', 'titleEn'), ''),
+    body_ar: text(field(source, 'body_ar', 'bodyAr'), ''),
+    body_en: text(field(source, 'body_en', 'bodyEn'), ''),
+  };
+}
+
+function parseObject(value: string): JsonRecord | undefined {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return record(parsed) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function settingText(value: unknown): string {
+  return typeof value === 'string' ? value : displayJson(value);
+}
+
+function isPendingPayment(item: JsonRecord): boolean {
+  return ['requested', 'submitted'].includes(text(field(item, 'status', 'decision'), '').toLowerCase());
+}
+
+function isApprovedPayment(item: JsonRecord): boolean {
+  return text(field(item, 'status', 'decision'), '').toLowerCase() === 'approved';
 }
 
 export default function Admin() {
   const { user, lang, t, refresh, notify } = useApp();
   const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
+  const ownRole = text(user?.role, '').toLowerCase() as AdminRole;
+  const owner = ownRole === 'owner';
+  const manager = ownRole === 'manager';
+  const managerOrOwner = owner || manager;
+  const financialOperator = owner || (manager && Boolean(user?.financial));
+
   const [tab, setTab] = useState<AdminTab>('overview');
   const [data, setData] = useState<AdminData>({});
   const [loading, setLoading] = useState(true);
@@ -170,6 +258,7 @@ export default function Admin() {
   const [selectedUser, setSelectedUser] = useState<JsonRecord | null>(null);
   const [selectedReview, setSelectedReview] = useState<JsonRecord | null>(null);
   const [paymentReasons, setPaymentReasons] = useState<Record<string, string>>({});
+  const [paymentReversalReasons, setPaymentReversalReasons] = useState<Record<string, string>>({});
   const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
   const [points, setPoints] = useState('');
   const [grantDays, setGrantDays] = useState('3');
@@ -179,21 +268,23 @@ export default function Admin() {
   const [assignedTo, setAssignedTo] = useState('');
   const [notification, setNotification] = useState({ recipient: '', title: '', body: '' });
   const [nameForm, setNameForm] = useState({ name: '', kind: 'policy', reason: '' });
-  const [proxySite, setProxySite] = useState({ email: '', name: '', authorization: '', draft: '{}' });
+  const [proxySite, setProxySite] = useState({ email: '', name: '', authorization: '', profileName: '', title: '', city: '', bio: '' });
+  const [lastProxy, setLastProxy] = useState<MaybeRecord>();
   const [handover, setHandover] = useState({ id: '', email: '' });
   const [contentSlug, setContentSlug] = useState<(typeof contentSlugs)[number][0]>('about');
-  const [content, setContent] = useState('');
+  const [content, setContent] = useState<ContentDraft>({ title_ar: '', title_en: '', body_ar: '', body_en: '' });
   const [contentMeta, setContentMeta] = useState<MaybeRecord>();
-  const [lock, setLock] = useState({ mode: 'open', reason: '', message: '', password: '' });
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [lock, setLock] = useState({ mode: '', reason: '', message: '', password: '' });
   const [bankInstructions, setBankInstructions] = useState('');
-  const [seasonal, setSeasonal] = useState({ enabled: false, occasion: 'national_day', starts_at: '', ends_at: '' });
-  const [backup, setBackup] = useState<unknown>();
-  const [nightlyBackups,setNightlyBackups]=useState<any[]>([]);
+  const [prices, setPrices] = useState('');
+  const [seasonal, setSeasonal] = useState<SeasonalForm>({ enabled: false, occasion: 'national_day', startsAt: '', endsAt: '' });
+  const [nightlyBackups, setNightlyBackups] = useState<BackupItem[]>([]);
+  const [backupVerification, setBackupVerification] = useState<Record<string, MaybeRecord>>({});
+  const [backupsLoaded, setBackupsLoaded] = useState(false);
   const [expense, setExpense] = useState({ label: '', amount: '', notes: '' });
 
-  const ownRole = text(user?.role, '').toLowerCase();
-  const owner = ownRole === 'owner';
-  const financialOperator = owner || (ownRole === 'manager' && Boolean((user as unknown as JsonRecord | undefined)?.financial));
+  const availableTabs = useMemo(() => tabs.filter((item) => item.roles.includes(ownRole)), [ownRole]);
 
   const handleFailure = useCallback((failure: unknown, fresh = false) => {
     const message = failure instanceof Error ? failure.message : String(failure);
@@ -207,31 +298,30 @@ export default function Admin() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const endpoints: [keyof AdminData, string][] = [
+    const endpoints: Array<[keyof AdminData, string]> = [
       ['overview', '/api/admin/overview'],
-      ['users', '/api/admin/users'],
       ['reviews', '/api/admin/reviews'],
-      ['payments', '/api/admin/payments'],
-      ['settings', '/api/admin/settings'],
-      ['services', '/api/admin/services'],
-      ['names', '/api/admin/names'],
-      ['transfers', '/api/admin/transfers'],
-      ['audit', '/api/admin/audit'],
-      ['economics', '/api/admin/economics'],
+      ...(managerOrOwner ? [['users', '/api/admin/users'] as [keyof AdminData, string], ['services', '/api/admin/services'] as [keyof AdminData, string]] : []),
+      ...(financialOperator ? [['payments', '/api/admin/payments'] as [keyof AdminData, string]] : []),
+      ...(owner ? [
+        ['settings', '/api/admin/settings'] as [keyof AdminData, string],
+        ['names', '/api/admin/names'] as [keyof AdminData, string],
+        ['transfers', '/api/admin/transfers'] as [keyof AdminData, string],
+        ['audit', '/api/admin/audit'] as [keyof AdminData, string],
+        ['economics', '/api/admin/economics'] as [keyof AdminData, string],
+      ] : []),
     ];
-    const result = await Promise.allSettled(endpoints.map(([, path]) => api<unknown>(path)));
+    const results = await Promise.allSettled(endpoints.map(([, path]) => api<unknown>(path)));
     const next: AdminData = {};
-    result.forEach((item, index) => {
+    results.forEach((item, index) => {
       const [key] = endpoints[index];
       if (item.status === 'fulfilled') next[key] = item.value;
     });
-    const rejected = result.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+    const rejected = results.find((item): item is PromiseRejectedResult => item.status === 'rejected');
     if (rejected) handleFailure(rejected.reason);
     setData(next);
     setLoading(false);
-  }, [handleFailure]);
-
-  useEffect(() => { void load(); }, [load]);
+  }, [financialOperator, handleFailure, managerOrOwner, owner]);
 
   const mutate = useCallback(async <T,>(key: string, work: () => Promise<T>, options?: { fresh?: boolean; success?: string; reload?: boolean }) => {
     setBusy(key);
@@ -249,6 +339,12 @@ export default function Admin() {
     }
   }, [handleFailure, load, notify]);
 
+  useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!availableTabs.some((item) => item.id === tab)) setTab('overview');
+  }, [availableTabs, tab]);
+
   const users = useMemo(() => records(data.users), [data.users]);
   const reviews = useMemo(() => records(data.reviews), [data.reviews]);
   const payments = useMemo(() => records(data.payments), [data.payments]);
@@ -262,52 +358,87 @@ export default function Admin() {
   }, [serviceKey, services]);
 
   useEffect(() => {
+    if (!selectedUser) return;
+    const nextRole = text(field(selectedUser, 'role'), 'moderator');
+    setRole(['owner', 'manager', 'moderator', 'user'].includes(nextRole) ? nextRole : 'moderator');
+    setFinancial(Boolean(field(selectedUser, 'financial')));
+    setAssignedTo(text(field(selectedUser, 'assigned_to'), ''));
+    setPoints('');
+    setGrantDays('3');
+  }, [selectedUser]);
+
+  useEffect(() => {
     const settings = record(data.settings);
-    const lockValue = field(settings, 'platform_lock', 'lock');
-    const parsedLock = record(typeof lockValue === 'string' ? safeJson(lockValue) : lockValue);
-    if (parsedLock) {
-      setLock((current) => ({
-        ...current,
-        mode: text(field(parsedLock, 'mode'), current.mode),
-        reason: text(field(parsedLock, 'reason'), ''),
+    if (!settings) return;
+    setSettingsLoaded(true);
+    const lockValue = field(settings, 'lock', 'platform_lock');
+    const parsedLock = record(lockValue);
+    if (parsedLock && text(parsedLock.mode, '')) {
+      setLock({
+        mode: text(parsedLock.mode, ''),
+        reason: text(parsedLock.reason, ''),
         message: text(field(parsedLock, 'message', 'card_message'), ''),
-      }));
+        password: '',
+      });
     }
-    const seasonalValue = field(settings, 'seasonal', 'seasonal_theme');
-    const parsedSeasonal = record(typeof seasonalValue === 'string' ? safeJson(seasonalValue) : seasonalValue);
+    const seasonalValue = field(settings, 'seasonal', 'season');
+    const parsedSeasonal = record(seasonalValue);
     if (parsedSeasonal) {
       setSeasonal({
         enabled: Boolean(parsedSeasonal.enabled),
         occasion: text(parsedSeasonal.occasion, 'national_day'),
-        starts_at: text(parsedSeasonal.starts_at, ''),
-        ends_at: text(parsedSeasonal.ends_at, ''),
+        startsAt: epochToRiyadhInput(field(parsedSeasonal, 'starts_at', 'startsAt')),
+        endsAt: epochToRiyadhInput(field(parsedSeasonal, 'ends_at', 'endsAt')),
       });
     }
     const officialBankInfo = field(settings, 'bank_instructions', 'bank', 'payment_instructions');
-    if (officialBankInfo !== undefined && officialBankInfo !== null) {
-      setBankInstructions(typeof officialBankInfo === 'string' ? officialBankInfo : JSON.stringify(officialBankInfo, null, 2));
-    }
+    if (officialBankInfo !== undefined && officialBankInfo !== null) setBankInstructions(settingText(officialBankInfo));
+    const priceInfo = field(settings, 'prices');
+    if (priceInfo !== undefined && priceInfo !== null) setPrices(settingText(priceInfo));
   }, [data.settings]);
 
-  useEffect(() => {
-    if (tab !== 'content') return;
-    void mutate(`content-load-${contentSlug}`, async () => {
-      const response = await api<unknown>(`/api/content/${contentSlug}`);
-      const item = record(response);
-      setContentMeta(item);
-      const raw = field(item, 'content', 'body', 'value');
-      setContent(typeof raw === 'string' ? raw : raw === undefined ? '' : JSON.stringify(raw, null, 2));
-      return response;
-    }, { reload: false });
-  }, [contentSlug, mutate, tab]);
+  const loadContent = useCallback(async (slug: (typeof contentSlugs)[number][0]) => {
+    setBusy(`content-load-${slug}`);
+    setError('');
+    try {
+      const response = await api<unknown>(`/api/content/${encodeURIComponent(slug)}`);
+      setContent(contentDraftFrom(response));
+      setContentMeta(record(response));
+    } catch (failure) {
+      const message = failure instanceof Error ? failure.message : String(failure);
+      if (/404|not found|غير موجود/i.test(message)) {
+        setContent({ title_ar: '', title_en: '', body_ar: '', body_en: '' });
+        setContentMeta({ state: 'new' });
+      } else {
+        handleFailure(failure);
+      }
+    } finally {
+      setBusy(null);
+    }
+  }, [handleFailure]);
 
   useEffect(() => {
-    if (tab !== 'backup' || backup !== undefined) return;
-    void mutate('backup-load', () => api<unknown>('/api/admin/backup'), { fresh: true, reload: false })
-      .then((response) => { if (response !== undefined) setBackup(response); });
-  }, [backup, mutate, tab]);
+    if (tab === 'content' && owner) void loadContent(contentSlug);
+  }, [contentSlug, loadContent, owner, tab]);
 
-  const userAction = (action: 'status' | 'role' | 'grant' | 'points' | 'service' | 'assign' | 'branding', payload: JsonRecord, label: string, fresh = true) => {
+  const loadBackups = useCallback(async () => {
+    const response = await mutate('backups-list', () => api<unknown>('/api/admin/backups'), { fresh: true, reload: false });
+    if (response === undefined) return;
+    const result = record(response);
+    const list = Array.isArray(result?.backups) ? result.backups : [];
+    setNightlyBackups(list.flatMap((item) => {
+      const backup = record(item);
+      const id = text(backup?.id, '');
+      return id ? [{ id, bytes: typeof backup?.bytes === 'number' ? backup.bytes : undefined, createdAt: backup?.createdAt, sha256: backup?.sha256 }] : [];
+    }));
+    setBackupsLoaded(true);
+  }, [mutate]);
+
+  useEffect(() => {
+    if (tab === 'backup' && owner && !backupsLoaded) void loadBackups();
+  }, [backupsLoaded, loadBackups, owner, tab]);
+
+  const userAction = (action: UserAction, payload: JsonRecord, label: string, fresh = true) => {
     if (!selectedUser) return;
     const id = idOf(selectedUser);
     if (!id) return;
@@ -326,28 +457,41 @@ export default function Admin() {
     }
     void mutate(`review-${id}-${decision}`, () => api(`/api/admin/reviews/${encodeURIComponent(id)}/decision`, {
       method: 'POST', body: JSON.stringify({ decision, reason }),
-    }), { fresh: true, success: decision === 'approve' ? tr('تم اعتماد اللقطة ونشرها ذرياً.', 'Snapshot approved and published atomically.') : tr('تم رفض اللقطة مع حفظ السبب.', 'Snapshot rejected with its reason recorded.') });
+    }), { fresh: true, success: decision === 'approve' ? tr('تم اعتماد اللقطة عبر قرار الخادم الذري.', 'The snapshot was approved through the server’s atomic decision.') : tr('تم رفض اللقطة مع حفظ السبب.', 'The snapshot was rejected with its reason recorded.') });
   };
 
   const decidePayment = (payment: JsonRecord, decision: 'approve' | 'reject') => {
     const id = idOf(payment);
-    if (!id) return;
-    const status = text(field(payment, 'status', 'decision'), '').toLowerCase();
-    if (/approved|rejected|declined|cancelled/.test(status)) return;
+    if (!id || !isPendingPayment(payment)) return;
     const reason = paymentReasons[id] ?? '';
     if (decision === 'reject' && !reason.trim()) {
       setError(tr('أدخل سبب الرفض قبل إرسال القرار.', 'Enter a rejection reason before submitting the decision.'));
       return;
     }
-    if (decision === 'approve' && !window.confirm(tr('اعتماد الدفع إجراء نهائي الأثر ولا يمكن تكراره. هل تابعت؟', 'Payment approval has a non-repeatable effect. Continue?'))) return;
+    if (decision === 'approve' && !window.confirm(tr('اعتماد الدفع يطبق استحقاقاً وأثراً لا يتكرر. هل راجعت الطلب؟', 'Approval applies an entitlement with a non-repeatable effect. Have you reviewed the request?'))) return;
     void mutate(`payment-${id}-${decision}`, () => api(`/api/admin/payments/${encodeURIComponent(id)}/decision`, {
       method: 'POST', body: JSON.stringify({ decision, reason }),
-    }), { fresh: true, success: decision === 'approve' ? tr('تم اعتماد الدفع مرة واحدة وإعادة تحميل حالته.', 'Payment approved once and its state was reloaded.') : tr('تم رفض طلب الدفع.', 'Payment request rejected.') });
+    }), { fresh: true, success: decision === 'approve' ? tr('أرسل قرار الاعتماد لمرة واحدة إلى الخادم.', 'The one-time approval decision was sent to the server.') : tr('تم إرسال رفض طلب الدفع.', 'The payment rejection was sent.') });
+  };
+
+  const reversePayment = (payment: JsonRecord) => {
+    const id = idOf(payment);
+    const justification = paymentReversalReasons[id] ?? '';
+    if (!id || !isApprovedPayment(payment)) return;
+    if (justification.trim().length < 8) {
+      setError(tr('يجب أن يتكون مبرر الإبطال من ٨ أحرف على الأقل.', 'A reversal justification must contain at least 8 characters.'));
+      return;
+    }
+    if (!window.confirm(tr('سيُسجل الإبطال كتسوية صريحة ولن يُحذف القرار التاريخي. هل تريد المتابعة؟', 'This reversal creates an explicit adjustment and does not delete the historical decision. Continue?'))) return;
+    void mutate(`payment-${id}-reverse`, () => api(`/api/admin/payments/${encodeURIComponent(id)}/reverse`, {
+      method: 'POST', body: JSON.stringify({ justification }),
+    }), { fresh: true, success: tr('سُجل الإبطال كتسوية صريحة.', 'The reversal was recorded as an explicit adjustment.') });
   };
 
   const switchTab = (next: AdminTab) => {
+    if (!availableTabs.some((item) => item.id === next)) return;
     setError('');
-    if (next === 'backup') setBackup(undefined);
+    if (next === 'backup') setBackupsLoaded(false);
     setTab(next);
   };
 
@@ -357,81 +501,80 @@ export default function Admin() {
         <div>
           <p className="admin-eyebrow">KSA.MEN / CONTROL ROOM</p>
           <h1 className="page-title">{tr('لوحة القيادة الإدارية', 'Administrative control room')}</h1>
-          <p className="muted">{tr('تظهر المؤشرات من النظام مباشرة. القيم غير المتاحة تبقى واضحة ولا تُقدّر.', 'Metrics are rendered from live system data. Unavailable values remain explicit; they are never estimated.')}</p>
+          <p className="muted">{tr('المؤشرات تُقرأ من النظام الحي ضمن نطاق دورك؛ أي قيمة غير متاحة تبقى صريحة ولا تُقدّر.', 'Metrics are read from the live system within your role scope; unavailable values remain explicit and are never estimated.')}</p>
         </div>
         <div className="admin-role-card">
-          <span className="muted">{tr('جلستك', 'Your session')}</span>
+          <span className="muted">{tr('جلسة الإدارة', 'Administration session')}</span>
           <strong>{text(user?.name || user?.email)}</strong>
           <span className={`admin-status ${statusTone(user?.role)}`}>{text(user?.role)}</span>
         </div>
       </section>
-      <section className="admin-metrics" aria-label={tr('مؤشرات المنصة', 'Platform metrics')}>
-        {overviewMetrics.map(([key, ar, en]) => (
-          <article className="admin-metric card" key={key}>
-            <span className="muted">{tr(ar, en)}</span>
-            <strong>{text(valueAt(data.overview, key))}</strong>
-          </article>
-        ))}
+      <section className="admin-role-strip" aria-label={tr('نطاق دور الإدارة', 'Administration role scope')}>
+        <RoleScope active={ownRole} tr={tr} />
       </section>
-      <section className="admin-grid admin-grid-2">
+      <section className="admin-metrics" aria-label={tr('مؤشرات المنصة', 'Platform metrics')}>
+        {overviewMetrics.map(([key, ar, en]) => <article className="admin-metric card" key={key}><span className="muted">{tr(ar, en)}</span><strong>{text(valueAt(data.overview, key), tr('غير متاح', 'Unavailable'))}</strong></article>)}
+      </section>
+      {managerOrOwner && <section className="admin-grid admin-grid-2">
         <div className="card stack">
-          <div className="row admin-section-heading"><div><h2>{tr('إشعار آمن', 'Send notification')}</h2><p className="muted">{tr('فردي أو مجموعة أو عمومي؛ يحدد الخادم النطاق النهائي والتفويض.', 'Individual, group, or global; the server determines final scope and authorization.')}</p></div></div>
+          <div className="admin-section-heading"><h2>{tr('إشعار آمن', 'Send notification')}</h2><p className="muted">{tr('الإرسال الفردي متاح للمشرف المسؤول ضمن نطاقه؛ الإرسال للدور أو الجميع محصور بالمالك وتتحقق منه الواجهة والخادم.', 'Individual sends are available to a manager in scope; role-wide and global sends are owner-only and checked by both UI and server.')}</p></div>
           <form className="stack" onSubmit={(event) => {
             event.preventDefault();
             if (!notification.recipient.trim() || !notification.title.trim() || !notification.body.trim()) return;
-            void mutate('notification', () => api('/api/admin/notifications', { method: 'POST', body: JSON.stringify(notification) }), { success: tr('تم إرسال الإشعار وفق نطاقه المعتمد.', 'Notification sent within its authorized scope.') }).then((result) => {
+            void mutate('notification', () => api('/api/admin/notifications', { method: 'POST', body: JSON.stringify(notification) }), { success: tr('أُرسل الإشعار وفق نطاقه المعتمد.', 'The notification was sent within its authorized scope.') }).then((result) => {
               if (result !== undefined) setNotification({ recipient: '', title: '', body: '' });
             });
           }}>
-            <div className="admin-quick-targets" aria-label={tr('اختيار نطاق سريع', 'Quick scope selection')}>
-              <button className="button button-quiet" type="button" onClick={() => setNotification((v) => ({ ...v, recipient: 'all' }))}>{tr('الجميع', 'All')}</button>
-              <button className="button button-quiet" type="button" onClick={() => setNotification((v) => ({ ...v, recipient: 'role:manager' }))}>{tr('المديرون', 'Managers')}</button>
-              <button className="button button-quiet" type="button" onClick={() => setNotification((v) => ({ ...v, recipient: 'role:moderator' }))}>{tr('المشرفون', 'Moderators')}</button>
-            </div>
-            <label className="field"><span>{tr('المستلم أو النطاق', 'Recipient or scope')}</span><input value={notification.recipient} onChange={(e) => setNotification((v) => ({ ...v, recipient: e.target.value }))} placeholder="C12 / all / role:manager" /></label>
-            <label className="field"><span>{tr('العنوان', 'Title')}</span><input value={notification.title} onChange={(e) => setNotification((v) => ({ ...v, title: e.target.value }))} /></label>
-            <label className="field"><span>{tr('النص', 'Body')}</span><textarea rows={3} value={notification.body} onChange={(e) => setNotification((v) => ({ ...v, body: e.target.value }))} /></label>
+            {owner && <div className="admin-quick-targets" aria-label={tr('اختيار نطاق سريع', 'Quick scope selection')}>
+              <button className="button button-quiet" type="button" onClick={() => setNotification((value) => ({ ...value, recipient: 'all' }))}>{tr('الجميع', 'All')}</button>
+              <button className="button button-quiet" type="button" onClick={() => setNotification((value) => ({ ...value, recipient: 'role:manager' }))}>{tr('المديرون', 'Managers')}</button>
+              <button className="button button-quiet" type="button" onClick={() => setNotification((value) => ({ ...value, recipient: 'role:moderator' }))}>{tr('المشرفون', 'Moderators')}</button>
+            </div>}
+            <label className="field"><span>{tr('المستلم أو النطاق', 'Recipient or scope')}</span><input value={notification.recipient} onChange={(event) => setNotification((value) => ({ ...value, recipient: event.target.value }))} placeholder="C12" /></label>
+            <label className="field"><span>{tr('العنوان', 'Title')}</span><input value={notification.title} onChange={(event) => setNotification((value) => ({ ...value, title: event.target.value }))} /></label>
+            <label className="field"><span>{tr('النص', 'Body')}</span><textarea rows={3} value={notification.body} onChange={(event) => setNotification((value) => ({ ...value, body: event.target.value }))} /></label>
             <button className="button" disabled={busy === 'notification'}>{tr('إرسال الإشعار', 'Send notification')}</button>
           </form>
         </div>
-        <div className="card stack">
-          <div><h2>{tr('إنشاء موقع بالنيابة', 'Create a site by proxy')}</h2><p className="muted">{tr('لا تُنشر بيانات الغير بلا تفويض؛ التسليم لاحقاً يتطلب قبول البريد المتحقق منه.', 'Third-party data is never published without authorization; handover later requires verified-email acceptance.')}</p></div>
-          <form className="stack" onSubmit={(event) => {
+        <ProxySitePanel
+          tr={tr}
+          busy={busy}
+          proxySite={proxySite}
+          setProxySite={setProxySite}
+          handover={handover}
+          setHandover={setHandover}
+          lastProxy={lastProxy}
+          setError={setError}
+          onCreate={(event) => {
             event.preventDefault();
-            if (!proxySite.authorization.trim() || !proxySite.name.trim()) {
-              setError(tr('أدخل الاسم والتفويض الموثق قبل الإنشاء.', 'Enter the name and documented authorization before creation.'));
+            if (!proxySite.authorization.trim() || !proxySite.name.trim() || !proxySite.profileName.trim()) {
+              setError(tr('أدخل اسم النطاق واسم صاحب الموقع والتفويض الموثق قبل الإنشاء.', 'Enter the subdomain, site owner name and documented authorization before creation.'));
               return;
             }
-            void mutate('proxy-site', () => api('/api/admin/sites', { method: 'POST', body: JSON.stringify({ ...proxySite, draft: safeJson(proxySite.draft) }) }), { fresh: true, success: tr('تم إنشاء الموقع بالنيابة وفق التفويض.', 'Site created by proxy under the recorded authorization.') });
-          }}>
-            <div className="admin-form-pair">
-              <label className="field"><span>{tr('البريد (اختياري)', 'Email (optional)')}</span><input type="email" value={proxySite.email} onChange={(e) => setProxySite((v) => ({ ...v, email: e.target.value }))} /></label>
-              <label className="field"><span>{tr('الاسم', 'Name')}</span><input value={proxySite.name} onChange={(e) => setProxySite((v) => ({ ...v, name: e.target.value }))} /></label>
-            </div>
-            <label className="field"><span>{tr('نص/مرجع التفويض', 'Authorization text/reference')}</span><textarea rows={2} value={proxySite.authorization} onChange={(e) => setProxySite((v) => ({ ...v, authorization: e.target.value }))} required /></label>
-            <label className="field"><span>{tr('المسودة JSON', 'Draft JSON')}</span><textarea rows={3} value={proxySite.draft} onChange={(e) => setProxySite((v) => ({ ...v, draft: e.target.value }))} /></label>
-            <button className="button" disabled={busy === 'proxy-site'}>{tr('إنشاء مسودة مفوضة', 'Create authorized draft')}</button>
-          </form>
-          <form className="admin-inline-form" onSubmit={(event) => {
+            const draft = Object.fromEntries(Object.entries({ name: proxySite.profileName.trim(), title: proxySite.title.trim(), city: proxySite.city.trim(), bio: proxySite.bio.trim() }).filter(([, value]) => Boolean(value)));
+            void mutate('proxy-site', () => api<unknown>('/api/admin/sites', { method: 'POST', body: JSON.stringify({ email: proxySite.email, name: proxySite.name, authorization: proxySite.authorization, draft }) }), { fresh: true, reload: false, success: tr('أنشأ الخادم مسودة الموقع المحكومة بالتفويض.', 'The server created the authorization-governed site draft.') }).then((result) => {
+              const payload = record(result);
+              if (payload) {
+                setLastProxy(payload);
+                const created = record(payload.site);
+                const id = text(created?.id, '');
+                if (id) setHandover((value) => ({ ...value, id }));
+              }
+            });
+          }}
+          onHandover={(event) => {
             event.preventDefault();
             if (!handover.id || !handover.email) return;
-            void mutate('handover', () => api(`/api/admin/sites/${encodeURIComponent(handover.id)}/handover`, { method: 'POST', body: JSON.stringify({ email: handover.email }) }), { fresh: true, success: tr('أُرسل طلب التسليم؛ لا يكتمل حتى قبول بريد متحقق منه.', 'Handover was requested; it completes only after verified-email acceptance.') });
-          }}>
-            <input aria-label={tr('معرف الموقع', 'Site ID')} placeholder={tr('معرف الموقع', 'Site ID')} value={handover.id} onChange={(e) => setHandover((v) => ({ ...v, id: e.target.value }))} />
-            <input aria-label={tr('بريد المستلم', 'Recipient email')} type="email" placeholder={tr('بريد المستلم', 'Recipient email')} value={handover.email} onChange={(e) => setHandover((v) => ({ ...v, email: e.target.value }))} />
-            <button className="button button-secondary" disabled={busy === 'handover'}>{tr('طلب التسليم', 'Request handover')}</button>
-          </form>
-        </div>
-      </section>
+            void mutate('handover', () => api(`/api/admin/sites/${encodeURIComponent(handover.id)}/handover`, { method: 'POST', body: JSON.stringify({ email: handover.email }) }), { fresh: true, reload: false, success: tr('أُرسل طلب التسليم؛ لا يكتمل حتى قبول الحساب صاحب البريد المتحقق منه.', 'The handover request was sent; it completes only after acceptance by the verified account for that email.') });
+          }}
+        />
+      </section>}
     </div>
   );
 
   const renderUsers = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro">
-        <div><h1 className="page-title">{tr('المستخدمون وإدارة التفويض', 'Users & delegation')}</h1><p className="muted">{tr('كل تعديل يمر بالخادم وسجل التدقيق. طلبات الحذف تعرض حالتها فقط؛ لا يوجد حذف نهائي من هذه الواجهة.', 'Every change passes through the server and audit trail. Deletion requests show their status only; this console never offers irreversible deletion.')}</p></div>
-        <span className="admin-server-note">{tr('التحكم في الواجهة ليس بديلاً عن التحقق بالخادم', 'Server enforcement remains authoritative')}</span>
-      </section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('المستخدمون وإدارة التفويض', 'Users & delegation')}</h1><p className="muted">{tr('لا تظهر إلا الحسابات الواقعة في نطاق المشرف المسؤول. تعديل الدور والإسناد محصوران بالمالك، بينما يبقى تحقق الخادم هو الحاسم.', 'Only accounts in a responsible manager’s scope are returned. Role and assignment changes are owner-only; server enforcement remains decisive.')}</p></div><span className="admin-server-note">{tr('العرض لا يمنح صلاحية', 'Visibility does not grant permission')}</span></section>
       <div className="admin-user-layout">
         <section className="admin-user-list stack">
           {users.length ? users.map((item) => {
@@ -440,36 +583,13 @@ export default function Admin() {
             return <button type="button" className={`card admin-user-card ${active ? 'active' : ''}`} key={id || text(field(item, 'email'))} onClick={() => setSelectedUser(item)}>
               <div className="row"><strong>{text(field(item, 'name', 'full_name', 'email'))}</strong><span className={`admin-status ${statusTone(field(item, 'status'))}`}>{text(field(item, 'status'))}</span></div>
               <span className="muted">C{text(field(item, 'id', 'user_id'))} · {text(field(item, 'email'))}</span>
-              <span className="muted">{tr('النطاق', 'Domain')}: {text(field(item, 'domain', 'name', 'subdomain'))}</span>
-              <div className="admin-user-card-footer"><span>{tr('الرصيد', 'Balance')}: {text(field(item, 'balance'))}</span><span>{text(field(item, 'role'))}</span></div>
+              <span className="muted">{tr('النطاق', 'Domain')}: {text(field(item, 'domain', 'subdomain', 'name'))}</span>
+              <div className="admin-user-card-footer"><span>{tr('الرصيد المتاح', 'Available balance')}: {text(field(item, 'balance'), tr('غير متاح', 'Unavailable'))}</span><span>{text(field(item, 'role'))}</span></div>
             </button>;
-          }) : <Empty title={tr('لا توجد بيانات مستخدمين معروضة.', 'No user data was returned.')} />}
+          }) : <Empty title={tr('لا توجد بيانات مستخدمين معروضة ضمن نطاقك.', 'No user data was returned in your scope.')} />}
         </section>
         <section className="card admin-user-detail">
-          {selectedUser ? <UserDetail
-            item={selectedUser}
-            lang={lang}
-            tr={tr}
-            services={services}
-            points={points}
-            setPoints={setPoints}
-            grantDays={grantDays}
-            setGrantDays={setGrantDays}
-            serviceKey={serviceKey}
-            setServiceKey={setServiceKey}
-            role={role}
-            setRole={setRole}
-            financial={financial}
-            setFinancial={setFinancial}
-            assignedTo={assignedTo}
-            setAssignedTo={setAssignedTo}
-            users={users}
-            busy={busy}
-            onAction={userAction}
-            onAudit={() => switchTab('audit')}
-            onNotify={(recipient) => { setNotification((value) => ({ ...value, recipient })); switchTab('overview'); }}
-            financialOperator={financialOperator}
-          /> : <Empty title={tr('اختر مستخدماً لرؤية البطاقة التفصيلية وإجراء العمليات المصرح بها.', 'Choose a user to view the detailed card and authorized actions.')} />}
+          {selectedUser ? <UserDetail item={selectedUser} lang={lang} tr={tr} services={services} users={users} points={points} setPoints={setPoints} grantDays={grantDays} setGrantDays={setGrantDays} serviceKey={serviceKey} setServiceKey={setServiceKey} role={role} setRole={setRole} financial={financial} setFinancial={setFinancial} assignedTo={assignedTo} setAssignedTo={setAssignedTo} busy={busy} owner={owner} financialOperator={financialOperator} onAction={userAction} onAudit={() => switchTab('audit')} onNotify={(recipient) => { setNotification((value) => ({ ...value, recipient })); switchTab('overview'); }} /> : <Empty title={tr('اختر مستخدماً لرؤية البطاقة التفصيلية وإجراء العمليات المصرح بها.', 'Choose a user to view the detailed card and authorized actions.')} />}
         </section>
       </div>
     </div>
@@ -477,25 +597,19 @@ export default function Admin() {
 
   const renderReviews = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('يعرض الفرق فقط افتراضياً. النسخة المنشورة تبقى مستقلة حتى قرار اعتماد ذري.', 'Only the change set is shown by default. The published version remains independent until an atomic approval decision.')}</p></div></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('تُعرض الحقول المتغيرة قبل/بعد، وتظهر صورة الوسيط المتغير فقط من مسار وسائط المنصة. معاينة الموقع الكامل لا تُعرض إلا عندما يعيد الخادم رابطاً صريحاً.', 'Changed fields are shown before/after, and changed media is rendered only from a platform media path. A full-site preview is offered only when the server returns an explicit URL.')}</p></div></section>
       {reviews.length ? reviews.map((review) => {
         const id = idOf(review);
-        const diff = record(field(review, 'diff', 'changes', 'delta'));
-        const oldValue = field(diff, 'old', 'before', 'previous');
-        const newValue = field(diff, 'new', 'after', 'current');
-        const preview = text(field(review, 'preview_url', 'snapshot_url', 'approved_snapshot_url'), '');
         const expanded = selectedReview && idOf(selectedReview) === id;
+        const preview = text(field(review, 'preview_url', 'snapshot_url'), '');
         return <article className="card admin-review" key={id || text(field(review, 'submitted_at'))}>
           <div className="row admin-review-top"><div><h2>{text(field(review, 'site_name', 'name', 'title'))}</h2><p className="muted">{tr('المقدم', 'Submitted by')}: {text(field(review, 'submitter_name', 'user_name', 'email'))} · {asDate(field(review, 'submitted_at', 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(review, 'status'))}`}>{text(field(review, 'status', 'decision'), tr('قيد المراجعة', 'In review'))}</span></div>
-          <div className="admin-diff-grid">
-            <div><span className="admin-diff-label">{tr('قبل', 'Before')}</span><pre>{typeof oldValue === 'string' ? oldValue : JSON.stringify(oldValue ?? {}, null, 2)}</pre></div>
-            <div><span className="admin-diff-label new">{tr('بعد', 'After')}</span><pre>{typeof newValue === 'string' ? newValue : JSON.stringify(newValue ?? {}, null, 2)}</pre></div>
-          </div>
+          <SnapshotDiff review={review} tr={tr} />
           <div className="admin-actions">
-            <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء التفاصيل', 'Hide details') : tr('معاينة العنصر المتغير', 'Preview changed item')}</button>
-            {preview && <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('معاينة اللقطة', 'Preview snapshot')}</a>}
+            <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء القرار', 'Hide decision controls') : tr('فتح القرار', 'Open decision controls')}</button>
+            {preview ? <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('معاينة الموقع الكامل', 'Preview full site')}</a> : <span className="admin-route-note">{tr('لم يعُد مسار المراجعة برابط معاينة كامل لهذه اللقطة.', 'The review route did not return a full-preview URL for this snapshot.')}</span>}
           </div>
-          {expanded && <div className="admin-review-detail stack"><div className="admin-key-values">{Object.entries(review).filter(([key]) => !['diff', 'changes', 'delta'].includes(key)).map(([key, value]) => <div key={key}><span>{prettyKey(key)}</span><strong>{typeof value === 'object' ? '…' : text(value)}</strong></div>)}</div><label className="field"><span>{tr('سبب الرفض أو ملاحظة القرار', 'Rejection reason or decision note')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(e) => setReviewReasons((current) => ({ ...current, [id]: e.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={busy === `review-${id}-approve`} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر آمن', 'Approve & publish safely')}</button><button className="button button-danger" type="button" disabled={busy === `review-${id}-reject`} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div></div>}
+          {expanded && <div className="admin-review-detail stack"><div className="admin-key-values">{Object.entries(review).filter(([key]) => !['diff', 'changes', 'delta', 'snapshot'].includes(key)).map(([key, value]) => <div key={key}><span>{prettyKey(key)}</span><strong>{typeof value === 'object' ? '…' : text(value)}</strong></div>)}</div><label className="field"><span>{tr('سبب الرفض أو ملاحظة القرار', 'Rejection reason or decision note')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={busy === `review-${id}-approve`} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر ذري', 'Approve & publish atomically')}</button><button className="button button-danger" type="button" disabled={busy === `review-${id}-reject`} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div></div>}
         </article>;
       }) : <Empty title={tr('لا توجد لقطات قيد المراجعة.', 'No snapshots are awaiting review.')} />}
     </div>
@@ -503,78 +617,92 @@ export default function Admin() {
 
   const renderPayments = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('طلبات الدفع الخاصة', 'Private payment requests')}</h1><p className="muted">{tr('الإيصالات لا تُعرض إلا من رابط مصادق عليه أعاده الخادم. اعتماد الدفع لا يُعاد أثره ولا يُرسل مرتين.', 'Receipts are exposed only through authenticated URLs returned by the server. Approval has a non-repeatable effect and cannot be sent twice.')}</p></div></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('طلبات الدفع الخاصة', 'Private payment requests')}</h1><p className="muted">{tr('رابط الإيصال يبنى فقط من receiptId الذي أعاده الخادم ويخضع لمسار وسائط مصادق عليه. الاعتماد والإبطال قرارات مالية مسجلة وليسا تعديلاً صامتاً.', 'A receipt link is built only from a server-returned receiptId and is protected by the authenticated media route. Approval and reversal are ledgered financial decisions, not silent edits.')}</p></div></section>
       <div className="admin-payment-grid">
         {payments.length ? payments.map((payment) => {
           const id = idOf(payment);
-          const final = /approved|rejected|declined|cancelled/.test(text(field(payment, 'status', 'decision'), '').toLowerCase());
-          const receipt = text(field(payment, 'receipt_url', 'private_receipt_url'), '');
+          const receiptUrl = text(field(payment, 'receipt_url', 'private_receipt_url'), '');
+          const receiptId = text(field(payment, 'receipt_id', 'receiptId'), '');
+          const protectedReceipt = receiptUrl || (receiptId ? `/api/media/${encodeURIComponent(receiptId)}` : '');
+          const reversed = Boolean(field(payment, 'reversed_at', 'reversal_id'));
           return <article className="card admin-payment" key={id || text(field(payment, 'created_at'))}>
             <div className="row"><div><h2>{tr('طلب', 'Request')} #{id}</h2><p className="muted">C{text(field(payment, 'user_id', 'customer_id'))} · {asDate(field(payment, 'created_at', 'submitted_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(payment, 'status', 'decision'))}`}>{text(field(payment, 'status', 'decision'))}</span></div>
-            <div className="admin-key-values compact"><div><span>{tr('المبلغ', 'Amount')}</span><strong>{text(field(payment, 'amount'))}</strong></div><div><span>{tr('الأيام', 'Days')}</span><strong>{text(field(payment, 'days'))}</strong></div><div><span>{tr('الملاحظات', 'Notes')}</span><strong>{text(field(payment, 'notes'))}</strong></div></div>
-            <div className="admin-receipt-safe">{receipt ? <a className="button button-quiet" href={receipt} target="_blank" rel="noreferrer">{tr('فتح الإيصال الخاص', 'Open private receipt')}</a> : <span className="muted">{tr('لا يوجد رابط إيصال مصادق عليه في الاستجابة.', 'No authenticated receipt URL was returned.')}</span>}</div>
-            {!final && <><label className="field"><span>{tr('سبب الرفض أو ملاحظة الاعتماد', 'Rejection reason or approval note')}</span><textarea rows={2} value={paymentReasons[id] ?? ''} onChange={(e) => setPaymentReasons((current) => ({ ...current, [id]: e.target.value }))} /></label><div className="admin-actions"><button className="button" disabled={busy === `payment-${id}-approve`} type="button" onClick={() => decidePayment(payment, 'approve')}>{tr('اعتماد مرة واحدة', 'Approve once')}</button><button className="button button-danger" disabled={busy === `payment-${id}-reject`} type="button" onClick={() => decidePayment(payment, 'reject')}>{tr('رفض', 'Reject')}</button></div></>}
-            {final && <p className="admin-finality">{tr('القرار نهائي في الواجهة؛ لا يتاح تكرار اعتماد أو رفض الطلب.', 'This request is final in the console; repeat approval or rejection is unavailable.')}</p>}
+            <div className="admin-key-values compact"><div><span>{tr('المبلغ', 'Amount')}</span><strong>{text(field(payment, 'amount'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('الأيام', 'Days')}</span><strong>{text(field(payment, 'days'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('الملاحظات', 'Notes')}</span><strong>{text(field(payment, 'notes'))}</strong></div></div>
+            <div className="admin-receipt-safe">{protectedReceipt ? <a className="button button-quiet" href={protectedReceipt} target="_blank" rel="noreferrer">{tr('فتح الإيصال الخاص', 'Open private receipt')}</a> : <span className="muted">{tr('لم يعد الخادم receiptId أو رابط إيصال مصادقاً لهذا الطلب.', 'The server did not return a receiptId or authenticated receipt URL for this request.')}</span>}</div>
+            {isPendingPayment(payment) && <><label className="field"><span>{tr('سبب الرفض أو ملاحظة الاعتماد', 'Rejection reason or approval note')}</span><textarea rows={2} value={paymentReasons[id] ?? ''} onChange={(event) => setPaymentReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" disabled={busy === `payment-${id}-approve`} type="button" onClick={() => decidePayment(payment, 'approve')}>{tr('اعتماد مرة واحدة', 'Approve once')}</button><button className="button button-danger" disabled={busy === `payment-${id}-reject`} type="button" onClick={() => decidePayment(payment, 'reject')}>{tr('رفض', 'Reject')}</button></div></>}
+            {isApprovedPayment(payment) && !reversed && <div className="admin-reversal"><label className="field"><span>{tr('مبرر إبطال الاعتماد (٨ أحرف على الأقل)', 'Approval reversal justification (8 characters minimum)')}</span><textarea rows={2} value={paymentReversalReasons[id] ?? ''} onChange={(event) => setPaymentReversalReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><button className="button button-danger" disabled={busy === `payment-${id}-reverse`} type="button" onClick={() => reversePayment(payment)}>{tr('إبطال بتسوية صريحة', 'Reverse with explicit adjustment')}</button></div>}
+            {!isPendingPayment(payment) && <p className="admin-finality">{reversed ? tr('سُجل الإبطال ولا يمكن تكراره.', 'A reversal is recorded and cannot be repeated.') : tr('القرار النهائي لا يعاد من أزرار الاعتماد أو الرفض.', 'A final decision is unavailable from the approval or rejection controls.')}</p>}
           </article>;
-        }) : <Empty title={tr('لا توجد طلبات دفع حالياً.', 'No payment requests were returned.')} />}
+        }) : <Empty title={tr('لا توجد طلبات دفع ضمن التفويض المالي المتاح.', 'No payment requests were returned in the available financial scope.')} />}
       </div>
     </div>
   );
 
   const renderServices = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('محرك الخدمات والاستحقاقات', 'Services & entitlements')}</h1><p className="muted">{tr('التفعيل أو التعليق العام يعيد حالة الاستحقاق السابقة عند الإتاحة. المنح والتعليق الفردي من بطاقة المستخدم.', 'Global enablement or pause restores prior entitlement on re-enable. Individual grants and pauses are controlled from a user card.')}</p></div></section>
-      <div className="admin-service-grid">
-        {services.length ? services.map((service) => {
-          const key = text(field(service, 'key', 'id'), '');
-          const enabled = Boolean(field(service, 'enabled', 'is_enabled'));
-          return <article className="card admin-service" key={key}><div><h2>{text(field(service, 'name', 'title', 'key'))}</h2><p className="muted">{text(field(service, 'description'))}</p></div><div className="row"><span className={`admin-status ${enabled ? 'success' : 'danger'}`}>{enabled ? tr('مفعلة عالمياً', 'Globally enabled') : tr('معلقة عالمياً', 'Globally paused')}</span><button type="button" className="button button-quiet" disabled={!key || busy === `service-${key}`} onClick={() => void mutate(`service-${key}`, () => api(`/api/admin/services/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ enabled: !enabled }) }), { fresh: true, success: enabled ? tr('تم تعليق الخدمة عالمياً.', 'Service globally paused.') : tr('تمت إعادة تفعيل الخدمة عالمياً.', 'Service globally re-enabled.') })}>{enabled ? tr('تعليق', 'Pause') : tr('إعادة تفعيل', 'Re-enable')}</button></div></article>;
-        }) : <Empty title={tr('لا يوجد كتالوج خدمات معروض.', 'No service catalog was returned.')} />}
-      </div>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('محرك الخدمات والاستحقاقات', 'Services & entitlements')}</h1><p className="muted">{tr('الحالة العالمية المعروضة من كتالوج الخدمات. التبديل العام محصور بالمالك؛ المنح أو التعليق الفردي من بطاقة المستخدم ضمن النطاق.', 'Global state is read from the service catalog. Global toggles are owner-only; individual grants or pauses are available from an in-scope user card.')}</p></div></section>
+      <div className="admin-service-grid">{services.length ? services.map((service) => {
+        const key = text(field(service, 'key', 'id'), '');
+        const enabled = Boolean(field(service, 'enabled', 'is_enabled'));
+        const name = lang === 'ar' ? text(field(service, 'name_ar', 'name', 'title', 'key')) : text(field(service, 'name_en', 'name', 'title', 'key'));
+        return <article className="card admin-service" key={key}><div><h2>{name}</h2><p className="muted">{displayJson(field(service, 'policy', 'description'))}</p></div><div className="row"><span className={`admin-status ${enabled ? 'success' : 'danger'}`}>{enabled ? tr('مفعلة عالمياً', 'Globally enabled') : tr('معلقة عالمياً', 'Globally paused')}</span>{owner && <button type="button" className="button button-quiet" disabled={!key || busy === `service-${key}`} onClick={() => void mutate(`service-${key}`, () => api(`/api/admin/services/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ enabled: !enabled }) }), { fresh: true, success: enabled ? tr('تم إرسال تعليق الخدمة عالمياً.', 'The global service pause was sent.') : tr('تم إرسال إعادة التفعيل عالمياً.', 'The global service re-enable was sent.') })}>{enabled ? tr('تعليق', 'Pause') : tr('إعادة تفعيل', 'Re-enable')}</button>}</div></article>;
+      }) : <Empty title={tr('لا يوجد كتالوج خدمات معروض.', 'No service catalog was returned.')} />}</div>
     </div>
   );
 
   const renderNames = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('الأسماء المحجوزة والنقل', 'Reserved names & transfers')}</h1><p className="muted">{tr('الأسماء التقنية المرتبطة بتشغيل المنصة غير قابلة للتحرير في الواجهة.', 'Technical names used by the platform are not releasable in the interface.')}</p></div></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('الأسماء المحجوزة والنقل', 'Reserved names & transfers')}</h1><p className="muted">{tr('الأسماء التقنية المرتبطة بتشغيل المنصة لا تتاح لتحرير الواجهة، كما لا ينتقل محتوى الموقع مع ملكية الاسم.', 'Technical names used by the platform are not releasable from the UI, and site content never moves with name ownership.')}</p></div></section>
       <section className="admin-grid admin-grid-2">
-        <div className="card stack"><h2>{tr('حجز اسم', 'Reserve a name')}</h2><form className="stack" onSubmit={(event) => { event.preventDefault(); if (!nameForm.name || !nameForm.reason) return; void mutate('reserve-name', () => api('/api/admin/names', { method: 'POST', body: JSON.stringify(nameForm) }), { fresh: true, success: tr('تم حجز الاسم مع سبب السياسة.', 'Name reserved with its policy reason.') }).then((result) => { if (result !== undefined) setNameForm({ name: '', kind: 'policy', reason: '' }); }); }}><label className="field"><span>{tr('الاسم', 'Name')}</span><input value={nameForm.name} onChange={(e) => setNameForm((v) => ({ ...v, name: e.target.value.toLowerCase() }))} required /></label><label className="field"><span>{tr('النوع', 'Kind')}</span><select value={nameForm.kind} onChange={(e) => setNameForm((v) => ({ ...v, kind: e.target.value }))}><option value="policy">{tr('سياسة', 'Policy')}</option><option value="technical">{tr('تقني', 'Technical')}</option></select></label><label className="field"><span>{tr('السبب', 'Reason')}</span><textarea rows={2} value={nameForm.reason} onChange={(e) => setNameForm((v) => ({ ...v, reason: e.target.value }))} required /></label><button className="button" disabled={busy === 'reserve-name'}>{tr('حجز الاسم', 'Reserve name')}</button></form></div>
-        <div className="card stack"><h2>{tr('طلبات النقل', 'Transfer requests')}</h2>{transfers.length ? transfers.map((transfer) => { const id = idOf(transfer); return <div className="admin-transfer" key={id}><div><strong>{text(field(transfer, 'name'))}</strong><p className="muted">{text(field(transfer, 'from_user', 'sender'))} → {text(field(transfer, 'to_user', 'recipient'))}</p></div><span className={`admin-status ${statusTone(field(transfer, 'status'))}`}>{text(field(transfer, 'status'))}</span><div className="admin-actions"><button className="button button-quiet" type="button" disabled={!id || busy === `transfer-${id}-approve`} onClick={() => void mutate(`transfer-${id}-approve`, () => api(`/api/admin/transfers/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision: 'approve' }) }), { fresh: true, success: tr('تم تسجيل قرار النقل.', 'Transfer decision recorded.') })}>{tr('اعتماد', 'Approve')}</button><button className="button button-danger" type="button" disabled={!id || busy === `transfer-${id}-reject`} onClick={() => void mutate(`transfer-${id}-reject`, () => api(`/api/admin/transfers/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision: 'reject' }) }), { fresh: true, success: tr('تم تسجيل رفض النقل.', 'Transfer rejection recorded.') })}>{tr('رفض', 'Reject')}</button></div></div>; }) : <Empty title={tr('لا توجد طلبات نقل.', 'No transfer requests were returned.')} />}</div>
+        <div className="card stack"><h2>{tr('حجز اسم', 'Reserve a name')}</h2><form className="stack" onSubmit={(event) => { event.preventDefault(); if (!nameForm.name || !nameForm.reason) return; void mutate('reserve-name', () => api('/api/admin/names', { method: 'POST', body: JSON.stringify(nameForm) }), { fresh: true, success: tr('تم حجز الاسم مع سبب السياسة.', 'The name was reserved with its policy reason.') }).then((result) => { if (result !== undefined) setNameForm({ name: '', kind: 'policy', reason: '' }); }); }}><label className="field"><span>{tr('الاسم', 'Name')}</span><input value={nameForm.name} onChange={(event) => setNameForm((value) => ({ ...value, name: event.target.value.toLowerCase() }))} pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" required /></label><label className="field"><span>{tr('النوع', 'Kind')}</span><select value={nameForm.kind} onChange={(event) => setNameForm((value) => ({ ...value, kind: event.target.value }))}><option value="policy">{tr('سياسة', 'Policy')}</option><option value="technical">{tr('تقني', 'Technical')}</option></select></label><label className="field"><span>{tr('السبب', 'Reason')}</span><textarea rows={2} value={nameForm.reason} onChange={(event) => setNameForm((value) => ({ ...value, reason: event.target.value }))} required /></label><button className="button" disabled={busy === 'reserve-name'}>{tr('حجز الاسم', 'Reserve name')}</button></form></div>
+        <div className="card stack"><h2>{tr('طلبات النقل المقبولة من المستفيد', 'Recipient-accepted transfer requests')}</h2>{transfers.length ? transfers.map((transfer) => { const id = idOf(transfer); const accepted = text(field(transfer, 'status'), '').toLowerCase() === 'accepted'; return <div className="admin-transfer" key={id}><div><strong>{text(field(transfer, 'name'))}</strong><p className="muted">{text(field(transfer, 'from_name', 'from_user', 'sender'))} → {text(field(transfer, 'to_name', 'to_user', 'recipient'))}</p></div><span className={`admin-status ${statusTone(field(transfer, 'status'))}`}>{text(field(transfer, 'status'))}</span>{accepted && <div className="admin-actions"><button className="button button-quiet" type="button" disabled={!id || busy === `transfer-${id}-approve`} onClick={() => void mutate(`transfer-${id}-approve`, () => api(`/api/admin/transfers/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision: 'approve' }) }), { fresh: true, success: tr('تم تسجيل اعتماد النقل وفصل المحتوى عن الاسم.', 'The transfer approval was recorded and content remains separate from the name.') })}>{tr('اعتماد', 'Approve')}</button><button className="button button-danger" type="button" disabled={!id || busy === `transfer-${id}-reject`} onClick={() => void mutate(`transfer-${id}-reject`, () => api(`/api/admin/transfers/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision: 'reject' }) }), { fresh: true, success: tr('تم تسجيل رفض النقل.', 'The transfer rejection was recorded.') })}>{tr('رفض', 'Reject')}</button></div>}</div>; }) : <Empty title={tr('لا توجد طلبات نقل.', 'No transfer requests were returned.')} />}</div>
       </section>
-      <section className="card stack"><h2>{tr('سجل الأسماء المحجوزة', 'Reserved-name registry')}</h2><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الاسم', 'Name')}</th><th>{tr('النوع', 'Kind')}</th><th>{tr('السبب', 'Reason')}</th><th>{tr('الإجراء', 'Action')}</th></tr></thead><tbody>{names.length ? names.map((name) => { const nameText = text(field(name, 'name'), ''); const kind = text(field(name, 'kind', 'type'), '').toLowerCase(); const technical = kind === 'technical' || Boolean(field(name, 'technical', 'immutable')); return <tr key={nameText}><td>{nameText}</td><td><span className={`admin-status ${technical ? 'danger' : 'neutral'}`}>{technical ? tr('تقني / غير قابل للتحرير', 'Technical / immutable') : text(field(name, 'kind', 'type'))}</span></td><td>{text(field(name, 'reason'))}</td><td>{technical ? <span className="muted">{tr('محمي للتشغيل', 'Protected for operation')}</span> : <button className="button button-danger button-small" type="button" disabled={busy === `release-${nameText}`} onClick={() => void mutate(`release-${nameText}`, () => api(`/api/admin/names/${encodeURIComponent(nameText)}/release`, { method: 'POST' }), { fresh: true, success: tr('تم تحرير الاسم المحجوز.', 'Reserved name released.') })}>{tr('تحرير', 'Release')}</button>}</td></tr>; }) : <tr><td colSpan={4}>{tr('لا توجد أسماء محجوزة.', 'No reserved names were returned.')}</td></tr>}</tbody></table></div></section>
+      <section className="card stack"><h2>{tr('سجل الأسماء المحجوزة', 'Reserved-name registry')}</h2><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الاسم', 'Name')}</th><th>{tr('النوع', 'Kind')}</th><th>{tr('السبب', 'Reason')}</th><th>{tr('الإجراء', 'Action')}</th></tr></thead><tbody>{names.length ? names.map((name) => { const nameText = text(field(name, 'name'), ''); const kind = text(field(name, 'kind', 'type'), '').toLowerCase(); const technical = kind === 'technical' || Boolean(field(name, 'technical', 'immutable')); return <tr key={nameText}><td>{nameText}</td><td><span className={`admin-status ${technical ? 'danger' : 'neutral'}`}>{technical ? tr('تقني / غير قابل للتحرير', 'Technical / immutable') : text(field(name, 'kind', 'type'))}</span></td><td>{text(field(name, 'reason'))}</td><td>{technical ? <span className="muted">{tr('محمي للتشغيل', 'Protected for operation')}</span> : <button className="button button-danger button-small" type="button" disabled={busy === `release-${nameText}`} onClick={() => void mutate(`release-${nameText}`, () => api(`/api/admin/names/${encodeURIComponent(nameText)}/release`, { method: 'POST' }), { fresh: true, success: tr('تم تحرير الاسم المحجوز.', 'The reserved name was released.') })}>{tr('تحرير', 'Release')}</button>}</td></tr>; }) : <tr><td colSpan={4}>{tr('لا توجد أسماء محجوزة.', 'No reserved names were returned.')}</td></tr>}</tbody></table></div></section>
     </div>
   );
 
-  const renderContent = () => (
-    <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('المحتوى والهوية والمواسم', 'Content, identity & seasons')}</h1><p className="muted">{tr('النصوص القانونية قابلة للتحرير، لكنها لا تُعرض كاعتماد قانوني. لا يُنشأ نص أو معلومة رسمية من الواجهة.', 'Legal copy is editable but is never presented as legal approval. This interface does not invent text or official information.')}</p></div></section>
+  const renderContent = () => {
+    const selected = contentSlugs.find(([slug]) => slug === contentSlug);
+    const ready = content.title_ar.trim().length > 0 && content.title_en.trim().length > 0 && content.body_ar.trim().length >= 20 && content.body_en.trim().length >= 20;
+    return <div className="stack admin-stack">
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('المحتوى والتحرير', 'Content editing')}</h1><p className="muted">{tr('محرر ثنائي اللغة للمحتوى المحدد فقط: من نحن، النصوص القانونية، المدونة، الحملات، التواصل والتذييل. لا يُنشئ بيانات رسمية أو اعتماداً قانونياً.', 'A bilingual editor for the selected content only: about, legal copy, journal, campaigns, contact and footer. It does not invent official data or legal approval.')}</p></div></section>
       <section className="admin-content-layout">
         <div className="card admin-content-nav">{contentSlugs.map(([slug, ar, en]) => <button type="button" className={contentSlug === slug ? 'active' : ''} onClick={() => setContentSlug(slug)} key={slug}>{tr(ar, en)}</button>)}</div>
-        <div className="card stack"><div className="row"><div><h2>{tr(contentSlugs.find(([slug]) => slug === contentSlug)?.[1] ?? '', contentSlugs.find(([slug]) => slug === contentSlug)?.[2] ?? '')}</h2><p className="muted">{contentMeta ? `${tr('آخر بيانات محملة', 'Last loaded metadata')}: ${asDate(field(contentMeta, 'updated_at', 'updatedAt'), lang)}` : tr('جار التحميل عند فتح القسم.', 'Loads on opening this section.')}</p></div></div><label className="field"><span>{tr('المحتوى النصي أو JSON', 'Text or JSON content')}</span><textarea className="admin-content-editor" rows={18} value={content} onChange={(e) => setContent(e.target.value)} spellCheck={false} /></label><div className="admin-actions"><button className="button" type="button" disabled={busy === `content-${contentSlug}`} onClick={() => void mutate(`content-${contentSlug}`, () => api(`/api/admin/content/${contentSlug}`, { method: 'PUT', body: JSON.stringify({ content: safeJson(content) }) }), { fresh: true, success: tr('تم حفظ المحتوى.', 'Content saved.') })}>{tr('حفظ المحتوى', 'Save content')}</button></div></div>
+        <div className="card stack"><div className="row"><div><h2>{tr(selected?.[1] ?? '', selected?.[2] ?? '')}</h2><p className="muted">{contentMeta?.state === 'new' ? tr('لا توجد نسخة منشورة أعادها المسار العام؛ ستنشأ فقط عند الحفظ الصريح.', 'The public route returned no published version; one is created only after an explicit save.') : `${tr('آخر نسخة أعادها المسار العام', 'Last version returned by the public route')}: ${asDate(field(contentMeta, 'updated_at', 'updatedAt'), lang)}`}</p></div></div><div className="admin-content-fields"><label className="field"><span>{tr('العنوان العربي', 'Arabic title')}</span><input value={content.title_ar} onChange={(event) => setContent((value) => ({ ...value, title_ar: event.target.value }))} /></label><label className="field"><span>{tr('العنوان الإنجليزي', 'English title')}</span><input dir="ltr" value={content.title_en} onChange={(event) => setContent((value) => ({ ...value, title_en: event.target.value }))} /></label><label className="field"><span>{tr('النص العربي', 'Arabic body')}</span><textarea className="admin-content-editor" rows={14} value={content.body_ar} onChange={(event) => setContent((value) => ({ ...value, body_ar: event.target.value }))} /></label><label className="field"><span>{tr('النص الإنجليزي', 'English body')}</span><textarea className="admin-content-editor" dir="ltr" rows={14} value={content.body_en} onChange={(event) => setContent((value) => ({ ...value, body_en: event.target.value }))} /></label></div><div className="admin-actions"><button className="button" type="button" disabled={!ready || busy === `content-${contentSlug}`} onClick={() => void mutate(`content-${contentSlug}`, () => api(`/api/admin/content/${encodeURIComponent(contentSlug)}`, { method: 'PUT', body: JSON.stringify({ content }) }), { fresh: true, reload: false, success: tr('حُفظت حقول المحتوى عبر مسار الإدارة.', 'The content fields were saved through the administration route.') }).then((response) => { if (response !== undefined) { const payload = record(response); setContentMeta(record(field(payload, 'content')) ?? payload); } })}>{tr('حفظ المحتوى المنشور', 'Save published content')}</button>{!ready && <span className="admin-route-note">{tr('العنوانان مطلوبان، ويجب ألا يقل كل نص عن ٢٠ حرفاً وفق تحقق الخادم.', 'Both titles are required and each body must have at least 20 characters under server validation.')}</span>}</div></div>
       </section>
-      <section className="card stack"><div><h2>{tr('المظهر الموسمي', 'Seasonal appearance')}</h2><p className="muted">{tr('جدولة اختيارية للعيدين واليوم الوطني ويوم التأسيس. لا يُفعّل أي مظهر بلا إعداد محفوظ.', 'Optional scheduling for both Eids, National Day, and Founding Day. No seasonal appearance is enabled without a saved setting.')}</p></div><div className="admin-form-pair"><label className="field"><span>{tr('المناسبة', 'Occasion')}</span><select value={seasonal.occasion} onChange={(e) => setSeasonal((v) => ({ ...v, occasion: e.target.value }))}><option value="eid_al_fitr">{tr('عيد الفطر', 'Eid al-Fitr')}</option><option value="eid_al_adha">{tr('عيد الأضحى', 'Eid al-Adha')}</option><option value="national_day">{tr('اليوم الوطني السعودي', 'Saudi National Day')}</option><option value="founding_day">{tr('يوم التأسيس السعودي', 'Saudi Founding Day')}</option></select></label><label className="field admin-check"><input type="checkbox" checked={seasonal.enabled} onChange={(e) => setSeasonal((v) => ({ ...v, enabled: e.target.checked }))} /><span>{tr('تفعيل المظهر عند النافذة المجدولة', 'Enable appearance during scheduled window')}</span></label><label className="field"><span>{tr('البداية (Epoch)', 'Start (epoch)')}</span><input inputMode="numeric" value={seasonal.starts_at} onChange={(e) => setSeasonal((v) => ({ ...v, starts_at: e.target.value }))} /></label><label className="field"><span>{tr('النهاية (Epoch)', 'End (epoch)')}</span><input inputMode="numeric" value={seasonal.ends_at} onChange={(e) => setSeasonal((v) => ({ ...v, ends_at: e.target.value }))} /></label></div><button className="button" type="button" disabled={busy === 'seasonal'} onClick={() => void mutate('seasonal', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'seasonal', value: seasonal }) }), { fresh: true, success: tr('تم حفظ جدولة المظهر الموسمي.', 'Seasonal schedule saved.') })}>{tr('حفظ الجدولة', 'Save schedule')}</button></section>
-    </div>
+      <SeasonPanel tr={tr} seasonal={seasonal} setSeasonal={setSeasonal} busy={busy} setError={setError} onSave={() => {
+        const startsAt = riyadhInputToEpoch(seasonal.startsAt);
+        const endsAt = riyadhInputToEpoch(seasonal.endsAt);
+        if (seasonal.enabled && (!startsAt || !endsAt || endsAt <= startsAt)) {
+          setError(tr('للتفعيل، أدخل نافذة زمنية صحيحة ومتزايدة بتوقيت الرياض.', 'To enable, provide a valid ascending time window in Riyadh time.'));
+          return;
+        }
+        void mutate('seasonal', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'season', value: { enabled: seasonal.enabled, occasion: seasonal.occasion, starts_at: startsAt, ends_at: endsAt } }) }), { fresh: true, success: tr('حُفظت جدولة المظهر الموسمي بتوقيت الرياض.', 'The seasonal appearance schedule was saved in Riyadh time.') });
+      }} />
+    </div>;
+  };
+
+  const renderPricing = () => (
+    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('التسعير الداخلي', 'Internal pricing')}</h1><p className="muted">{tr('تعرض هذه المساحة قيمة إعداد prices كما يعيدها الخادم فقط. لا توجد قيمة أو عملة أو خطة افتراضية مخترعة في الواجهة.', 'This space renders only the prices setting returned by the server. No amount, currency or plan is invented by the UI.')}</p></div></section><section className="card stack"><label className="field"><span>{tr('إعداد التسعير بصيغة JSON', 'Pricing setting as JSON')}</span><textarea className="admin-content-editor admin-price-editor" dir="ltr" rows={16} value={prices} onChange={(event) => setPrices(event.target.value)} spellCheck={false} placeholder={tr('لا توجد قيمة محملة بعد.', 'No value has been loaded yet.')} /></label><div className="admin-actions"><button className="button" type="button" disabled={!prices.trim() || busy === 'prices'} onClick={() => { const value = parseObject(prices); if (!value) { setError(tr('إعداد التسعير يجب أن يكون كائن JSON صحيحاً؛ لم يُرسل شيء.', 'Pricing must be a valid JSON object; nothing was sent.')); return; } void mutate('prices', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'prices', value }) }), { fresh: true, success: tr('حُفظ إعداد التسعير الداخلي.', 'The internal pricing setting was saved.') }); }}>{tr('حفظ إعداد التسعير', 'Save pricing setting')}</button><span className="admin-route-note">{tr('لا تفعل هذه الواجهة خدمة دفع ولا تنشئ اشتراكاً؛ مسار الدفع والاعتماد منفصل.', 'This UI does not activate a payment service or create a subscription; payment and approval are separate routes.')}</span></div></section></div>
   );
 
   const renderLock = () => {
     const bankData = field(record(data.settings), 'bank_instructions', 'bank', 'payment_instructions');
-    return <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('قفل المنصة وإعدادات التشغيل', 'Platform lock & operating settings')}</h1><p className="muted">{tr('المنصة منشورة مفتوحة. استخدم هذه الأدوات فقط عندما تختار تغيير الوصول. البوابة لا تستبدل المصادقة.', 'The platform is published open. Use these controls only when you choose to change access. The gate never replaces authentication.')}</p></div></section><section className="admin-grid admin-grid-2"><form className="card stack" onSubmit={(event) => { event.preventDefault(); const value: JsonRecord = { mode: lock.mode, reason: lock.reason, message: lock.message }; if (lock.password) value.password = lock.password; void mutate('platform-lock', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'platform_lock', value }) }), { fresh: true, success: tr('تم حفظ وضع قفل المنصة.', 'Platform lock mode saved.') }).then((result) => { if (result !== undefined) setLock((v) => ({ ...v, password: '' })); }); }}><div><h2>{tr('وضع القفل', 'Lock mode')}</h2><p className="muted">{tr('الخادم يحمي الواجهات والبيانات تحت القفل؛ البوابة لا تكشف محتوى خاصاً.', 'The server protects routes and data under the lock; the gate never exposes private content.')}</p></div><label className="field"><span>{tr('النطاق', 'Scope')}</span><select value={lock.mode} onChange={(e) => setLock((v) => ({ ...v, mode: e.target.value }))}>{lockModes.map(([value, ar, en]) => <option value={value} key={value}>{tr(ar, en)}</option>)}</select></label><label className="field"><span>{tr('سبب الإغلاق', 'Lock reason')}</span><input value={lock.reason} onChange={(e) => setLock((v) => ({ ...v, reason: e.target.value }))} /></label><label className="field"><span>{tr('نص بطاقة القفل', 'Lock card message')}</span><textarea rows={3} value={lock.message} onChange={(e) => setLock((v) => ({ ...v, message: e.target.value }))} /></label><label className="field"><span>{tr('كلمة مرور الوصول الخاص', 'Private access password')}</span><input type="password" autoComplete="new-password" value={lock.password} placeholder={tr('اتركها فارغة للاحتفاظ بالقيمة الحالية', 'Leave blank to preserve the current value')} onChange={(e) => setLock((v) => ({ ...v, password: e.target.value }))} /></label><button className="button" disabled={busy === 'platform-lock'}>{tr('حفظ القفل', 'Save lock')}</button></form><section className="card stack"><div><h2>{tr('بيانات الحوالة الرسمية', 'Official bank transfer details')}</h2><p className="muted">{tr('لا تُخترع بيانات بنكية. عند عدم توافرها يظل استقبال التحويلات معطلاً، ولا يُعرض تحويل إلى جهة مجهولة.', 'Bank details are never invented. When absent, transfer collection remains disabled and no transfer to an unknown party is shown.')}</p></div>{bankData === undefined || bankData === null || bankData === '' ? <div className="admin-unavailable">{tr('لم يرد من الإعدادات أي بيانات بنكية رسمية.', 'No official bank information was returned in settings.')}</div> : <pre className="admin-bank-info">{typeof bankData === 'string' ? bankData : JSON.stringify(bankData, null, 2)}</pre>}<label className="field"><span>{tr('إدخال/تحديث التعليمات البنكية الرسمية فقط', 'Enter/update official bank instructions only')}</span><textarea rows={7} value={bankInstructions} onChange={(event) => setBankInstructions(event.target.value)} placeholder={tr('أدخل بيانات الجهة الرسمية المتحققة فقط', 'Enter verified official recipient details only')} /></label><button type="button" className="button" disabled={busy === 'bank-instructions'} onClick={() => void mutate('bank-instructions', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'bank_instructions', value: safeJson(bankInstructions) }) }), { fresh: true, success: tr('تم حفظ التعليمات البنكية الرسمية.', 'Official bank instructions saved.') })}>{tr('حفظ التعليمات الرسمية', 'Save official instructions')}</button><p className="muted">{tr('لا تدخل إلا بيانات رسمية متحققة. تُدار المعلومات من قيمة إعداد الخادم ولا تعيد الواجهة صوغها أو تخمينها.', 'Enter only verified official information. It is stored in the server setting; the UI neither rewrites nor guesses it.')}</p></section></section></div>;
+    const lockReady = settingsLoaded && Boolean(lock.mode);
+    return <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('قفل المنصة وإعدادات التشغيل', 'Platform lock & operating settings')}</h1><p className="muted">{tr('لا تُفترض حالة القفل من الواجهة. تبقى عناصر التعديل معطلة حتى تعيد إعدادات الخادم الحالية، وكلمة المرور الفارغة تحافظ على تجزئتها الحالية.', 'The lock state is never assumed by the UI. Edit controls remain disabled until current server settings return, and a blank password retains the current hash.')}</p></div></section><section className="admin-grid admin-grid-2"><form className="card stack" onSubmit={(event) => { event.preventDefault(); if (!lockReady) return; const value: JsonRecord = { mode: lock.mode, reason: lock.reason, message: lock.message }; if (lock.password) value.password = lock.password; void mutate('platform-lock', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'lock', value }) }), { fresh: true, success: tr('أُرسل وضع القفل المحمّل من الخادم للحفظ.', 'The server-loaded lock mode was sent for saving.') }).then((result) => { if (result !== undefined) setLock((current) => ({ ...current, password: '' })); }); }}><div><h2>{tr('وضع القفل', 'Lock mode')}</h2><p className="muted">{tr('البوابة لا تمنح مصادقة أو وصولاً إلى بيانات خاصة، ولا تتجاوز حماية API.', 'The gate grants neither authentication nor private-data access and cannot bypass API protection.')}</p></div>{!lockReady && <div className="admin-unavailable">{tr('لم تُحمّل حالة القفل من الخادم بعد؛ لا يمكن الحفظ بأية قيمة افتراضية.', 'The server lock state has not loaded; no default value can be saved.')}</div>}<label className="field"><span>{tr('النطاق', 'Scope')}</span><select value={lock.mode} disabled={!lockReady} onChange={(event) => setLock((value) => ({ ...value, mode: event.target.value }))}>{lockModes.map(([value, ar, en]) => <option value={value} key={value}>{tr(ar, en)}</option>)}</select></label><label className="field"><span>{tr('سبب الإغلاق', 'Lock reason')}</span><input disabled={!lockReady} value={lock.reason} onChange={(event) => setLock((value) => ({ ...value, reason: event.target.value }))} /></label><label className="field"><span>{tr('نص بطاقة القفل', 'Lock card message')}</span><textarea disabled={!lockReady} rows={3} value={lock.message} onChange={(event) => setLock((value) => ({ ...value, message: event.target.value }))} /></label><label className="field"><span>{tr('كلمة مرور الوصول الخاص', 'Private access password')}</span><input disabled={!lockReady} type="password" autoComplete="new-password" value={lock.password} placeholder={tr('اتركها فارغة للاحتفاظ بالقيمة الحالية', 'Leave blank to preserve the current value')} onChange={(event) => setLock((value) => ({ ...value, password: event.target.value }))} /></label><button className="button" disabled={!lockReady || busy === 'platform-lock'}>{tr('حفظ القفل', 'Save lock')}</button></form><section className="card stack"><div><h2>{tr('بيانات الحوالة الرسمية', 'Official bank transfer details')}</h2><p className="muted">{tr('لا تُخترع بيانات بنكية. عند غيابها يعرض النظام الغياب ولا يوجّه المستخدم لجهة مجهولة.', 'Bank data is never invented. When absent, the system displays that absence and does not direct users to an unknown recipient.')}</p></div>{bankData === undefined || bankData === null || bankData === '' ? <div className="admin-unavailable">{tr('لم يرد من الإعدادات أي بيانات بنكية رسمية.', 'No official bank information was returned in settings.')}</div> : <pre className="admin-bank-info">{settingText(bankData)}</pre>}<label className="field"><span>{tr('إدخال/تحديث التعليمات البنكية الرسمية فقط', 'Enter/update official bank instructions only')}</span><textarea rows={7} value={bankInstructions} onChange={(event) => setBankInstructions(event.target.value)} placeholder={tr('أدخل بيانات الجهة الرسمية المتحققة فقط', 'Enter verified official recipient details only')} /></label><button type="button" className="button" disabled={!bankInstructions.trim() || busy === 'bank-instructions'} onClick={() => void mutate('bank-instructions', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'bank', value: bankInstructions }) }), { fresh: true, success: tr('حُفظت التعليمات البنكية كما أُدخلت.', 'The bank instructions were saved as entered.') })}>{tr('حفظ التعليمات الرسمية', 'Save official instructions')}</button><p className="muted">{tr('لا تدخل إلا بيانات رسمية متحققة. لا تعيد الواجهة صياغتها ولا تخمنها.', 'Enter verified official data only. The UI neither rewrites nor guesses it.')}</p></section></section></div>;
   };
 
   const renderEconomics = () => (
-    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('اقتصاديات المنصة', 'Platform economics')}</h1><p className="muted">{tr('كل مؤشر معروض من بيانات النظام. التكلفة أو الربحية غير المتاحة تبقى “غير متاح” ولا تتحول إلى رقم تقديري.', 'Every metric comes from system data. Unavailable costs or profitability remain unavailable, never an estimate.')}</p></div></section><section className="admin-metrics">{economicMetrics.map(([key, ar, en]) => <article className="admin-metric card" key={key}><span className="muted">{tr(ar, en)}</span><strong>{text(valueAt(data.economics, key), tr('غير متاح', 'Unavailable'))}</strong></article>)}</section><section className="admin-grid admin-grid-2"><div className="card stack"><h2>{tr('تسجيل مصروف يدوي', 'Record a manual expense')}</h2><p className="muted">{tr('الإدخال اليدوي للمصروفات يضيف سجلاً ولا يختلق تكلفة استهلاك.', 'Manual expense entry adds a record; it does not fabricate usage cost.')}</p><form className="stack" onSubmit={(event) => { event.preventDefault(); if (!expense.label || !expense.amount) return; void mutate('expense', () => api('/api/admin/expenses', { method: 'POST', body: JSON.stringify({ label: expense.label, amount: Number(expense.amount), notes: expense.notes }) }), { fresh: true, success: tr('تم تسجيل المصروف.', 'Expense recorded.') }).then((result) => { if (result !== undefined) setExpense({ label: '', amount: '', notes: '' }); }); }}><label className="field"><span>{tr('الوصف', 'Description')}</span><input value={expense.label} onChange={(e) => setExpense((v) => ({ ...v, label: e.target.value }))} /></label><label className="field"><span>{tr('المبلغ', 'Amount')}</span><input inputMode="decimal" value={expense.amount} onChange={(e) => setExpense((v) => ({ ...v, amount: e.target.value }))} /></label><label className="field"><span>{tr('ملاحظات', 'Notes')}</span><textarea rows={2} value={expense.notes} onChange={(e) => setExpense((v) => ({ ...v, notes: e.target.value }))} /></label><button className="button" disabled={!financialOperator || busy === 'expense'}>{financialOperator ? tr('تسجيل المصروف', 'Record expense') : tr('يتطلب تفويضاً مالياً', 'Financial delegation required')}</button></form></div><div className="card stack"><h2>{tr('خزينة النقاط', 'Points treasury')}</h2><p className="muted">{tr('إصدار النقاط محصور بالمالك ويُسجل في دفتر الأستاذ. استخدم بطاقة المستخدم للإصدار المستهدف.', 'Point issuance is owner-only and ledgered. Use a user card for targeted issuance.')}</p><button className="button" type="button" disabled={!owner} onClick={() => switchTab('users')}>{owner ? tr('فتح إصدار النقاط للمستخدم', 'Open user point issuance') : tr('محصور بالمالك', 'Owner only')}</button><p className="admin-finality">{tr('لا يوجد إصدار جماعي أو رصيد تخميني في هذه الواجهة.', 'There is no bulk issuance or estimated balance in this console.')}</p></div></section></div>
+    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('اقتصاديات المنصة', 'Platform economics')}</h1><p className="muted">{tr('كل مؤشر يأتي من بيانات النظام. التكلفة أو الربحية غير المتاحة تبقى «غير متاح» ولا تتحول إلى تقدير.', 'Every metric comes from system data. An unavailable cost or profitability value remains unavailable and is never turned into an estimate.')}</p></div></section><section className="admin-metrics">{economicMetrics.map(([key, ar, en]) => <article className="admin-metric card" key={key}><span className="muted">{tr(ar, en)}</span><strong>{text(valueAt(data.economics, key), tr('غير متاح', 'Unavailable'))}</strong></article>)}</section><section className="admin-grid admin-grid-2"><div className="card stack"><h2>{tr('تسجيل مصروف يدوي', 'Record a manual expense')}</h2><p className="muted">{tr('الإدخال يضيف سجلاً تدقيقياً ولا يختلق تكلفة استهلاك.', 'This input adds an audit record; it does not fabricate a usage cost.')}</p><form className="stack" onSubmit={(event) => { event.preventDefault(); const amount = Number(expense.amount); if (!expense.label.trim() || !Number.isFinite(amount) || amount <= 0) return; void mutate('expense', () => api('/api/admin/expenses', { method: 'POST', body: JSON.stringify({ label: expense.label, amount, notes: expense.notes }) }), { fresh: true, success: tr('تم تسجيل المصروف.', 'The expense was recorded.') }).then((result) => { if (result !== undefined) setExpense({ label: '', amount: '', notes: '' }); }); }}><label className="field"><span>{tr('الوصف', 'Description')}</span><input value={expense.label} onChange={(event) => setExpense((value) => ({ ...value, label: event.target.value }))} /></label><label className="field"><span>{tr('المبلغ', 'Amount')}</span><input inputMode="decimal" value={expense.amount} onChange={(event) => setExpense((value) => ({ ...value, amount: event.target.value }))} /></label><label className="field"><span>{tr('ملاحظات', 'Notes')}</span><textarea rows={2} value={expense.notes} onChange={(event) => setExpense((value) => ({ ...value, notes: event.target.value }))} /></label><button className="button" disabled={busy === 'expense'}>{tr('تسجيل المصروف', 'Record expense')}</button></form></div><div className="card stack"><h2>{tr('خزينة النقاط', 'Points treasury')}</h2><p className="muted">{tr('إصدار النقاط هدفه مستخدم محدد فقط، يمر عبر دفتر الأستاذ ويتطلب التفويض المالي الفعلي.', 'Point issuance is targeted to one user, passes through the ledger and requires actual financial authorization.')}</p><button className="button" type="button" disabled={!financialOperator} onClick={() => switchTab('users')}>{financialOperator ? tr('فتح إصدار النقاط للمستخدم', 'Open user point issuance') : tr('تفويض مالي مطلوب', 'Financial delegation required')}</button><p className="admin-finality">{tr('لا يوجد إصدار جماعي أو رصيد تخميني في هذه الواجهة.', 'There is no bulk issuance or estimated balance in this console.')}</p></div></section></div>
   );
 
   const renderAudit = () => (
-    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('سجل التدقيق', 'Audit trail')}</h1><p className="muted">{tr('سجل للعمليات الحساسة؛ لا يمنح الوصول إلى رسائل المستخدمين الخاصة.', 'A trail for sensitive operations; it does not grant access to users’ private messages.')}</p></div></section><section className="card admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الوقت', 'Time')}</th><th>{tr('الإجراء', 'Action')}</th><th>{tr('الهدف', 'Target')}</th><th>{tr('بواسطة', 'By')}</th><th>{tr('التفاصيل', 'Details')}</th></tr></thead><tbody>{audit.length ? audit.map((entry, index) => <tr key={`${idOf(entry)}-${index}`}><td>{asDate(field(entry, 'created_at', 'at', 'timestamp'), lang)}</td><td>{text(field(entry, 'action'))}</td><td>{text(field(entry, 'target', 'target_id'))}</td><td>{text(field(entry, 'actor_name', 'actor', 'user_id'))}</td><td><span className="admin-detail-text">{text(field(entry, 'detail', 'details', 'reason'))}</span></td></tr>) : <tr><td colSpan={5}>{tr('لا توجد أحداث تدقيق معروضة.', 'No audit events were returned.')}</td></tr>}</tbody></table></section></div>
+    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('سجل التدقيق', 'Audit trail')}</h1><p className="muted">{tr('سجل للعمليات الحساسة؛ لا يمنح اطلاعاً على الرسائل أو الملفات الخاصة.', 'A trail for sensitive operations; it does not grant access to private messages or files.')}</p></div></section><section className="card admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الوقت', 'Time')}</th><th>{tr('الإجراء', 'Action')}</th><th>{tr('الهدف', 'Target')}</th><th>{tr('بواسطة', 'By')}</th><th>{tr('التفاصيل', 'Details')}</th></tr></thead><tbody>{audit.length ? audit.map((entry, index) => <tr key={`${idOf(entry)}-${index}`}><td>{asDate(field(entry, 'created_at', 'at', 'timestamp'), lang)}</td><td>{text(field(entry, 'action'))}</td><td>{text(field(entry, 'target', 'target_id'))}</td><td>{text(field(entry, 'actor_name', 'actor', 'user_id'))}</td><td><span className="admin-detail-text">{displayJson(field(entry, 'detail', 'details', 'reason'))}</span></td></tr>) : <tr><td colSpan={5}>{tr('لا توجد أحداث تدقيق معروضة.', 'No audit events were returned.')}</td></tr>}</tbody></table></section></div>
   );
 
-  const renderBackup = () => {
-    const info = record(backup);
-    const url = text(field(info, 'download_url', 'downloadUrl', 'url'), '');
-    const sha = text(field(info, 'sha256', 'sha', 'checksum'), '');
-    return <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('نسخة احتياطية مصادق عليها', 'Authenticated backup')}</h1><p className="muted">{tr('يتطلب هذا المسار تحققاً حديثاً من البريد. لا يُتاح رابط تحميل أو بصمة إلا من استجابة الخادم.', 'This route requires fresh email verification. A download link and checksum are shown only when supplied by the server response.')}</p></div></section><section className="card admin-backup-card"><div className="admin-backup-mark">SHA</div><div className="stack"><h2>{tr('معلومات النسخ والاستعادة', 'Backup & restore information')}</h2>{backup === undefined ? <p className="muted">{tr('جار طلب بيانات النسخة…', 'Requesting backup information…')}</p> : <><div className="admin-key-values"><div><span>{tr('حالة النسخة', 'Backup status')}</span><strong>{text(field(info, 'status'))}</strong></div><div><span>{tr('وقت الإنشاء', 'Created at')}</span><strong>{asDate(field(info, 'created_at', 'createdAt'), lang)}</strong></div><div><span>SHA-256</span><strong className="admin-mono">{sha || tr('لم ترد بصمة', 'No checksum returned')}</strong></div></div><div className="admin-actions">{url ? <a className="button" href={url} target="_blank" rel="noreferrer">{tr('تنزيل النسخة المصادق عليها', 'Download authenticated backup')}</a> : <button className="button" type="button" onClick={()=>{const blob=new Blob([JSON.stringify(backup,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='ksa-men-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(url);}}>{tr('تنزيل النسخة الحالية','Download current backup')}</button>}<button type="button" className="button button-quiet" disabled={busy === 'backup-refresh'} onClick={() => void mutate('backup-refresh', async () => { const response = await api<unknown>('/api/admin/backup'); setBackup(response); return response; }, { fresh: true, reload: false, success: tr('تم تحديث بيانات النسخة.', 'Backup metadata refreshed.') })}>{tr('تحديث', 'Refresh')}</button></div></>}</div></section><section className="card stack"><h2>{tr('النسخ الليلي المشفر','Encrypted nightly backups')}</h2><p className="muted">{tr('عند 03:00 صباحًا بتوقيت السعودية. قاعدة البيانات مشفرة داخل تخزين المشروع، وليست نسخة خارجية مستقلة.','At 03:00 Saudi time. Encrypted database snapshots in project storage, not independent external backups.')}</p><div className="row"><button className="button" onClick={()=>void mutate('nightly-create',async()=>{await api('/api/admin/backups/create',{method:'POST'});const d:any=await api('/api/admin/backups');setNightlyBackups(d.backups);return d;},{fresh:true,reload:false,success:tr('حُفظت النسخة المشفرة','Encrypted snapshot saved')})}>{tr('إنشاء نسخة الآن','Create snapshot now')}</button><button className="button button-quiet" onClick={()=>void mutate('nightly-list',async()=>{const d:any=await api('/api/admin/backups');setNightlyBackups(d.backups);return d;},{fresh:true,reload:false})}>{tr('عرض النسخ المحفوظة','List saved snapshots')}</button></div>{nightlyBackups.map(b=><div className="card" key={b.id}><p>{asDate(Number(b.createdAt),lang)}</p><p className="admin-mono">{b.sha256}</p><a className="button" href={'/api/admin/backups/'+b.id}>{tr('تنزيل بعد التحقق','Download after verification')}</a></div>)}</section></div>;
-  };
+  const renderBackup = () => (
+    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('النسخ الاحتياطية المشفرة', 'Encrypted backups')}</h1><p className="muted">{tr('هذه الواجهة تستخدم فقط مسارات النسخ المؤكدة: القائمة، الإنشاء، التنزيل الآمن، تنزيل الملف المشفر وفحص السلامة بعد تحقق حديث. لا توجد استعادة إنتاجية من المتصفح.', 'This UI uses only confirmed backup routes: list, create, sanitized download, encrypted download and integrity verification after fresh verification. There is no production restore from the browser.')}</p></div></section><section className="card stack"><div className="admin-backup-card"><div className="admin-backup-mark">SHA</div><div className="stack"><h2>{tr('نسخ التخزين الحالية', 'Current stored snapshots')}</h2><p className="muted">{tr('لا تفترض الواجهة جدولة ليلية؛ تعرض فقط النسخ التي يعيدها مسار التخزين.', 'The UI does not assume a nightly schedule; it renders only snapshots returned by the storage route.')}</p><div className="admin-actions"><button className="button" type="button" disabled={busy === 'backup-create'} onClick={() => void mutate('backup-create', () => api<unknown>('/api/admin/backups/create', { method: 'POST' }), { fresh: true, reload: false, success: tr('أُنشئت نسخة مشفرة عبر المسار المصرح.', 'An encrypted snapshot was created through the authorized route.') }).then((response) => { if (response !== undefined) void loadBackups(); })}>{tr('إنشاء نسخة الآن', 'Create snapshot now')}</button><button className="button button-quiet" type="button" disabled={busy === 'backups-list'} onClick={() => void loadBackups()}>{tr('تحديث القائمة', 'Refresh list')}</button></div></div></div>{!backupsLoaded ? <p className="muted">{tr('جارٍ طلب قائمة النسخ…', 'Requesting the backup list…')}</p> : nightlyBackups.length ? <div className="admin-backup-list">{nightlyBackups.map((backup) => { const verified = backupVerification[backup.id]; return <article className="admin-backup-item" key={backup.id}><div><strong>{asDate(backup.createdAt, lang)}</strong><p className="admin-mono">SHA-256: {text(backup.sha256, tr('لم ترد بصمة', 'No checksum returned'))}</p><p className="muted">{typeof backup.bytes === 'number' ? `${backup.bytes.toLocaleString()} B` : tr('الحجم غير متاح', 'Size unavailable')}</p>{verified && <div className="admin-verify-result"><strong>{field(verified, 'verified') === true ? tr('نجح فحص السلامة', 'Integrity check passed') : tr('نتيجة فحص السلامة', 'Integrity check result')}</strong><span>SHA-256: {text(field(verified, 'sha256'), tr('غير متاح', 'Unavailable'))}</span><span>{tr('الجداول', 'Tables')}: {text(field(verified, 'tableCount'), tr('غير متاح', 'Unavailable'))} · {tr('الصفوف', 'Rows')}: {text(field(verified, 'rowCount'), tr('غير متاح', 'Unavailable'))} · {tr('وسائط مفقودة', 'Missing media')}: {text(field(verified, 'missingMedia'), tr('غير متاح', 'Unavailable'))}</span></div>}</div><div className="admin-backup-actions"><a className="button button-quiet" href={`/api/admin/backups/${encodeURIComponent(backup.id)}`}>{tr('تنزيل JSON الآمن', 'Download sanitized JSON')}</a><a className="button button-quiet" href={`/api/admin/backups/${encodeURIComponent(backup.id)}/encrypted`}>{tr('تنزيل KSAB المشفر', 'Download encrypted KSAB')}</a><button className="button button-secondary" type="button" disabled={busy === `backup-verify-${backup.id}`} onClick={() => void mutate(`backup-verify-${backup.id}`, () => api<unknown>(`/api/admin/backups/${encodeURIComponent(backup.id)}/verify`, { method: 'POST' }), { fresh: true, reload: false, success: tr('اكتمل فحص سلامة النسخة.', 'Snapshot integrity verification completed.') }).then((response) => { if (response !== undefined) setBackupVerification((current) => ({ ...current, [backup.id]: record(response) })); })}>{tr('تحقق من السلامة', 'Verify integrity')}</button></div></article>; })}</div> : <Empty title={tr('لم تعد قائمة النسخ أي لقطة محفوظة.', 'The backup list returned no stored snapshot.')} />}<div className="admin-unavailable"><strong>{tr('الاستعادة الإنتاجية', 'Production restore')}</strong><span>{tr('فحص السلامة يثبت إمكانية فك تشفير النسخة وبصمتها فقط، ولا يكتب أي بيانات. الاستعادة المعزولة تتم خارج المتصفح ولا يوجد POST/PATCH لاستعادة الإنتاج في هذه الواجهة.', 'Integrity verification only proves decryption and checksum without writing data. Isolated restoration happens outside the browser; this UI has no production restore POST/PATCH action.')}</span></div></section></div>
+  );
 
   let contentView = renderOverview();
   switch (tab) {
@@ -584,6 +712,7 @@ export default function Admin() {
     case 'services': contentView = renderServices(); break;
     case 'names': contentView = renderNames(); break;
     case 'content': contentView = renderContent(); break;
+    case 'pricing': contentView = renderPricing(); break;
     case 'lock': contentView = renderLock(); break;
     case 'economics': contentView = renderEconomics(); break;
     case 'audit': contentView = renderAudit(); break;
@@ -592,13 +721,8 @@ export default function Admin() {
   }
 
   return <main className="admin-console" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-    <header className="admin-topbar">
-      <div className="admin-brand"><span className="admin-brand-glyph">K</span><div><strong>KSA.MEN</strong><span>{tr('الإدارة', 'ADMINISTRATION')}</span></div></div>
-      <div className="admin-topbar-actions"><button type="button" className="button button-quiet" onClick={() => void refresh()}>{tr('تحديث الجلسة', 'Refresh session')}</button><button type="button" className="button button-quiet" onClick={() => void load()} disabled={loading}>{loading ? tr('جار التحميل', 'Loading') : tr('تحديث البيانات', 'Refresh data')}</button></div>
-    </header>
-    <nav className="admin-tabs" aria-label={tr('تنقل الإدارة', 'Administration navigation')}>
-      {tabs.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => switchTab(item.id)}>{tr(item.ar, item.en)}{item.owner && <small>{tr('مالك', 'Owner')}</small>}</button>)}
-    </nav>
+    <header className="admin-topbar"><div className="admin-brand"><span className="admin-brand-glyph">K</span><div><strong>KSA.MEN</strong><span>{tr('الإدارة', 'ADMINISTRATION')}</span></div></div><div className="admin-topbar-actions"><button type="button" className="button button-quiet" onClick={() => void refresh()}>{tr('تحديث الجلسة', 'Refresh session')}</button><button type="button" className="button button-quiet" onClick={() => void load()} disabled={loading}>{loading ? tr('جار التحميل', 'Loading') : tr('تحديث البيانات', 'Refresh data')}</button></div></header>
+    <nav className="admin-tabs" aria-label={tr('تنقل الإدارة', 'Administration navigation')}>{availableTabs.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => switchTab(item.id)}>{tr(item.ar, item.en)}{item.roles.length === 1 && <small>{tr('مالك', 'OWNER')}</small>}</button>)}</nav>
     {error && <div className="admin-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label={tr('إغلاق', 'Dismiss')}>×</button></div>}
     {loading && !Object.keys(data).length ? <div className="card admin-loading">{tr('يجري تحميل بيانات الإدارة الحية…', 'Loading live administration data…')}</div> : contentView}
   </main>;
@@ -606,6 +730,60 @@ export default function Admin() {
 
 function Empty({ title }: { title: string }) {
   return <div className="admin-empty card"><span className="admin-empty-mark">—</span><p>{title}</p></div>;
+}
+
+function RoleScope({ active, tr }: { active: AdminRole; tr: (ar: string, en: string) => string }) {
+  const roles: Array<{ id: AdminRole; ar: string; en: string; descriptionAr: string; descriptionEn: string }> = [
+    { id: 'owner', ar: 'المشرف الرئيسي', en: 'Owner', descriptionAr: 'المالك: السياسات، الماليات، الأدوار، القفل والنسخ.', descriptionEn: 'Owner: policies, finance, roles, lock and backups.' },
+    { id: 'manager', ar: 'المشرف المسؤول', en: 'Responsible manager', descriptionAr: 'المدير: تشغيل نطاقه، المراجعات والمواقع بالنيابة.', descriptionEn: 'Manager: scoped operations, reviews and proxy sites.' },
+    { id: 'moderator', ar: 'المشرف العادي', en: 'Moderator', descriptionAr: 'المشرف: مراجعة تشغيلية بلا مالية أو تفويضات عليا.', descriptionEn: 'Moderator: operational reviews without finance or elevated delegation.' },
+  ];
+  return <>{roles.map((role) => <article key={role.id} className={`admin-role-scope ${active === role.id ? 'active' : ''}`}><strong>{tr(role.ar, role.en)}</strong><span>{tr(role.descriptionAr, role.descriptionEn)}</span></article>)}</>;
+}
+
+function ProxySitePanel(props: {
+  tr: (ar: string, en: string) => string;
+  busy: string | null;
+  proxySite: { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string };
+  setProxySite: (value: { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string } | ((previous: { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string }) => { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string })) => void;
+  handover: { id: string; email: string };
+  setHandover: (value: { id: string; email: string } | ((previous: { id: string; email: string }) => { id: string; email: string })) => void;
+  lastProxy: MaybeRecord;
+  setError: (value: string) => void;
+  onCreate: (event: FormEvent<HTMLFormElement>) => void;
+  onHandover: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const { tr, busy, proxySite, setProxySite, handover, setHandover, lastProxy, onCreate, onHandover } = props;
+  const createdSite = record(lastProxy?.site);
+  const createdHandover = record(lastProxy?.handover);
+  return <div className="card stack"><div><h2>{tr('موقع بالنيابة وتسليم موثق', 'Proxy site & documented handover')}</h2><p className="muted">{tr('تبدأ المسودة بالبيانات الأساسية، ثم تكملها بالصور والأقسام في المحرر المفوّض. لا تنشر بيانات الغير، ولا يكتمل التسليم لمجرد إدخال البريد؛ القبول يتم لاحقاً من لوحة الحساب المتحقق للمستلم.', 'Start with the basic profile, then complete images and sections in the delegated editor. Third-party data is not published, and entering an email never completes a handover; acceptance happens later from the recipient’s verified account dashboard.')}</p></div><form className="stack" onSubmit={onCreate}><div className="admin-form-pair"><label className="field"><span>{tr('بريد المستلم (اختياري عند الإنشاء)', 'Recipient email (optional at creation)')}</span><input type="email" value={proxySite.email} onChange={(event) => setProxySite((value) => ({ ...value, email: event.target.value }))} /></label><label className="field"><span>{tr('اسم النطاق الفرعي', 'Subdomain name')}</span><input value={proxySite.name} pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" onChange={(event) => setProxySite((value) => ({ ...value, name: event.target.value.toLowerCase() }))} required /></label><label className="field"><span>{tr('اسم صاحب الموقع', 'Site owner name')}</span><input value={proxySite.profileName} onChange={(event) => setProxySite((value) => ({ ...value, profileName: event.target.value }))} required /></label><label className="field"><span>{tr('المسمى المهني', 'Professional title')}</span><input value={proxySite.title} onChange={(event) => setProxySite((value) => ({ ...value, title: event.target.value }))} /></label><label className="field"><span>{tr('المدينة', 'City')}</span><input value={proxySite.city} onChange={(event) => setProxySite((value) => ({ ...value, city: event.target.value }))} /></label></div><label className="field"><span>{tr('نبذة الموقع', 'Site biography')}</span><textarea rows={3} value={proxySite.bio} onChange={(event) => setProxySite((value) => ({ ...value, bio: event.target.value }))} /></label><label className="field"><span>{tr('نص أو مرجع التفويض الموثق', 'Documented authorization text or reference')}</span><textarea rows={2} minLength={8} value={proxySite.authorization} onChange={(event) => setProxySite((value) => ({ ...value, authorization: event.target.value }))} required /></label><button className="button" disabled={busy === 'proxy-site'}>{tr('إنشاء مسودة مفوضة', 'Create authorized draft')}</button></form>{createdSite && <div className="admin-proxy-result"><strong>{tr('نتيجة المسار', 'Route result')}</strong><span>{tr('معرف الموقع', 'Site ID')}: <b className="admin-mono">{text(createdSite.id)}</b></span><span>{tr('الحالة', 'Status')}: {text(createdSite.status)}</span><a className="button primary" href={'/dashboard?site='+encodeURIComponent(text(createdSite.id))+'&tab=editor'}>{tr('أكمل الموقع في المحرر','Continue in the site editor')}</a>{createdHandover && <span>{tr('معرف طلب التسليم', 'Handover request ID')}: <b className="admin-mono">{text(createdHandover.id)}</b></span>}</div>}<form className="admin-inline-form" onSubmit={onHandover}><input aria-label={tr('معرف الموقع', 'Site ID')} placeholder={tr('معرف الموقع', 'Site ID')} value={handover.id} onChange={(event) => setHandover((value) => ({ ...value, id: event.target.value }))} /><input aria-label={tr('بريد المستلم', 'Recipient email')} type="email" placeholder={tr('بريد المستلم المتحقق', 'Verified recipient email')} value={handover.email} onChange={(event) => setHandover((value) => ({ ...value, email: event.target.value }))} /><button className="button button-secondary" disabled={busy === 'handover'}>{tr('طلب التسليم', 'Request handover')}</button></form><p className="admin-route-note">{tr('أكمل الموقع في المحرر، وأرسله للمراجعة قبل نشره. يبقى قبول نقل إدارة الموقع لصاحب البريد المتحقق خطوة مستقلة.', 'Complete the site in the editor and submit it for review. Transfer of site management remains a separate acceptance step by the verified email owner.')}</p></div>;
+}
+
+function SnapshotDiff({ review, tr }: { review: JsonRecord; tr: (ar: string, en: string) => string }) {
+  const diff = record(field(review, 'diff', 'changes', 'delta'));
+  const before = field(diff, 'before', 'old', 'previous');
+  const after = field(diff, 'after', 'new', 'current');
+  const rawChanges = field(diff, 'changes') ?? field(review, 'changes');
+  const changes = Array.isArray(rawChanges) ? rawChanges.map(record).filter((item): item is JsonRecord => Boolean(item)) : [];
+  if (!changes.length) return <div className="admin-diff-grid"><DiffCell label={tr('قبل', 'Before')} value={before} /><DiffCell label={tr('بعد', 'After')} value={after} changed /></div>;
+  return <div className="admin-change-list">{changes.map((change, index) => <article className="admin-change" key={`${text(change.field, 'field')}-${index}`}><header><strong>{text(change.field, tr('حقل متغير', 'Changed field'))}</strong></header><div className="admin-diff-grid"><DiffCell label={tr('قبل', 'Before')} value={field(change, 'before', 'old')} /><DiffCell label={tr('بعد', 'After')} value={field(change, 'after', 'new')} changed /></div></article>)}</div>;
+}
+
+function DiffCell({ label, value, changed = false }: { label: string; value: unknown; changed?: boolean }) {
+  const image = changedImage(value);
+  return <div><span className={`admin-diff-label ${changed ? 'new' : ''}`}>{label}</span>{image ? <img className="admin-diff-image" src={image} alt={label} /> : <pre>{displayJson(value)}</pre>}</div>;
+}
+
+function SeasonPanel(props: {
+  tr: (ar: string, en: string) => string;
+  seasonal: SeasonalForm;
+  setSeasonal: (value: SeasonalForm | ((previous: SeasonalForm) => SeasonalForm)) => void;
+  busy: string | null;
+  setError: (value: string) => void;
+  onSave: () => void;
+}) {
+  const { tr, seasonal, setSeasonal, busy, onSave } = props;
+  return <section className="card stack"><div><h2>{tr('المظهر الموسمي', 'Seasonal appearance')}</h2><p className="muted">{tr('المدخلات المرئية تُفسر بتوقيت Asia/Riyadh وتتحول إلى Epoch بالثواني فقط عند الحفظ. لا يُفعّل أي مظهر بلا نافذة صالحة.', 'Visible inputs are interpreted in Asia/Riyadh and converted to epoch seconds only on save. No appearance is enabled without a valid window.')}</p></div><div className="admin-form-pair"><label className="field"><span>{tr('المناسبة', 'Occasion')}</span><select value={seasonal.occasion} onChange={(event) => setSeasonal((value) => ({ ...value, occasion: event.target.value }))}><option value="eid_al_fitr">{tr('عيد الفطر', 'Eid al-Fitr')}</option><option value="eid_al_adha">{tr('عيد الأضحى', 'Eid al-Adha')}</option><option value="national_day">{tr('اليوم الوطني السعودي', 'Saudi National Day')}</option><option value="founding_day">{tr('يوم التأسيس السعودي', 'Founding Day')}</option></select></label><label className="field admin-check"><input type="checkbox" checked={seasonal.enabled} onChange={(event) => setSeasonal((value) => ({ ...value, enabled: event.target.checked }))} /><span>{tr('تفعيل المظهر خلال النافذة', 'Enable appearance within this window')}</span></label><label className="field"><span>{tr('البداية — الرياض', 'Starts — Riyadh')}</span><input type="datetime-local" value={seasonal.startsAt} onChange={(event) => setSeasonal((value) => ({ ...value, startsAt: event.target.value }))} /></label><label className="field"><span>{tr('النهاية — الرياض', 'Ends — Riyadh')}</span><input type="datetime-local" value={seasonal.endsAt} onChange={(event) => setSeasonal((value) => ({ ...value, endsAt: event.target.value }))} /></label></div><button className="button" type="button" disabled={busy === 'seasonal'} onClick={onSave}>{tr('حفظ جدولة المظهر', 'Save appearance schedule')}</button></section>;
 }
 
 type UserDetailProps = {
@@ -627,14 +805,15 @@ type UserDetailProps = {
   assignedTo: string;
   setAssignedTo: (value: string) => void;
   busy: string | null;
+  owner: boolean;
   financialOperator: boolean;
-  onAction: (action: 'status' | 'role' | 'grant' | 'points' | 'service' | 'assign' | 'branding', payload: JsonRecord, label: string, fresh?: boolean) => void;
+  onAction: (action: UserAction, payload: JsonRecord, label: string, fresh?: boolean) => void;
   onAudit: () => void;
   onNotify: (recipient: string) => void;
 };
 
 function UserDetail(props: UserDetailProps) {
-  const { item, lang, tr, services, users, points, setPoints, grantDays, setGrantDays, serviceKey, setServiceKey, role, setRole, financial, setFinancial, assignedTo, setAssignedTo, busy, onAction, onAudit, onNotify, financialOperator } = props;
+  const { item, lang, tr, services, users, points, setPoints, grantDays, setGrantDays, serviceKey, setServiceKey, role, setRole, financial, setFinancial, assignedTo, setAssignedTo, busy, owner, financialOperator, onAction, onAudit, onNotify } = props;
   const id = idOf(item);
   const whatsapp = text(field(item, 'whatsapp', 'phone'), '');
   const phoneLink = whatsapp.replace(/\D/g, '');
@@ -643,13 +822,7 @@ function UserDetail(props: UserDetailProps) {
   const activeServices = field(item, 'services', 'enabled_services');
   const recent = field(item, 'recent_activity', 'activities', 'last_activity');
   const managerCandidates = users.filter((entry) => ['owner', 'manager'].includes(text(field(entry, 'role'), '').toLowerCase()));
-  return <div className="stack">
-    <div className="row admin-detail-heading"><div><p className="admin-eyebrow">C{id}</p><h1>{text(field(item, 'name', 'full_name', 'email'))}</h1><p className="muted">{text(field(item, 'email'))}</p></div><span className={`admin-status ${statusTone(field(item, 'status'))}`}>{text(field(item, 'status'))}</span></div>
-    <div className="admin-key-values"><div><span>{tr('واتساب', 'WhatsApp')}</span><strong>{whatsapp}</strong></div><div><span>{tr('النطاق', 'Domain')}</span><strong>{text(field(item, 'domain', 'subdomain', 'name'))}</strong></div><div><span>{tr('حالة الموقع', 'Site status')}</span><strong>{text(field(item, 'site_status'))}</strong></div><div><span>{tr('الاشتراك', 'Subscription')}</span><strong>{text(field(item, 'subscription_status', 'entitlement_status'))}</strong></div><div><span>{tr('الاستحقاق', 'Entitlement')}</span><strong>{asDate(field(item, 'entitlement_until', 'expires_at'), lang)}</strong></div><div><span>{tr('الرصيد', 'Balance')}</span><strong>{text(field(item, 'balance'))}</strong></div><div><span>{tr('المشرف المسؤول', 'Assigned administrator')}</span><strong>{text(field(item, 'assigned_to', 'manager_name', 'admin_name'))}</strong></div><div><span>{tr('الدور', 'Role')}</span><strong>{text(field(item, 'role'))}</strong></div></div>
-    <div className="admin-user-context"><div><h3>{tr('الخدمات المفعلة أو المعلقة', 'Enabled or paused services')}</h3><pre>{typeof activeServices === 'string' ? activeServices : JSON.stringify(activeServices ?? [], null, 2)}</pre></div><div><h3>{tr('آخر النشاطات', 'Recent activity')}</h3><pre>{typeof recent === 'string' ? recent : JSON.stringify(recent ?? [], null, 2)}</pre></div></div>
-    {deletionStatus !== undefined && <div className="admin-deletion-note"><strong>{tr('طلب حذف البيانات', 'Data deletion request')}</strong><span>{text(deletionStatus)}</span><p>{tr('هذا سجل حالة فقط. لا تقدم هذه الواجهة حذفاً نهائياً أو وعداً بإزالة فورية.', 'This is status only. This console never offers hard deletion or promises immediate erasure.')}</p></div>}
-    <div className="admin-actions"><button className="button button-quiet" type="button" onClick={() => { if (siteUrl) window.open(siteUrl, '_blank', 'noreferrer'); }}>{tr('معاينة', 'Preview')}</button><button className="button" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'approved' }, tr('تم اعتماد حالة المستخدم.', 'User status approved.'))}>{tr('اعتماد', 'Approve')}</button><button className="button button-danger" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'suspended' }, tr('تم تعليق المستخدم.', 'User suspended.'))}>{tr('تعليق', 'Suspend')}</button><button className="button button-quiet" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'published' }, tr('تم إرسال حالة النشر للتحقق بالخادم.', 'Publish status submitted for server validation.'))}>{tr('نشر', 'Publish')}</button>{phoneLink && <a className="button button-quiet" href={`https://wa.me/${phoneLink}`} target="_blank" rel="noreferrer">{tr('فتح واتساب', 'Open WhatsApp')}</a>}<button className="button button-quiet" type="button" onClick={() => onNotify(`C${id}`)}>{tr('إشعار', 'Notify')}</button><button className="button button-quiet" type="button" onClick={onAudit}>{tr('مراجعة السجل', 'Review audit')}</button></div>
-    <div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('تمديد الاستحقاق', 'Extend entitlement')}</h3><input aria-label={tr('الأيام', 'Days')} inputMode="numeric" value={grantDays} onChange={(e) => setGrantDays(e.target.value)} /><button className="button button-small" type="button" onClick={() => onAction('grant', { days: Number(grantDays) }, tr('تمت إضافة أيام الاستحقاق.', 'Entitlement days granted.'), true)}>{tr('منح أيام', 'Grant days')}</button></div><div className="admin-mini-form"><h3>{tr('إصدار نقاط', 'Issue points')}</h3><input aria-label={tr('عدد النقاط', 'Point amount')} inputMode="numeric" value={points} onChange={(e) => setPoints(e.target.value)} /><button className="button button-small" type="button" disabled={!financialOperator} onClick={() => onAction('points', { amount: Number(points) }, tr('تم إرسال إصدار النقاط إلى دفتر الأستاذ.', 'Point issuance submitted to the ledger.'), true)}>{financialOperator ? tr('إضافة نقاط', 'Add points') : tr('تفويض مالي مطلوب', 'Financial delegation required')}</button></div><div className="admin-mini-form"><h3>{tr('خدمة فردية', 'Individual service')}</h3><select value={serviceKey} onChange={(e) => setServiceKey(e.target.value)}>{services.map((service) => <option key={text(field(service, 'key', 'id'))} value={text(field(service, 'key', 'id'))}>{text(field(service, 'name', 'key', 'id'))}</option>)}</select><div className="admin-actions"><button className="button button-small" type="button" onClick={() => onAction('service', { key: serviceKey, mode: 'grant' }, tr('تم منح الخدمة فردياً.', 'Service granted individually.'))}>{tr('تفعيل', 'Enable')}</button><button className="button button-small button-danger" type="button" onClick={() => onAction('service', { key: serviceKey, mode: 'pause' }, tr('تم تعليق الخدمة فردياً.', 'Service paused individually.'))}>{tr('تعليق', 'Pause')}</button></div></div></div>
-    <div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('الدور والتفويض المالي', 'Role & financial delegation')}</h3><select value={role} onChange={(e) => setRole(e.target.value)}><option value="moderator">{tr('مشرف', 'Moderator')}</option><option value="manager">{tr('مدير مسؤول', 'Manager')}</option><option value="owner">{tr('مالك', 'Owner')}</option></select><label className="admin-check"><input type="checkbox" checked={financial} onChange={(e) => setFinancial(e.target.checked)} /><span>{tr('تفويض مالي صريح', 'Explicit financial delegation')}</span></label><button className="button button-small" type="button" onClick={() => onAction('role', { role, financial }, tr('تم إرسال تعديل الدور للتدقيق بالخادم.', 'Role update submitted for server enforcement.'), true)}>{tr('حفظ الدور', 'Save role')}</button></div><div className="admin-mini-form"><h3>{tr('إسناد مشرف', 'Assign administrator')}</h3><select value={assignedTo} onChange={(e) => setAssignedTo(e.target.value)}><option value="">{tr('اختر مشرفاً', 'Select an administrator')}</option>{managerCandidates.map((candidate) => <option key={idOf(candidate)} value={idOf(candidate)}>{text(field(candidate, 'name', 'email'))} (C{idOf(candidate)})</option>)}</select><button className="button button-small" type="button" onClick={() => onAction('assign', { assignedTo }, tr('تم إسناد المشرف.', 'Administrator assigned.'))}>{tr('إسناد', 'Assign')}</button></div><div className="admin-mini-form"><h3>{tr('هوية الموقع', 'Site branding')}</h3><p className="muted">{tr('تطبيق إعدادات الهوية يحتاج مفتاحاً ونمطاً مخولين من الخادم.', 'Branding changes require a server-authorized key and mode.')}</p><button className="button button-small" type="button" onClick={() => onAction('branding', { key: 'platform_branding', mode: 'inherit' }, tr('تم طلب تطبيق الهوية الافتراضية.', 'Default branding inheritance requested.'))}>{tr('تطبيق الافتراضي', 'Apply default')}</button></div></div>
-  </div>;
+  const validDays = Number.isInteger(Number(grantDays)) && Number(grantDays) > 0;
+  const validPoints = Number.isInteger(Number(points)) && Number(points) > 0;
+  return <div className="stack"><div className="row admin-detail-heading"><div><p className="admin-eyebrow">C{id}</p><h1>{text(field(item, 'name', 'full_name', 'email'))}</h1><p className="muted">{text(field(item, 'email'))}</p></div><span className={`admin-status ${statusTone(field(item, 'status'))}`}>{text(field(item, 'status'))}</span></div><div className="admin-key-values"><div><span>{tr('واتساب', 'WhatsApp')}</span><strong>{whatsapp}</strong></div><div><span>{tr('النطاق', 'Domain')}</span><strong>{text(field(item, 'domain', 'subdomain', 'name'))}</strong></div><div><span>{tr('حالة الموقع', 'Site status')}</span><strong>{text(field(item, 'site_status'))}</strong></div><div><span>{tr('الاشتراك', 'Subscription')}</span><strong>{text(field(item, 'subscription_status', 'entitlement_status'))}</strong></div><div><span>{tr('الاستحقاق', 'Entitlement')}</span><strong>{asDate(field(item, 'entitlement_until', 'expires_at'), lang)}</strong></div><div><span>{tr('الرصيد المتاح', 'Available balance')}</span><strong>{text(field(item, 'balance'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('المشرف المسؤول', 'Assigned administrator')}</span><strong>{text(field(item, 'assigned_to', 'manager_name', 'admin_name'))}</strong></div><div><span>{tr('الدور', 'Role')}</span><strong>{text(field(item, 'role'))}</strong></div></div><div className="admin-user-context"><div><h3>{tr('الخدمات المفعلة أو المعلقة', 'Enabled or paused services')}</h3><pre>{displayJson(activeServices ?? [])}</pre></div><div><h3>{tr('آخر النشاطات', 'Recent activity')}</h3><pre>{displayJson(recent ?? [])}</pre></div></div>{deletionStatus !== undefined && <div className="admin-deletion-note"><strong>{tr('طلب حذف البيانات', 'Data deletion request')}</strong><span>{text(deletionStatus)}</span><p>{tr('سجل الحالة فقط؛ لا يقدم هذا المكوّن حذفاً نهائياً أو وعداً بإزالة فورية.', 'Status only; this component offers neither hard deletion nor an immediate-erasure promise.')}</p></div>}<div className="admin-actions">{siteUrl ? <a className="button button-quiet" href={siteUrl} target="_blank" rel="noreferrer">{tr('معاينة الموقع', 'Preview site')}</a> : <span className="admin-route-note">{tr('لم يعد مسار المستخدم رابط معاينة للموقع.', 'The user route did not return a site preview URL.')}</span>}<button className="button" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'active' }, tr('تم إرسال تفعيل الحساب للتحقق بالخادم.', 'Account activation was sent for server validation.'))}>{tr('تفعيل الحساب', 'Activate account')}</button><button className="button button-danger" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'suspended' }, tr('تم إرسال تعليق الحساب للتحقق بالخادم.', 'Account suspension was sent for server validation.'))}>{tr('تعليق', 'Suspend')}</button>{phoneLink && <a className="button button-quiet" href={`https://wa.me/${phoneLink}`} target="_blank" rel="noreferrer">{tr('فتح واتساب', 'Open WhatsApp')}</a>}<button className="button button-quiet" type="button" onClick={() => onNotify(`C${id}`)}>{tr('إشعار', 'Notify')}</button>{owner && <button className="button button-quiet" type="button" onClick={onAudit}>{tr('مراجعة السجل', 'Review audit')}</button>}</div><div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('تمديد الاستحقاق', 'Extend entitlement')}</h3><input aria-label={tr('الأيام', 'Days')} inputMode="numeric" value={grantDays} onChange={(event) => setGrantDays(event.target.value.replace(/\D/g, ''))} /><button className="button button-small" type="button" disabled={!validDays} onClick={() => onAction('grant', { days: Number(grantDays) }, tr('تم إرسال إضافة أيام الاستحقاق.', 'Entitlement-day grant was sent.'), true)}>{tr('منح أيام', 'Grant days')}</button></div><div className="admin-mini-form"><h3>{tr('إصدار نقاط', 'Issue points')}</h3><input aria-label={tr('عدد النقاط', 'Point amount')} inputMode="numeric" value={points} onChange={(event) => setPoints(event.target.value.replace(/\D/g, ''))} /><button className="button button-small" type="button" disabled={!financialOperator || !validPoints} onClick={() => onAction('points', { amount: Number(points) }, tr('أُرسل إصدار النقاط إلى دفتر الأستاذ.', 'Point issuance was submitted to the ledger.'), true)}>{financialOperator ? tr('إضافة نقاط', 'Add points') : tr('تفويض مالي مطلوب', 'Financial delegation required')}</button></div><div className="admin-mini-form"><h3>{tr('خدمة فردية', 'Individual service')}</h3><select value={serviceKey} onChange={(event) => setServiceKey(event.target.value)}>{services.map((service) => <option key={text(field(service, 'key', 'id'))} value={text(field(service, 'key', 'id'))}>{text(field(service, lang === 'ar' ? 'name_ar' : 'name_en', 'name', 'key', 'id'))}</option>)}</select><div className="admin-actions"><button className="button button-small" type="button" disabled={!serviceKey} onClick={() => onAction('service', { key: serviceKey, mode: 'grant' }, tr('تم إرسال منح الخدمة الفردي.', 'Individual service grant was sent.'))}>{tr('تفعيل', 'Enable')}</button><button className="button button-small button-danger" type="button" disabled={!serviceKey} onClick={() => onAction('service', { key: serviceKey, mode: 'pause' }, tr('تم إرسال تعليق الخدمة الفردي.', 'Individual service pause was sent.'))}>{tr('تعليق', 'Pause')}</button></div></div></div>{owner && <div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('الدور والتفويض المالي', 'Role & financial delegation')}</h3><select value={role} onChange={(event) => setRole(event.target.value)}><option value="moderator">{tr('مشرف عادي', 'Moderator')}</option><option value="manager">{tr('مشرف مسؤول', 'Responsible manager')}</option><option value="owner">{tr('مشرف رئيسي', 'Owner')}</option><option value="user">{tr('عضو بلا إدارة', 'Member without administration')}</option></select><label className="admin-check"><input type="checkbox" disabled={role !== 'manager'} checked={financial} onChange={(event) => setFinancial(event.target.checked)} /><span>{tr('تفويض مالي صريح للمدير فقط', 'Explicit financial delegation for a manager only')}</span></label><button className="button button-small" type="button" onClick={() => onAction('role', { role, financial: role === 'manager' && financial }, tr('تم إرسال تعديل الدور لتدقيق الخادم.', 'Role update was submitted for server enforcement.'), true)}>{tr('حفظ الدور', 'Save role')}</button></div><div className="admin-mini-form"><h3>{tr('إسناد مشرف', 'Assign administrator')}</h3><select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">{tr('إلغاء الإسناد', 'Clear assignment')}</option>{managerCandidates.map((candidate) => <option key={idOf(candidate)} value={idOf(candidate)}>{text(field(candidate, 'name', 'email'))} (C{idOf(candidate)})</option>)}</select><button className="button button-small" type="button" onClick={() => onAction('assign', { managerId: assignedTo }, tr('تم إرسال إسناد المشرف.', 'Administrator assignment was sent.'))}>{tr('حفظ الإسناد', 'Save assignment')}</button></div><div className="admin-mini-form"><h3>{tr('هوية الموقع', 'Site branding')}</h3><p className="muted">{tr('يطبق الخادم إعداد الهوية الموروثة على موقع المستخدم الواقع في النطاق.', 'The server applies inherited branding to the in-scope user site.')}</p><button className="button button-small" type="button" onClick={() => onAction('branding', { key: 'platform_branding', mode: 'inherit' }, tr('تم طلب تطبيق الهوية الافتراضية.', 'Default branding inheritance was requested.'))}>{tr('تطبيق الافتراضي', 'Apply default')}</button></div></div>}</div>;
 }

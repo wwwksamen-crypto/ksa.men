@@ -1,5 +1,23 @@
-const VERSION='ksa-static-v1';
-self.addEventListener('install',e=>{e.waitUntil(caches.open(VERSION).then(c=>c.add('/offline.html')));});
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==VERSION).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener('message',e=>{if(e.data==='SKIP_WAITING')self.skipWaiting();if(e.data==='CLEAR_PRIVATE')e.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))));});
-self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(u.origin!==self.location.origin||e.request.method!=='GET')return;if(e.request.mode==='navigate'){e.respondWith(fetch(e.request,{cache:'no-store'}).catch(()=>caches.match('/offline.html')));return;}if(u.pathname.startsWith('/assets/')&&!u.pathname.includes('company-')){e.respondWith(caches.open(VERSION).then(async cache=>{const fresh=await fetch(e.request);if(fresh.ok)cache.put(e.request,fresh.clone());return fresh;}).catch(()=>caches.match(e.request)));}});
+/* PWA caches only public, immutable application assets, never account/API responses. */
+const VERSION='ksa-static-v2';
+self.addEventListener('install',event=>event.waitUntil(caches.open(VERSION).then(cache=>cache.add('/offline.html'))));
+self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==VERSION).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
+self.addEventListener('message',event=>{
+ if(event.data==='SKIP_WAITING')self.skipWaiting();
+ if(event.data==='CLEAR_PRIVATE')event.waitUntil(caches.keys().then(keys=>Promise.all(keys.map(key=>caches.delete(key)))).then(()=>caches.open(VERSION).then(cache=>cache.add('/offline.html'))));
+});
+self.addEventListener('fetch',event=>{
+ const url=new URL(event.request.url);
+ if(url.origin!==self.location.origin||event.request.method!=='GET')return;
+ if(event.request.mode==='navigate'){
+  event.respondWith(fetch(event.request,{cache:'no-store'}).catch(async()=>await caches.match('/offline.html')||new Response('أنت غير متصل. أعد الاتصال للمتابعة.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}})));
+  return;
+ }
+ if(!url.pathname.startsWith('/assets/')||url.pathname.includes('company-')||url.pathname.includes('/media/'))return;
+ const immutable=/[-.][A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(url.pathname);
+ event.respondWith(caches.open(VERSION).then(async cache=>{
+  if(immutable){const saved=await cache.match(event.request);if(saved)return saved;}
+  try{const response=await fetch(event.request);if(response.ok&&response.headers.get('Cache-Control')?.includes('public'))await cache.put(event.request,response.clone());return response;}
+  catch(error){const saved=await cache.match(event.request);if(saved)return saved;throw error;}
+ }));
+});
