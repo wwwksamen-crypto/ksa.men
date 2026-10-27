@@ -1,0 +1,801 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ArrowLeftRight,
+  BadgeCheck,
+  Ban,
+  Bell,
+  BookOpen,
+  Check,
+  ChevronLeft,
+  CircleHelp,
+  Clock3,
+  Copy,
+  CreditCard,
+  ExternalLink,
+  Eye,
+  FileCheck2,
+  FileText,
+  Gift,
+  Globe2,
+  ImagePlus,
+  Languages,
+  Link2,
+  Lock,
+  Mail,
+  MessageCircle,
+  PanelTop,
+  PencilLine,
+  Plus,
+  QrCode,
+  ReceiptText,
+  RefreshCw,
+  Save,
+  Send,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  Upload,
+  UserRound,
+  UsersRound,
+  WalletCards,
+  X,
+  Youtube,
+} from 'lucide-react';
+import { api, useApp } from './lib';
+import './dashboard.css';
+
+type Tab = 'editor' | 'wallet' | 'services' | 'messages' | 'subscription' | 'settings';
+type SaveState = 'saved' | 'unsaved' | 'saving' | 'error';
+type UploadPurpose = 'photo' | 'cover' | 'skill' | 'work' | 'receipt';
+
+type ResumeItem = {
+  title: string;
+  organization: string;
+  start: string;
+  end: string;
+  description: string;
+};
+
+type Social = { label: string; url: string };
+type CustomButton = { label: string; url: string };
+type ProfileDraft = {
+  name: string;
+  title: string;
+  bio: string;
+  email: string;
+  phone: string;
+  whatsapp: string;
+  city: string;
+  country: string;
+  photo: string;
+  cover: string;
+  youtube: string;
+  experience: ResumeItem[];
+  education: ResumeItem[];
+  training: ResumeItem[];
+  skills: string[];
+  memberships: string[];
+  languages: string[];
+  hobbies: string[];
+  achievements: string[];
+  timeline: ResumeItem[];
+  skillImages: string[];
+  workImages: string[];
+  socials: Social[];
+  buttons: CustomButton[];
+  hidden: string[];
+  searchable: boolean;
+  allowContact: boolean;
+  redirect: string;
+  translations?: { ar?: Partial<ProfileDraft>; en?: Partial<ProfileDraft> };
+};
+
+type Site = {
+  id: string;
+  name?: string;
+  draft?: ProfileDraft | string;
+  draft_version?: number;
+  version?: number;
+  status?: string;
+  published_version?: number;
+  analytics?: unknown;
+  [key: string]: unknown;
+};
+
+type DashboardData = {
+  sites?: Site[];
+  reviews?: Record<string, unknown>[];
+  wallet?: { balance?: number; [key: string]: unknown };
+  ledger?: Record<string, unknown>[];
+  payments?: Record<string, unknown>[];
+  services?: Service[];
+  notifications?: Notification[];
+  user?: Record<string, unknown>;
+  analytics?: Record<string, unknown> | unknown[];
+  quickLinks?: QuickLink[];
+  transfers?: Record<string, unknown>[];
+  nameTransfers?: Record<string, unknown>[];
+  handovers?: Record<string, unknown>[];
+  [key: string]: unknown;
+};
+
+type Service = {
+  key: string;
+  name_ar?: string;
+  name_en?: string;
+  enabled?: boolean | number;
+  premium?: boolean | number;
+  entitled?: boolean;
+  until_at?: number;
+  policy?: string | Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+type Notification = {
+  id: string;
+  title: string;
+  body?: string;
+  read_at?: number | null;
+  created_at?: number;
+};
+
+type QuickLink = { id: string; url?: string; expires_at?: number; revoked?: boolean | number; [key: string]: unknown };
+type UploadResult = { id: string; url: string };
+type Conversation = { id: string; status?: string; last_activity?: number; other_user?: { id?: number; name?: string }; [key: string]: unknown };
+type Message = { id: string; body: string; sender_id: number; created_at: number };
+type ConversationDetail = Conversation & { messages?: Message[] };
+
+const tabs: Array<{ key: Tab; ar: string; en: string; icon: typeof PencilLine }> = [
+  { key: 'editor', ar: 'المحرر', en: 'Editor', icon: PencilLine },
+  { key: 'wallet', ar: 'المحفظة', en: 'Wallet', icon: WalletCards },
+  { key: 'services', ar: 'الخدمات', en: 'Services', icon: Sparkles },
+  { key: 'messages', ar: 'الرسائل', en: 'Messages', icon: MessageCircle },
+  { key: 'subscription', ar: 'الاشتراك', en: 'Subscription', icon: ReceiptText },
+  { key: 'settings', ar: 'الإعدادات', en: 'Settings', icon: Settings2 },
+];
+
+const editorSections = [
+  ['identity', 'الهوية الأساسية', 'Core identity'],
+  ['bio', 'النبذة', 'Introduction'],
+  ['contact', 'التواصل والموقع', 'Contact and location'],
+  ['experience', 'الخبرات', 'Experience'],
+  ['education', 'التعليم', 'Education'],
+  ['training', 'التدريب', 'Training'],
+  ['skills', 'المهارات', 'Skills'],
+  ['memberships', 'العضويات', 'Memberships'],
+  ['languages', 'اللغات', 'Languages'],
+  ['hobbies', 'الهوايات', 'Hobbies'],
+  ['achievements', 'الإنجازات', 'Achievements'],
+  ['timeline', 'السجل الزمني', 'Timeline'],
+  ['skillImages', 'إثبات المهارات', 'Skill evidence'],
+  ['workImages', 'نماذج الأعمال', 'Work samples'],
+  ['youtube', 'الفيديو التعريفي', 'Introduction video'],
+  ['socials', 'الروابط الاجتماعية', 'Social links'],
+  ['buttons', 'الأزرار المخصصة', 'Custom buttons'],
+  ['privacy', 'الخصوصية والظهور', 'Privacy and discovery'],
+] as const;
+
+type EditorSection = (typeof editorSections)[number][0];
+
+const blankItem = (): ResumeItem => ({ title: '', organization: '', start: '', end: '', description: '' });
+const emptyDraft = (): ProfileDraft => ({
+  name: '', title: '', bio: '', email: '', phone: '', whatsapp: '', city: '', country: 'المملكة العربية السعودية',
+  photo: '', cover: '', youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
+  hobbies: [], achievements: [], timeline: [], skillImages: [], workImages: [], socials: [], buttons: [], hidden: [],
+  searchable: true, allowContact: true, redirect: '',
+});
+
+function asArray<T>(value: unknown): T[] { return Array.isArray(value) ? value as T[] : []; }
+function asText(value: unknown): string { return typeof value === 'string' ? value : ''; }
+function asBool(value: unknown, fallback: boolean): boolean { return typeof value === 'boolean' ? value : fallback; }
+function errorMessage(error: unknown): string {
+  if (error && typeof error === 'object' && 'error' in error && typeof (error as { error?: unknown }).error === 'string') return (error as { error: string }).error;
+  if (error instanceof Error) return error.message;
+  return 'تعذر إتمام الطلب. حاول مرة أخرى.';
+}
+function parseDraft(source: unknown): ProfileDraft {
+  let raw: Record<string, unknown> = {};
+  try { raw = typeof source === 'string' ? JSON.parse(source) as Record<string, unknown> : (source ?? {}) as Record<string, unknown>; } catch { raw = {}; }
+  const normalizeStructured = (value: unknown): ResumeItem[] => asArray<Record<string, unknown>>(value).map((item) => ({
+    title: asText(item.title), organization: asText(item.organization), start: asText(item.start), end: asText(item.end), description: asText(item.description),
+  }));
+  const normalizeStrings = (value: unknown): string[] => asArray<unknown>(value).filter((item): item is string => typeof item === 'string');
+  const normalizeLinks = (value: unknown): Social[] => asArray<Record<string, unknown>>(value).map((item) => ({ label: asText(item.label) || asText(item.name), url: asText(item.url) }));
+  return {
+    ...emptyDraft(),
+    ...Object.fromEntries(Object.keys(emptyDraft()).map((key) => [key, raw[key] ?? (emptyDraft() as unknown as Record<string, unknown>)[key]])),
+    name: asText(raw.name), title: asText(raw.title), bio: asText(raw.bio), email: asText(raw.email), phone: asText(raw.phone), whatsapp: asText(raw.whatsapp),
+    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo), cover: asText(raw.cover), youtube: asText(raw.youtube), redirect: asText(raw.redirect),
+    experience: normalizeStructured(raw.experience), education: normalizeStructured(raw.education), training: normalizeStructured(raw.training), timeline: normalizeStructured(raw.timeline),
+    skills: normalizeStrings(raw.skills), memberships: normalizeStrings(raw.memberships), languages: normalizeStrings(raw.languages), hobbies: normalizeStrings(raw.hobbies), achievements: normalizeStrings(raw.achievements),
+    skillImages: normalizeStrings(raw.skillImages).slice(0, 3), workImages: normalizeStrings(raw.workImages).slice(0, 4), hidden: normalizeStrings(raw.hidden),
+    socials: normalizeLinks(raw.socials), buttons: normalizeLinks(raw.buttons).slice(0, 3), searchable: asBool(raw.searchable, true), allowContact: asBool(raw.allowContact, true),
+    translations: raw.translations as ProfileDraft['translations'],
+  };
+}
+function formatDate(value?: number, locale = 'ar-SA') {
+  if (!value) return '—';
+  return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value * 1000));
+}
+function createIdempotencyKey() {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `dash-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+function getInitialTab(): Tab {
+  const tab = new URLSearchParams(window.location.search).get('tab') as Tab | null;
+  return tabs.some((item) => item.key === tab) ? tab! : 'editor';
+}
+function socialHost(url: string) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+export default function Dashboard() {
+  const { user, lang, t, refresh, notify } = useApp();
+  const [activeTab, setActiveTab] = useState<Tab>(getInitialTab);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [activeSite, setActiveSite] = useState<Site | null>(null);
+  const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
+  const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [editorSection, setEditorSection] = useState<EditorSection>('identity');
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [uploading, setUploading] = useState<UploadPurpose | ''>('');
+  const [services, setServices] = useState<Service[]>([]);
+  const [messagesData, setMessagesData] = useState<Record<string, unknown> | null>(null);
+  const [selectedConversation, setSelectedConversation] = useState<ConversationDetail | null>(null);
+  const [messageBody, setMessageBody] = useState('');
+  const [messageRecipient, setMessageRecipient] = useState(new URLSearchParams(location.search).get('recipient')||'');
+  const [paymentInstructions, setPaymentInstructions] = useState<unknown>(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [quickLink, setQuickLink] = useState<QuickLink | null>(null);
+  const [transferForm, setTransferForm] = useState({ recipient: new URLSearchParams(location.search).get('recipient')||'', amount: '' });
+  const [redeemDays, setRedeemDays] = useState('1');
+  const [translationConsent, setTranslationConsent] = useState(false);
+  const [nameTransfer, setNameTransfer] = useState({ name: '', recipient: '', confirmed: false });
+  const [lockForm, setLockForm] = useState({ enabled: false, password: '', message: '' });
+  const [pin, setPinValue] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deletionConfirmed, setDeletionConfirmed] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({ amount: '', days: '', notes: '', receiptId: '', receiptUrl: '' });
+  const [quickFields, setQuickFields] = useState<Record<string, boolean>>({ name: true, title: true, whatsapp: false, email: false, site: true });
+  const [quickDays, setQuickDays] = useState('7');
+
+  const draftRef = useRef(draft);
+  const siteIdRef = useRef<string | null>(null);
+  const versionRef = useRef(0);
+  const revisionRef = useRef(0);
+  const dirtyRef = useRef(false);
+  const savingRef = useRef(false);
+
+  const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
+  const locale = lang === 'ar' ? 'ar-SA' : 'en-US';
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setLoadError('');
+    try {
+      const data = await api<DashboardData>('/api/dashboard');
+      setDashboard(data);
+      const receivedServices = asArray<Service>(data.services);
+      if (receivedServices.length) setServices(receivedServices);
+      const candidates = asArray<Site>(data.sites);
+      if (!siteIdRef.current && candidates[0]) await openSite(candidates[0]);
+    } catch (error) {
+      setLoadError(errorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  // openSite is stable enough for initial fetch; its declaration is hoisted in this closure at execution time.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const loadServices = useCallback(async () => {
+    try {
+      const response = await api<Service[] | { services?: Service[] }>('/api/services');
+      const result = Array.isArray(response) ? response : asArray<Service>(response.services);
+      if (result.length || Array.isArray(response)) setServices(result);
+    } catch { /* Dashboard data remains the authoritative fallback if this optional fetch is unavailable. */ }
+  }, []);
+
+  const loadMessages = useCallback(async () => {
+    try { setMessagesData(await api<Record<string, unknown>>('/api/messages')); }
+    catch (error) { if (activeTab === 'messages') notify(errorMessage(error)); }
+  }, [activeTab, notify]);
+
+  const openSite = useCallback(async (summary: Site) => {
+    siteIdRef.current = summary.id;
+    try {
+      const response = await api<Site | { site?: Site }>(`/api/sites/${encodeURIComponent(summary.id)}`);
+      const site = ('site' in response && response.site ? response.site : response) as Site;
+      setActiveSite(site);
+      const nextDraft = parseDraft(site.draft);
+      setDraft(nextDraft);
+      draftRef.current = nextDraft;
+      versionRef.current = Number(site.draft_version ?? site.version ?? 0);
+      revisionRef.current = 0;
+      dirtyRef.current = false;
+      setSaveState('saved');
+    } catch (error) {
+      setActiveSite(summary);
+      const nextDraft = parseDraft(summary.draft);
+      setDraft(nextDraft);
+      draftRef.current = nextDraft;
+      versionRef.current = Number(summary.draft_version ?? summary.version ?? 0);
+      notify(errorMessage(error));
+    }
+  }, [notify]);
+
+  useEffect(() => { void loadDashboard(); void loadServices(); }, [loadDashboard, loadServices]);
+  useEffect(() => { if (activeTab === 'messages') void loadMessages(); }, [activeTab, loadMessages]);
+  useEffect(() => {
+    const onPopState = () => setActiveTab(getInitialTab());
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const changeTab = (tab: Tab) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.pushState({}, '', url);
+  };
+
+  const changeDraft = useCallback((patch: Partial<ProfileDraft> | ((current: ProfileDraft) => ProfileDraft)) => {
+    revisionRef.current += 1;
+    dirtyRef.current = true;
+    setSaveState('unsaved');
+    setDraft((current) => {
+      const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
+      draftRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const saveDraft = useCallback(async (quiet = false): Promise<boolean> => {
+    const siteId = siteIdRef.current;
+    if (!siteId || !dirtyRef.current || savingRef.current) return true;
+    const revision = revisionRef.current;
+    const version = versionRef.current;
+    const outgoing = draftRef.current;
+    savingRef.current = true;
+    setSaveState('saving');
+    try {
+      const response = await api<Site | { site?: Site; version?: number; draft_version?: number; draft?: ProfileDraft }>(`/api/sites/${encodeURIComponent(siteId)}/draft`, {
+        method: 'PUT',
+        body: JSON.stringify({ draft: outgoing, version }),
+      });
+      const saved = ('site' in response && response.site ? response.site : response) as Site;
+      const receivedVersion = Number(saved.draft_version ?? saved.version ?? (response as { version?: number; draft_version?: number }).draft_version ?? (response as { version?: number }).version ?? version + 1);
+      versionRef.current = receivedVersion;
+      setActiveSite((current) => current ? { ...current, ...saved, draft_version: receivedVersion } : current);
+      if (revisionRef.current === revision) {
+        dirtyRef.current = false;
+        setSaveState('saved');
+        if (saved.draft) {
+          const nextDraft = parseDraft(saved.draft);
+          setDraft(nextDraft);
+          draftRef.current = nextDraft;
+        }
+      } else {
+        setSaveState('unsaved');
+      }
+      if (!quiet) notify(tr('تم حفظ المسودة بأمان.', 'Draft saved securely.'));
+      return true;
+    } catch (error) {
+      setSaveState('error');
+      notify(errorMessage(error));
+      return false;
+    } finally {
+      savingRef.current = false;
+    }
+  }, [notify, tr]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => { if (dirtyRef.current) void saveDraft(true); }, 15_000);
+    return () => window.clearInterval(interval);
+  }, [saveDraft]);
+
+  const submitForReview = async () => {
+    if (!activeSite) return;
+    if (!window.confirm(tr('سيُنشئ هذا الإجراء لقطة ثابتة للمراجعة، ولن ينشر الموقع. هل تريد المتابعة؟', 'This creates a fixed review snapshot; it will not publish the site. Continue?'))) return;
+    setSubmittingReview(true);
+    try {
+      if (!(await saveDraft(true))) return;
+      const response = await api<{ review?: { id?: string }; id?: string }>(`/api/sites/${encodeURIComponent(activeSite.id)}/submit`, { method: 'POST', body: JSON.stringify({}) });
+      setPreviewOpen(false);
+      await loadDashboard();
+      notify(response.review?.id || response.id ? tr('تم إرسال لقطة المراجعة.', 'Review snapshot submitted.') : tr('تم استلام طلب المراجعة.', 'Review request received.'));
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setSubmittingReview(false); }
+  };
+
+  const compressImage = async (file: File, maxSide = 2200): Promise<File> => {
+    if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) throw new Error(tr('اختر صورة PNG أو JPEG أو WebP فقط.', 'Choose a PNG, JPEG, or WebP image.'));
+    if (file.size > 15 * 1024 * 1024) throw new Error(tr('حجم الصورة يتجاوز 15 ميغابايت.', 'Image exceeds 15 MB.'));
+    const source = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      image.onload = () => { URL.revokeObjectURL(objectUrl); resolve(image); };
+      image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error(tr('تعذر قراءة الصورة.', 'Could not read image.'))); };
+      image.src = objectUrl;
+    });
+    const scale = Math.min(1, maxSide / Math.max(source.naturalWidth, source.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error(tr('تعذر تجهيز الصورة.', 'Could not prepare image.'));
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error(tr('تعذر ضغط الصورة.', 'Could not compress image.'))), 'image/webp', 0.86));
+    return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'image'}.webp`, { type: 'image/webp' });
+  };
+
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, onUploaded: (upload: UploadResult) => void) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !activeSite) return;
+    setUploading(purpose);
+    try {
+      const compressed = purpose === 'receipt' ? file : await compressImage(file, purpose === 'cover' ? 2600 : 1800);
+      if (purpose === 'receipt' && !/^application\/pdf$/i.test(file.type) && !/^image\/(png|jpeg|webp)$/i.test(file.type)) throw new Error(tr('ارفع إيصال PDF أو صورة صالحة.', 'Upload a PDF receipt or valid image.'));
+      const body = new FormData();
+      body.append('file', compressed);
+      body.append('purpose', purpose);
+      body.append('siteId', activeSite.id);
+      const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
+      if (!result?.id || !result?.url) throw new Error(tr('لم يعُد الخادم بمعرّف وارتباط للملف.', 'The server did not return a file ID and URL.'));
+      onUploaded(result);
+      notify(tr('تم ضغط الصورة ورفعها بصيغة WebP.', 'Image compressed and uploaded as WebP.'));
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setUploading(''); }
+  };
+
+  const doTransfer = async () => {
+    const amount = Number(transferForm.amount);
+    if (!transferForm.recipient.trim() || !Number.isInteger(amount) || amount < 100 || amount > 1000) {
+      notify(tr('أدخل مستفيداً ومبلغاً صحيحاً بين 100 و1,000 نقطة.', 'Enter a recipient and an integer amount from 100 to 1,000 points.'));
+      return;
+    }
+    if (!window.confirm(tr(`سيُحوّل ${amount.toLocaleString(locale)} نقطة إلى ${transferForm.recipient.trim()} بلا رسوم. لا يمكن التراجع بعد نجاح الخادم.`, `${amount.toLocaleString(locale)} points will transfer to ${transferForm.recipient.trim()} with no fee. It cannot be undone after the server succeeds.`))) return;
+    try {
+      await api('/api/wallet/transfer', { method: 'POST', body: JSON.stringify({ recipient: transferForm.recipient.trim(), amount, idempotencyKey: createIdempotencyKey() }) });
+      setTransferForm({ recipient: '', amount: '' });
+      await loadDashboard();
+      notify(tr('تمت معالجة التحويل وإشعار الطرفين.', 'Transfer processed and both parties notified.'));
+    } catch (error) { notify(errorMessage(error)); }
+  };
+
+  const redeem = async () => {
+    const days = Number(redeemDays);
+    if (!Number.isInteger(days) || days < 1) { notify(tr('أدخل عدداً صحيحاً من الأيام.', 'Enter a whole number of days.')); return; }
+    if (!window.confirm(tr(`سيُخصم ${days * 100} نقطة مقابل ${days} يوم استحقاق.`, `${days * 100} points will be redeemed for ${days} entitlement day(s).`))) return;
+    try {
+      await api('/api/wallet/redeem', { method: 'POST', body: JSON.stringify({ days, idempotencyKey: createIdempotencyKey() }) });
+      await loadDashboard();
+      notify(tr('تمت إضافة أيام الاستحقاق ذرّياً.', 'Entitlement days were added atomically.'));
+    } catch (error) { notify(errorMessage(error)); }
+  };
+
+  const copyReferral = async () => {
+    const link = `${window.location.origin}/auth?ref=C${user?.id ?? ''}`;
+    try { await navigator.clipboard.writeText(link); notify(tr('تم نسخ رابط الإحالة.', 'Referral link copied.')); }
+    catch { notify(link); }
+  };
+
+  const translateDraft = async () => {
+    if (!activeSite || !translationConsent) return;
+    try {
+      const response = await api<{ draft?: ProfileDraft; site?: Site; translations?: unknown }>(`/api/translate`, { method: 'POST', body: JSON.stringify({ siteId: activeSite.id, target: 'en', consent: true }) });
+      const received = response.draft ?? response.site?.draft;
+      if (!received) {
+        await openSite(activeSite);
+        const verified = draftRef.current.translations?.en;
+        if (!verified) throw new Error(tr('لم يعُد الخادم بمسودة مترجمة قابلة للتحقق.', 'The server did not return a verifiable translated draft.'));
+      } else {
+        const nextDraft = parseDraft(received);
+        if (!nextDraft.translations?.en) throw new Error(tr('لم تتضمن الاستجابة الترجمة المحفوظة.', 'The response did not include saved translations.'));
+        setDraft(nextDraft); draftRef.current = nextDraft; dirtyRef.current = false; setSaveState('saved');
+      }
+      notify(tr('تم التحقق من حفظ الترجمة الإنجليزية في المسودة.', 'English translation was verified in the draft.'));
+    } catch (error) { notify(errorMessage(error)); }
+  };
+
+  const createQuickLink = async () => {
+    if (!activeSite) return;
+    const fields = Object.entries(quickFields).filter(([, enabled]) => enabled).map(([key]) => key);
+    const expiresDays = Number(quickDays);
+    if (!fields.length || !Number.isInteger(expiresDays) || expiresDays < 1) { notify(tr('اختر حقلاً واحداً على الأقل ومدة صالحة.', 'Choose at least one field and a valid lifetime.')); return; }
+    try {
+      const response = await api<QuickLink>('/api/quick-links', { method: 'POST', body: JSON.stringify({ fields, expiresDays }) });
+      setQuickLink(response);
+      notify(tr('تم إنشاء رابط تعارف محدود البيانات.', 'Limited-data introduction link created.'));
+    } catch (error) { notify(errorMessage(error)); }
+  };
+
+  const revokeQuickLink = async (id: string) => {
+    if (!window.confirm(tr('سيُبطل الرابط فوراً. هل تريد المتابعة؟', 'This link will be revoked immediately. Continue?'))) return;
+    try { await api(`/api/quick-links/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: JSON.stringify({}) }); setQuickLink(null); notify(tr('تم إبطال الرابط.', 'Link revoked.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const requestContact = async () => {
+    if (!messageRecipient.trim()) return;
+    try { await api('/api/contact/request', { method: 'POST', body: JSON.stringify({ recipient: messageRecipient.trim() }) }); setMessageRecipient(''); await loadMessages(); notify(tr('أُرسل طلب التواصل بانتظار موافقة المستفيد.', 'Contact request sent; recipient approval is required.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const decideContact = async (id: string, accept: boolean) => {
+    try { await api(`/api/contact/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ accept }) }); await loadMessages(); notify(accept ? tr('تمت الموافقة وفتح جلسة مراسلة.', 'Accepted; messaging session opened.') : tr('تم رفض طلب التواصل.', 'Contact request declined.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const openConversation = async (conversation: Conversation) => {
+    try {
+      const response = await api<ConversationDetail | { conversation?: ConversationDetail }>(`/api/conversations/${encodeURIComponent(conversation.id)}`);
+      setSelectedConversation(('conversation' in response && response.conversation ? response.conversation : response) as ConversationDetail);
+    } catch (error) { notify(errorMessage(error)); }
+  };
+
+  const sessionExpired = selectedConversation ? Date.now() / 1000 - Number(selectedConversation.last_activity ?? 0) >= 86_400 || selectedConversation.status !== 'active' : false;
+  const sendMessage = async () => {
+    if (!selectedConversation || sessionExpired || !messageBody.trim()) return;
+    try {
+      await api(`/api/conversations/${encodeURIComponent(selectedConversation.id)}/messages`, { method: 'POST', body: JSON.stringify({ body: messageBody.trim() }) });
+      setMessageBody('');
+      await openConversation(selectedConversation);
+      await loadMessages();
+    } catch (error) { notify(errorMessage(error)); }
+  };
+  const endConversation = async () => {
+    if (!selectedConversation || !window.confirm(tr('سيُنهى التراسل فوراً، ويتطلب الاستئناف طلب تواصل جديداً. هل تريد المتابعة؟', 'Messaging ends immediately and resuming requires a new contact request. Continue?'))) return;
+    try { await api(`/api/conversations/${encodeURIComponent(selectedConversation.id)}/end`, { method: 'POST', body: JSON.stringify({}) }); setSelectedConversation(null); await loadMessages(); notify(tr('انتهت الجلسة.', 'Session ended.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+  const blockConversationUser = async () => {
+    const id = selectedConversation?.other_user?.id;
+    if (!id) { notify(tr('لا تتوفر هوية الطرف الآخر لإجراء الحظر.', 'The other participant ID is unavailable for blocking.')); return; }
+    if (!window.confirm(tr('سيمنع الحظر أي تواصل لاحق من هذا الحساب. هل تريد المتابعة؟', 'Blocking prevents future contact from this account. Continue?'))) return;
+    try { await api('/api/blocks', { method: 'POST', body: JSON.stringify({ userId: id }) }); setSelectedConversation(null); await loadMessages(); notify(tr('تم حظر الحساب.', 'Account blocked.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+  const reportConversation = async () => {
+    if (!selectedConversation) return;
+    const reason = window.prompt(tr('اذكر سبب البلاغ باختصار:', 'Briefly state the report reason:'));
+    if (!reason?.trim()) return;
+    try { await api('/api/reports', { method: 'POST', body: JSON.stringify({ conversationId: selectedConversation.id, reason: reason.trim() }) }); notify(tr('تم توثيق البلاغ وإرساله.', 'Report documented and submitted.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const getInstructions = async () => {
+    setPaymentLoading(true);
+    try { const result = await api<unknown>('/api/payments/instructions'); setPaymentInstructions(result); }
+    catch (error) { notify(errorMessage(error)); }
+    finally { setPaymentLoading(false); }
+  };
+  const submitPayment = async () => {
+    const amount = Number(paymentForm.amount); const days = Number(paymentForm.days);
+    if (!paymentForm.receiptId || !Number.isFinite(amount) || amount <= 0 || !Number.isInteger(days) || days <= 0) { notify(tr('أدخل المبلغ والأيام وارفع الإيصال قبل الإرسال.', 'Enter amount and days, then upload the receipt before submitting.')); return; }
+    try {
+      await api('/api/payments', { method: 'POST', body: JSON.stringify({ amount, days, receiptId: paymentForm.receiptId, notes: paymentForm.notes }) });
+      setPaymentForm({ amount: '', days: '', notes: '', receiptId: '', receiptUrl: '' });
+      await loadDashboard();
+      notify(tr('تم إرسال طلب الاشتراك للمراجعة.', 'Subscription request submitted for review.'));
+    } catch (error) { notify(errorMessage(error)); }
+  };
+
+  const saveLock = async () => {
+    if (!activeSite) return;
+    if (lockForm.enabled && lockForm.password.length < 8) { notify(tr('استخدم كلمة مرور منفصلة للموقع من 8 أحرف على الأقل.', 'Use a separate site password with at least 8 characters.')); return; }
+    if (!window.confirm(lockForm.enabled ? tr('سيطلب زوار موقعك كلمة المرور المختارة. هل تريد المتابعة؟', 'Visitors will need the chosen password. Continue?') : tr('سيُزال قفل الموقع. هل تريد المتابعة؟', 'Site lock will be removed. Continue?'))) return;
+    try { await api(`/api/sites/${encodeURIComponent(activeSite.id)}/lock`, { method: 'POST', body: JSON.stringify(lockForm) }); notify(lockForm.enabled ? tr('تم حفظ قفل الموقع.', 'Site lock saved.') : tr('تمت إزالة قفل الموقع.', 'Site lock removed.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const savePin = async () => {
+    if (!/^\d{6}$/.test(pin)) { notify(tr('أدخل PIN من ستة أرقام.', 'Enter a 6-digit PIN.')); return; }
+    try { await api('/api/auth/pin', { method: 'POST', body: JSON.stringify({ pin }) }); setPinValue(''); notify(tr('تم تعيين PIN لهذا الجهاز الموثوق بعد التحقق الحديث.', 'PIN set for this trusted device after fresh verification.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const requestDeletion = async () => {
+    if (!deletionConfirmed) return;
+    if (!window.confirm(tr('سيُرسل طلب حذف رسمي للمراجعة؛ لا يمكن إلغاؤه من هذه الشاشة. هل تريد المتابعة؟', 'A formal deletion request will be submitted for review; it cannot be cancelled here. Continue?'))) return;
+    try { await api('/api/deletion-request', { method: 'POST', body: JSON.stringify({ reason: deleteReason.trim() }) }); setDeletionConfirmed(false); setDeleteReason(''); notify(tr('تم إرسال طلب الحذف للمراجعة.', 'Deletion request submitted for review.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const beginNameTransfer = async () => {
+    if (!nameTransfer.name.trim() || !nameTransfer.recipient.trim() || !nameTransfer.confirmed) return;
+    if (!window.confirm(tr('نقل الاسم لا ينقل الموقع أو الصور أو المحتوى أو QR تلقائياً. سيحتاج المستفيد لقبول العملية وموافقة الإدارة. هل تريد المتابعة؟', 'Transferring the name does not transfer the site, images, content, or QR. Recipient acceptance and administration approval are required. Continue?'))) return;
+    try { await api('/api/names/transfer', { method: 'POST', body: JSON.stringify({ name: nameTransfer.name.trim(), recipient: nameTransfer.recipient.trim() }) }); setNameTransfer({ name: '', recipient: '', confirmed: false }); await loadDashboard(); notify(tr('تم إنشاء طلب نقل الاسم.', 'Name transfer request created.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const acceptNameTransfer = async (id: string) => {
+    if (!window.confirm(tr('بقبول الاسم، تدرك أن بيانات ومحتوى المالك السابق لا تنتقل إليك. هل تريد المتابعة؟', 'By accepting the name, you understand the former owner’s data and content do not transfer to you. Continue?'))) return;
+    try { await api(`/api/names/transfers/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify({}) }); await loadDashboard(); notify(tr('تم تسجيل قبولك بانتظار الإجراء الإداري.', 'Your acceptance was recorded pending administration action.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+  const acceptHandover = async (id: string) => {
+    if (!window.confirm(tr('سيمنحك القبول إدارة الموقع وفق السياسة؛ تحقّق من البريد والهوية قبل المتابعة.', 'Accepting grants site management under policy; verify the email and identity before proceeding.'))) return;
+    try { await api(`/api/handovers/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify({}) }); await loadDashboard(); notify(tr('تم قبول التسليم.', 'Handover accepted.')); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const markNotificationRead = async (notification: Notification) => {
+    if (notification.read_at) return;
+    try { await api(`/api/notifications/${encodeURIComponent(notification.id)}/read`, { method: 'POST', body: JSON.stringify({}) }); setDashboard((current) => current ? { ...current, notifications: asArray<Notification>(current.notifications).map((item) => item.id === notification.id ? { ...item, read_at: Math.floor(Date.now() / 1000) } : item) } : current); }
+    catch (error) { notify(errorMessage(error)); }
+  };
+
+  const balance = Number(dashboard?.wallet?.balance ?? (user as { balance?: number }).balance ?? 0);
+  const siteAnalytics = (activeSite?.analytics ?? (dashboard?.analytics && activeSite ? (dashboard.analytics as Record<string, unknown>)[activeSite.id] : null)) as Record<string, unknown> | unknown[] | null;
+  const analyticsEntries = siteAnalytics && typeof siteAnalytics === 'object' && !Array.isArray(siteAnalytics) ? Object.entries(siteAnalytics) : [];
+  const reviews = asArray<Record<string, unknown>>(dashboard?.reviews).filter((review) => !activeSite || review.site_id === activeSite.id);
+  const notifications = asArray<Notification>(dashboard?.notifications);
+  const pendingTransfers = asArray<Record<string, unknown>>(dashboard?.transfers ?? dashboard?.nameTransfers).filter((item) => item.status === 'pending');
+  const handovers = asArray<Record<string, unknown>>(dashboard?.handovers).filter((item) => item.status === 'pending');
+  const conversations = asArray<Conversation>(messagesData?.conversations);
+  const requests = asArray<Record<string, unknown>>(messagesData?.requests);
+  const existingQuickLinks = asArray<QuickLink>(dashboard?.quickLinks);
+  const profileCompletion = useMemo(() => {
+    const signals = [draft.name, draft.title, draft.bio, draft.city, draft.photo, draft.experience.length, draft.skills.length, draft.languages.length, draft.socials.length, draft.workImages.length];
+    return Math.round((signals.filter(Boolean).length / signals.length) * 100);
+  }, [draft]);
+  const qualitySignals = useMemo(() => [
+    [Boolean(draft.title && draft.bio.length >= 80), tr('تعريف مهني واضح ونبذة كافية', 'Clear professional definition and sufficient bio')],
+    [Boolean(draft.email || draft.phone || draft.whatsapp), tr('وسيلة اتصال واحدة على الأقل', 'At least one contact channel')],
+    [Boolean(draft.skills.length && draft.skillImages.length), tr('مهارات مع إثبات مرئي', 'Skills with visual evidence')],
+    [Boolean(draft.experience.length && draft.workImages.length), tr('خبرة ونماذج أعمال منظمة', 'Organized experience and work samples')],
+  ], [draft, tr]);
+
+  const statusText: Record<SaveState, [string, string]> = {
+    saved: ['محفوظ', 'Saved'], unsaved: ['تغييرات غير محفوظة', 'Unsaved changes'], saving: ['جارٍ الحفظ...', 'Saving...'], error: ['تعذر الحفظ', 'Save failed'],
+  };
+
+  if (loading) return <main className="dashboard dashboard-loading" dir={lang === 'ar' ? 'rtl' : 'ltr'}><RefreshCw className="spin" /><span>{tr('جارٍ تحميل لوحتك...', 'Loading your console...')}</span></main>;
+  if (loadError) return <main className="dashboard dashboard-loading" dir={lang === 'ar' ? 'rtl' : 'ltr'}><AlertTriangle /><div><strong>{tr('تعذر تحميل اللوحة', 'Unable to load dashboard')}</strong><p className="muted">{loadError}</p><button className="button" onClick={() => void loadDashboard()}>{tr('إعادة المحاولة', 'Try again')}</button></div></main>;
+
+  return (
+    <main className="dashboard" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+      <header className="dashboard-hero card">
+        <div className="dashboard-hero__copy">
+          <p className="dashboard-kicker"><BadgeCheck size={15} /> {tr('مساحتك الرقمية الخاصة', 'Your private digital space')}</p>
+          <h1 className="page-title">{tr(`مرحباً ${user?.name || ''}`, `Welcome ${user?.name || ''}`)}</h1>
+          <p className="muted">{tr('أدر هويتك المهنية وخدماتك من مساحة واحدة آمنة.', 'Manage your professional identity and services in one secure space.')}</p>
+        </div>
+        <div className="dashboard-hero__actions">
+          <button className="dashboard-site-switch" onClick={() => activeSite && window.open(`https://${String(activeSite.name || '').replace(/^https?:\/\//, '')}`, '_blank', 'noopener')} disabled={!activeSite?.name}>
+            <Globe2 size={17} /><span>{activeSite?.name || tr('لا يوجد اسم محجوز', 'No reserved name')}</span><ExternalLink size={14} />
+          </button>
+          <div className={`dashboard-save-state is-${saveState}`}><span />{tr(...statusText[saveState])}</div>
+        </div>
+      </header>
+
+      <nav className="dashboard-tabs" aria-label={tr('أقسام لوحة التحكم', 'Dashboard sections')}>
+        {tabs.map(({ key, ar, en, icon: Icon }) => <button key={key} className={activeTab === key ? 'is-active' : ''} onClick={() => changeTab(key)}><Icon size={17} />{tr(ar, en)}</button>)}
+      </nav>
+
+      {notifications.length > 0 && <section className="dashboard-notifications card" aria-label={tr('الإشعارات', 'Notifications')}>
+        <div className="dashboard-section-heading"><div><Bell size={18} /><h2>{tr('التنبيهات', 'Notifications')}</h2></div><span>{notifications.filter((item) => !item.read_at).length} {tr('غير مقروء', 'unread')}</span></div>
+        <div className="dashboard-notification-list">
+          {notifications.slice(0, 3).map((item) => <button key={item.id} className={!item.read_at ? 'is-unread' : ''} onClick={() => void markNotificationRead(item)}><Bell size={15}/><span><strong>{item.title}</strong>{item.body && <small>{item.body}</small>}</span><time>{formatDate(item.created_at, locale)}</time></button>)}
+        </div>
+      </section>}
+
+      {activeTab === 'editor' && <section className="dashboard-editor">
+        <div className="dashboard-editor-top card">
+          <div className="dashboard-site-row">
+            <div><p className="dashboard-kicker"><PanelTop size={15}/>{tr('محرر الهوية الرقمية', 'Digital identity editor')}</p><h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2></div>
+            {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
+              {asArray<Site>(dashboard?.sites).map((site) => <option key={site.id} value={site.id}>{site.name || site.id}</option>)}
+            </select>}
+          </div>
+          <div className="dashboard-editor-actions">
+            <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><Eye size={17}/>{tr('معاينة المسودة', 'Preview draft')}</button>
+            <button className="button" onClick={() => void saveDraft(false)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{tr('حفظ الآن', 'Save now')}</button>
+          </div>
+        </div>
+
+        {!activeSite ? <EmptyState icon={PanelTop} title={tr('لا يوجد موقع يمكن تحريره بعد', 'No site available to edit yet')} body={tr('احجز اسماً مميزاً لإنشاء مسودة موقعك الأول.', 'Reserve a distinctive name to create your first site draft.')} /> : <>
+          <div className="dashboard-stepper card" role="tablist" aria-label={tr('خطوات المحرر', 'Editor steps')}>
+            {editorSections.map(([key, ar, en], index) => <button key={key} role="tab" aria-selected={editorSection === key} className={editorSection === key ? 'is-active' : ''} onClick={() => setEditorSection(key)}><small>{String(index + 1).padStart(2, '0')}</small><span>{tr(ar, en)}</span></button>)}
+          </div>
+          <article className="dashboard-edit-card card">
+            {editorSection === 'identity' && <IdentitySection draft={draft} tr={tr} uploading={uploading} onChange={changeDraft} onUpload={uploadImage} />}
+            {editorSection === 'bio' && <TextSection label={tr('النبذة التعريفية', 'Professional biography')} hint={tr('اكتب تعريفاً واضحاً ومهماً لجمهور موقعك.', 'Write a clear, meaningful introduction for your site audience.')} value={draft.bio} multiline onChange={(bio) => changeDraft({ bio })} />}
+            {editorSection === 'contact' && <ContactSection draft={draft} tr={tr} onChange={changeDraft} />}
+            {editorSection === 'experience' && <StructuredList title={tr('الخبرات العملية', 'Work experience')} value={draft.experience} onChange={(experience) => changeDraft({ experience })} tr={tr} />}
+            {editorSection === 'education' && <StructuredList title={tr('المؤهلات التعليمية', 'Education')} value={draft.education} onChange={(education) => changeDraft({ education })} tr={tr} />}
+            {editorSection === 'training' && <StructuredList title={tr('البرامج التدريبية والتطويرية', 'Training and development')} value={draft.training} onChange={(training) => changeDraft({ training })} tr={tr} />}
+            {editorSection === 'skills' && <StringList title={tr('المهارات', 'Skills')} hint={tr('أضف كل مهارة في عنصر مستقل.', 'Add each skill as a separate item.')} value={draft.skills} onChange={(skills) => changeDraft({ skills })} tr={tr} />}
+            {editorSection === 'memberships' && <StringList title={tr('العضويات المهنية', 'Professional memberships')} value={draft.memberships} onChange={(memberships) => changeDraft({ memberships })} tr={tr} />}
+            {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} />}
+            {editorSection === 'hobbies' && <StringList title={tr('الهوايات', 'Hobbies')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} />}
+            {editorSection === 'achievements' && <StringList title={tr('الإنجازات', 'Achievements')} value={draft.achievements} onChange={(achievements) => changeDraft({ achievements })} tr={tr} />}
+            {editorSection === 'timeline' && <StructuredList title={tr('سجل الإنجازات الزمني', 'Achievement timeline')} value={draft.timeline} onChange={(timeline) => changeDraft({ timeline })} tr={tr} timeline />}
+            {editorSection === 'skillImages' && <MediaSection title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('حتى 3 صور. تتحول الصور إلى WebP قبل الرفع.', 'Up to 3 images. Images are converted to WebP before upload.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
+            {editorSection === 'workImages' && <MediaSection title={tr('نماذج الأعمال', 'Work samples')} hint={tr('حتى 4 صور. اختر أعمالاً تمثل خبرتك فعلاً.', 'Up to 4 images. Choose work that genuinely represents your experience.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
+            {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
+            {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
+            {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
+            {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
+          </article>
+          <section className="dashboard-review-rail card">
+            <div><FileCheck2 size={19}/><div><h3>{tr('المراجعة والنشر', 'Review and publication')}</h3><p className="muted">{tr('الحفظ لا يرسل للمراجعة. الإرسال ينشئ لقطة ثابتة، ولا ينشر أي تعديل دون اعتماد.', 'Saving never submits a review. Submission creates a fixed snapshot; no change publishes without approval.')}</p></div></div>
+            <div className="dashboard-review-rail__actions"><span className="dashboard-status">{activeSite.status || tr('مسودة', 'Draft')}</span><button className="button button--quiet" onClick={() => setPreviewOpen(true)}><Eye size={16}/>{tr('راجع قبل الإرسال', 'Review before submitting')}</button></div>
+          </section>
+          {reviews.length > 0 && <section className="dashboard-review-history card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('سجل المراجعات', 'Review history')}</h2></div></div>{reviews.slice(0, 5).map((review, index) => <div key={String(review.id ?? index)} className="dashboard-history-row"><span>{String(review.status ?? 'pending')}</span><p>{String(review.reason || tr('بانتظار قرار المراجع.', 'Awaiting reviewer decision.'))}</p><time>{formatDate(Number(review.created_at), locale)}</time></div>)}</section>}
+        </>}
+      </section>}
+
+      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} redeemDays={redeemDays} setRedeemDays={setRedeemDays} onTransfer={doTransfer} onRedeem={redeem} onCopyReferral={copyReferral} locale={locale} tr={tr} />}
+
+      {activeTab === 'services' && <section className="dashboard-services stack">
+        <section className="dashboard-quality-grid">
+          <article className="card dashboard-completion"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('اكتمال الهوية', 'Identity completeness')}</h2></div><strong>{profileCompletion}%</strong></div><div className="dashboard-progress"><span style={{ width: `${profileCompletion}%` }}/></div><p className="muted">{tr('النسبة مستندة إلى الحقول المملوءة في مسودتك الحالية، وليست تقييماً مهنياً أو ضماناً للفرص.', 'This figure is based on populated fields in the current draft; it is not a professional evaluation or opportunity guarantee.')}</p></article>
+          <article className="card dashboard-quality"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('جودة الهوية', 'Identity quality')}</h2></div></div><ul>{qualitySignals.map(([met, label]) => <li key={String(label)} className={met ? 'is-ready' : ''}>{met ? <Check size={16}/> : <CircleHelp size={16}/>}<span>{label}</span></li>)}</ul></article>
+        </section>
+        <section className="card"><div className="dashboard-section-heading"><div><Languages size={18}/><h2>{tr('الترجمة المحفوظة', 'Saved translation')}</h2></div></div><p className="muted">{tr('بموافقتك، يُرسل محتوى مسودتك إلى خدمة الترجمة المهيأة من المنصة لحفظ نسخة إنجليزية قابلة للتعديل. لن ندّعي نجاحها ما لم تعُد المسودة المترجمة من الخادم.', 'With your consent, your draft content is sent to the platform-configured translation service to save an editable English version. Success is only shown when the translated draft returns from the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)} />{tr('أوافق على معالجة محتوى مسودتي لترجمته إلى الإنجليزية.', 'I consent to processing my draft content for English translation.')}</label><button className="button" disabled={!activeSite || !translationConsent} onClick={() => void translateDraft()}><Languages size={17}/>{tr('ترجمة وحفظ الإنجليزية', 'Translate and save English')}</button></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('التصديرات الفعلية', 'Live exports')}</h2></div></div><p className="muted">{tr('تنشئ هذه الروابط التصدير من البيانات الفعلية المخزنة. لا تعرض نتائج ثابتة أو نماذج وهمية.', 'These links generate exports from the stored data. They do not display static or fabricated samples.')}</p><div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite?.id || '')}&lang=${lang}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('سيرة ATS', 'ATS résumé') : kind.toUpperCase()}<ExternalLink size={13}/></a>)}</div></section>
+        <section className="dashboard-services-list card"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('إتاحة الخدمات', 'Service availability')}</h2></div><button className="button button--quiet" onClick={() => void loadServices()}><RefreshCw size={15}/>{tr('تحديث', 'Refresh')}</button></div>{services.length ? <div className="dashboard-service-grid">{services.map((service) => { const enabled = Boolean(service.enabled); const entitled = service.entitled !== false; return <article key={service.key} className={!enabled || !entitled ? 'is-unavailable' : ''}><div><strong>{lang === 'ar' ? service.name_ar || service.key : service.name_en || service.key}</strong><small>{!enabled ? tr('معلّقة على مستوى المنصة', 'Suspended platform-wide') : !entitled ? tr('تتطلب استحقاقاً', 'Entitlement required') : tr('متاحة لحسابك', 'Available to your account')}</small></div><span>{enabled && entitled ? <Check size={17}/> : <Lock size={16}/>}</span></article>; })}</div> : <EmptyInline text={tr('لا توجد حالة خدمات مؤكدة من الخادم حالياً.', 'No server-confirmed service status is available yet.')} />}</section>
+        <section className="dashboard-insights-grid"><article className="card"><div className="dashboard-section-heading"><div><BookOpen size={18}/><h2>{tr('قياسات الحضور', 'Presence measurements')}</h2></div></div>{analyticsEntries.length ? <dl className="dashboard-metrics">{analyticsEntries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'number' ? value.toLocaleString(locale) : String(value)}</dd></div>)}</dl> : <EmptyInline text={tr('لا توجد قياسات مسجلة بعد. لا نعرض تقديرات كأنها قياسات.', 'No measurements are recorded yet. Estimates are not shown as measurements.')} />}</article><QuickLinkPanel fields={quickFields} setFields={setQuickFields} days={quickDays} setDays={setQuickDays} activeLink={quickLink} existing={existingQuickLinks} onCreate={createQuickLink} onRevoke={revokeQuickLink} tr={tr} /></section>
+      </section>}
+
+      {activeTab === 'messages' && <MessagesPanel tr={tr} requests={requests} conversations={conversations} selected={selectedConversation} recipient={messageRecipient} setRecipient={setMessageRecipient} body={messageBody} setBody={setMessageBody} onRequest={requestContact} onDecision={decideContact} onOpen={openConversation} onSend={sendMessage} onEnd={endConversation} onBlock={blockConversationUser} onReport={reportConversation} expired={sessionExpired} locale={locale} />}
+
+      {activeTab === 'subscription' && <section className="dashboard-subscription stack">
+        <section className="card dashboard-entitlement"><div><p className="dashboard-kicker"><CreditCard size={15}/>{tr('الاستحقاق', 'Entitlement')}</p><h2>{tr('التجربة والاشتراك', 'Trial and subscription')}</h2><p className="muted">{tr('يبقى موقعك الأساسي وبياناته وQR متاحين بعد انتهاء التجربة ما لم تعلّقه الإدارة. الخدمات الإضافية تتبع الاستحقاق الفعلي.', 'Your core site, data, and QR remain available after trial expiration unless administration suspends it. Additional services follow actual entitlement.')}</p></div><dl><div><dt>{tr('نهاية التجربة', 'Trial end')}</dt><dd>{formatDate(Number(user?.trial_until), locale)}</dd></div><div><dt>{tr('نهاية الاستحقاق', 'Entitlement end')}</dt><dd>{formatDate(Number(user?.entitlement_until), locale)}</dd></div></dl></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ReceiptText size={18}/><h2>{tr('طلب اشتراك عبر الحوالة', 'Bank-transfer subscription request')}</h2></div><button className="button button--quiet" onClick={() => void getInstructions()} disabled={paymentLoading}>{paymentLoading ? <RefreshCw className="spin" size={16}/> : <Eye size={16}/>}{tr('عرض التعليمات الرسمية', 'Show official instructions')}</button></div>{paymentInstructions === null ? <p className="muted">{tr('لم تُحمّل تعليمات بنكية رسمية بعد. لا يمكننا اختلاق بيانات تحويل أو الادعاء باستقبال دفعة قبل إعدادها من الإدارة.', 'Official bank instructions have not been loaded. We cannot invent bank details or claim to accept payment before administration configures them.')}</p> : <PaymentInstructions value={paymentInstructions} tr={tr} />}<div className="dashboard-payment-form"><label><span>{tr('المبلغ المتفق عليه (SAR)', 'Agreed amount (SAR)')}</span><input className="field" type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={(event) => setPaymentForm({ ...paymentForm, amount: event.target.value })}/></label><label><span>{tr('أيام الاستحقاق', 'Entitlement days')}</span><input className="field" type="number" min="1" step="1" value={paymentForm.days} onChange={(event) => setPaymentForm({ ...paymentForm, days: event.target.value })}/></label><label className="dashboard-payment-note"><span>{tr('ملاحظة اختيارية', 'Optional note')}</span><input className="field" value={paymentForm.notes} onChange={(event) => setPaymentForm({ ...paymentForm, notes: event.target.value })}/></label><UploadControl label={paymentForm.receiptId ? tr('تم رفع الإيصال', 'Receipt uploaded') : tr('رفع إيصال خاص', 'Upload private receipt')} purpose="receipt" uploading={uploading} tr={tr} onChange={(event) => void uploadImage(event, 'receipt', (upload) => setPaymentForm({ ...paymentForm, receiptId: upload.id, receiptUrl: upload.url }))} /><button className="button" disabled={paymentInstructions === null} onClick={() => void submitPayment()}><Send size={17}/>{tr('إرسال الطلب للمراجعة', 'Submit for review')}</button></div></section>
+        {asArray<Record<string, unknown>>(dashboard?.payments).length > 0 && <section className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('طلباتك السابقة', 'Your previous requests')}</h2></div></div>{asArray<Record<string, unknown>>(dashboard?.payments).map((payment, index) => <div className="dashboard-history-row" key={String(payment.id ?? index)}><span>{String(payment.status ?? 'requested')}</span><p>{Number(payment.amount ?? 0).toLocaleString(locale)} SAR · {String(payment.days ?? '')} {tr('يوم', 'day(s)')}</p><time>{formatDate(Number(payment.created_at), locale)}</time></div>)}</section>}
+      </section>}
+
+      {activeTab === 'settings' && <section className="dashboard-settings stack">
+        <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div></div><p className="muted">{tr('PIN المكوّن من ستة أرقام مخصص للدخول السريع على جهاز موثوق فقط. تعيينه يتطلب تحققاً حديثاً من الخادم.', 'A six-digit PIN is only for quick entry on a trusted device. Setting it requires fresh server verification.')}</p><div className="dashboard-inline-form"><input className="field" inputMode="numeric" maxLength={6} autoComplete="one-time-code" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('تعيين PIN', 'Set PIN')}</button></div></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('نقل الاسم المميز', 'Distinctive name transfer')}</h2></div></div><p className="muted">{tr('يُنقل الاسم فقط؛ لا تنتقل المسودة أو المحتوى أو الصور أو روابط QR تلقائياً، وقد تتأثر الروابط القديمة.', 'Only the name transfers. Draft, content, images, and QR links do not transfer automatically, and old links may be affected.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الاسم المملوك', 'Owned name')}</span><input className="field" value={nameTransfer.name} onChange={(event) => setNameTransfer({ ...nameTransfer, name: event.target.value })}/></label><label><span>{tr('المستفيد (C# أو اسم)', 'Recipient (C# or name)')}</span><input className="field" value={nameTransfer.recipient} onChange={(event) => setNameTransfer({ ...nameTransfer, recipient: event.target.value })}/></label></div><label className="dashboard-check"><input type="checkbox" checked={nameTransfer.confirmed} onChange={(event) => setNameTransfer({ ...nameTransfer, confirmed: event.target.checked })}/>{tr('أفهم أثر النقل وفصل الاسم عن بيانات الموقع.', 'I understand the transfer consequences and separation from site data.')}</label><button className="button" disabled={!nameTransfer.confirmed} onClick={() => void beginNameTransfer()}><ArrowLeftRight size={16}/>{tr('إنشاء طلب نقل', 'Create transfer request')}</button>{pendingTransfers.length > 0 && <div className="dashboard-pending-list">{pendingTransfers.map((transfer, index) => <div key={String(transfer.id ?? index)}><span>{String(transfer.name ?? tr('اسم مميز', 'Distinctive name'))}</span><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(transfer.id))}>{tr('قبول النقل', 'Accept transfer')}</button></div>)}</div>}</section>
+        {handovers.length > 0 && <section className="card"><div className="dashboard-section-heading"><div><UsersRound size={18}/><h2>{tr('تسليمات بانتظار قبولك', 'Handovers awaiting your acceptance')}</h2></div></div>{handovers.map((handover, index) => <div className="dashboard-history-row" key={String(handover.id ?? index)}><p>{String(handover.site_id ?? '')}</p><time>{formatDate(Number(handover.created_at), locale)}</time><button className="button button--quiet" onClick={() => void acceptHandover(String(handover.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}</section>}
+        <section className="card dashboard-danger"><div className="dashboard-section-heading"><div><Trash2 size={18}/><h2>{tr('طلب حذف الحساب والبيانات', 'Request account and data deletion')}</h2></div></div><p>{tr('لا يحذف هذا الزر بياناتك فوراً. يرسل طلباً موثقاً للمراجعة والمعالجة وفق السياسة.', 'This does not immediately erase your data. It submits a documented request for review and handling under policy.')}</p><textarea className="field" rows={3} value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} placeholder={tr('سبب اختياري لطلب الحذف', 'Optional deletion reason')}/><label className="dashboard-check"><input type="checkbox" checked={deletionConfirmed} onChange={(event) => setDeletionConfirmed(event.target.checked)}/>{tr('أفهم أن الطلب يحتاج مراجعة ولا يعني الحذف الفوري.', 'I understand the request needs review and does not mean immediate deletion.')}</label><button className="button button--danger" disabled={!deletionConfirmed} onClick={() => void requestDeletion()}><Trash2 size={16}/>{tr('إرسال طلب الحذف', 'Submit deletion request')}</button></section>
+      </section>}
+
+      {previewOpen && <PreviewModal draft={draft} site={activeSite} tr={tr} submitting={submittingReview} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
+    </main>
+  );
+}
+
+function EmptyState({ icon: Icon, title, body }: { icon: typeof PanelTop; title: string; body: string }) { return <section className="dashboard-empty card"><Icon size={28}/><h2>{title}</h2><p className="muted">{body}</p></section>; }
+function EmptyInline({ text }: { text: string }) { return <p className="dashboard-empty-inline"><CircleHelp size={17}/>{text}</p>; }
+
+function TextSection({ label, hint, value, multiline = false, onChange }: { label: string; hint: string; value: string; multiline?: boolean; onChange: (value: string) => void }) {
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><PencilLine size={15}/>{label}</p><h2>{label}</h2><p className="muted">{hint}</p></div></header>{multiline ? <textarea className="field dashboard-textarea" rows={10} value={value} onChange={(event) => onChange(event.target.value)}/> : <input className="field" value={value} onChange={(event) => onChange(event.target.value)}/>}</>;
+}
+
+function IdentitySection({ draft, tr, uploading, onChange, onUpload }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void }) {
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى والصور', 'Name, title, and images')}</h2><p className="muted">{tr('الصورة الشخصية والغلاف جزء من الهوية، ويُحفظان بعد ضغطهما بصيغة WebP.', 'Profile photo and cover are part of your identity and saved as WebP after compression.')}</p></div></header><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo', (upload) => onChange({ photo: upload.url }))}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover', (upload) => onChange({ cover: upload.url }))}/></div><div className="dashboard-settings-grid"><label><span>{tr('الاسم', 'Name')}</span><input className="field" value={draft.name} onChange={(event) => onChange({ name: event.target.value })}/></label><label><span>{tr('المسمى المهني', 'Professional title')}</span><input className="field" value={draft.title} onChange={(event) => onChange({ title: event.target.value })}/></label></div></>;
+}
+function ContactSection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Mail size={15}/>{tr('الخطوة 3', 'Step 3')}</p><h2>{tr('بيانات التواصل والموقع', 'Contact and location')}</h2><p className="muted">{tr('يمكنك لاحقاً التحكم في ظهور كل حقل ضمن إعدادات الخصوصية.', 'You can later control visibility for each field in privacy settings.')}</p></div></header><div className="dashboard-settings-grid">{([['email', tr('البريد الإلكتروني', 'Email'), 'email'], ['phone', tr('الهاتف', 'Phone'), 'tel'], ['whatsapp', tr('واتساب', 'WhatsApp'), 'tel'], ['city', tr('المدينة', 'City'), 'text'], ['country', tr('الدولة', 'Country'), 'text']] as const).map(([key, label, type]) => <label key={key}><span>{label}</span><input className="field" type={type} value={draft[key]} onChange={(event) => onChange({ [key]: event.target.value })}/></label>)}</div></>;
+}
+function StructuredList({ title, value, onChange, tr, timeline = false }: { title: string; value: ResumeItem[]; onChange: (value: ResumeItem[]) => void; tr: (ar: string, en: string) => string; timeline?: boolean }) {
+  const update = (index: number, key: keyof ResumeItem, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item));
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><BookOpen size={15}/>{timeline ? tr('خط زمني', 'Timeline') : tr('قائمة منظمة', 'Structured list')}</p><h2>{title}</h2><p className="muted">{tr('أضف المعلومات التي يمكنك تأكيدها فقط. يمكنك ترك تاريخ النهاية فارغاً للحالة الحالية.', 'Add only information you can confirm. Leave the end date empty for a current item.')}</p></div><button className="button button--quiet" onClick={() => onChange([...value, blankItem()])}><Plus size={16}/>{tr('إضافة عنصر', 'Add item')}</button></header><div className="dashboard-structured-list">{value.length === 0 && <EmptyInline text={tr('لا توجد عناصر بعد.', 'No items yet.')} />}{value.map((item, index) => <article key={`${index}-${item.title}`}><div className="dashboard-list-card-top"><strong>{tr('عنصر', 'Item')} {index + 1}</strong><button className="dashboard-icon-button" aria-label={tr('حذف العنصر', 'Remove item')} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16}/></button></div><div className="dashboard-settings-grid"><label><span>{tr('العنوان أو المسمى', 'Title or role')}</span><input className="field" value={item.title} onChange={(event) => update(index, 'title', event.target.value)}/></label><label><span>{tr('الجهة', 'Organization')}</span><input className="field" value={item.organization} onChange={(event) => update(index, 'organization', event.target.value)}/></label><label><span>{tr('البداية', 'Start')}</span><input className="field" value={item.start} onChange={(event) => update(index, 'start', event.target.value)} placeholder="2024-01"/></label><label><span>{tr('النهاية', 'End')}</span><input className="field" value={item.end} onChange={(event) => update(index, 'end', event.target.value)} placeholder={tr('الحالي أو 2025-01', 'Current or 2025-01')}/></label></div><label><span>{tr('الوصف', 'Description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => update(index, 'description', event.target.value)}/></label></article>)}</div></>;
+}
+function StringList({ title, hint, value, onChange, tr }: { title: string; hint?: string; value: string[]; onChange: (value: string[]) => void; tr: (ar: string, en: string) => string }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Check size={15}/>{tr('قائمة قابلة للتحرير', 'Editable list')}</p><h2>{title}</h2>{hint && <p className="muted">{hint}</p>}</div><button className="button button--quiet" onClick={() => onChange([...value, ''])}><Plus size={16}/>{tr('إضافة', 'Add')}</button></header><div className="dashboard-string-list">{value.length === 0 && <EmptyInline text={tr('أضف أول عنصر لتبدأ.', 'Add your first item to start.')} />}{value.map((item, index) => <div key={`${index}-${item}`}><input className="field" value={item} onChange={(event) => onChange(value.map((valueItem, valueIndex) => valueIndex === index ? event.target.value : valueItem))}/><button className="dashboard-icon-button" aria-label={tr('حذف', 'Remove')} onClick={() => onChange(value.filter((_, valueIndex) => valueIndex !== index))}><X size={16}/></button></div>)}</div></>;
+}
+function MediaSection({ title, hint, items, max, purpose, uploading, tr, onUpload, onChange }: { title: string; hint: string; items: string[]; max: number; purpose: 'skill' | 'work'; uploading: string; tr: (ar: string, en: string) => string; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void; onChange: (items: string[]) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ImagePlus size={15}/>{items.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{items.length < max && <UploadControl label={tr('إضافة صورة', 'Add image')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={(event) => void onUpload(event, purpose, (upload) => onChange([...items, upload.url]))}/>}</header><div className="dashboard-image-grid">{items.length === 0 && <EmptyInline text={tr('لا توجد صور مرفوعة بعد.', 'No images uploaded yet.')} />}{items.map((url, index) => <figure key={url}><img src={url} alt=""/><button className="dashboard-icon-button" onClick={() => onChange(items.filter((_, imageIndex) => imageIndex !== index))} aria-label={tr('إزالة الصورة', 'Remove image')}><X size={16}/></button></figure>)}</div></>;
+}
+function YoutubeSection({ value, onChange, tr }: { value: string; onChange: (value: string) => void; tr: (ar: string, en: string) => string }) { const valid = !value || /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(value); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Youtube size={15}/>{tr('فيديو اختياري', 'Optional video')}</p><h2>{tr('فيديو YouTube التعريفي', 'YouTube introduction')}</h2><p className="muted">{tr('يُحمّل مشغّل الفيديو في موقعك بعد تفاعل الزائر فقط.', 'The video player loads on your site only after visitor interaction.')}</p></div></header><label><span>{tr('رابط YouTube', 'YouTube URL')}</span><input className={`field ${!valid ? 'is-invalid' : ''}`} type="url" placeholder="https://youtu.be/..." value={value} onChange={(event) => onChange(event.target.value)}/></label>{!valid && <p className="dashboard-error">{tr('استخدم رابطاً صحيحاً من YouTube.', 'Use a valid YouTube URL.')}</p>}</>;
+}
+function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hint: string; value: Social[]; onChange: (value: Social[]) => void; max: number; tr: (ar: string, en: string) => string }) { const update = (index: number, key: keyof Social, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item)); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Link2 size={15}/>{value.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{value.length < max && <button className="button button--quiet" onClick={() => onChange([...value, { label: '', url: '' }])}><Plus size={16}/>{tr('إضافة رابط', 'Add link')}</button>}</header><div className="dashboard-link-list">{value.length === 0 && <EmptyInline text={tr('لا توجد روابط مضافة بعد.', 'No links added yet.')} />}{value.map((item, index) => <div key={`${index}-${item.url}`}><Globe2 size={17}/><input className="field" value={item.label} placeholder={tr('العنوان', 'Label')} onChange={(event) => update(index, 'label', event.target.value)}/><input className="field" type="url" value={item.url} placeholder="https://" onChange={(event) => update(index, 'url', event.target.value)}/>{item.url && <small>{socialHost(item.url)}</small>}<button className="dashboard-icon-button" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))} aria-label={tr('حذف الرابط', 'Remove link')}><X size={16}/></button></div>)}</div></>;
+}
+function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]]; const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] }); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div><label><span>{tr('طلب إعادة توجيه خارجي', 'External redirect request')}</span><input className="field" type="url" placeholder="https://" value={draft.redirect} onChange={(event) => onChange({ redirect: event.target.value })}/><small className="muted">{tr('تُنفذ إعادة التوجيه بعد موافقة الإدارة والتحقق من الوجهة.', 'Redirect is applied only after administration approval and destination validation.')}</small></label></>;
+}
+function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept={purpose === 'receipt' ? 'application/pdf,image/png,image/jpeg,image/webp' : 'image/png,image/jpeg,image/webp'} onChange={onChange} disabled={Boolean(uploading)}/></label>; }
+function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; locale: string; tr: (ar: string, en: string) => string }) { return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('نقاط الوسط', 'Mid Points')}</p><h2>{balance.toLocaleString(locale)}</h2><p>{tr('نقاط غير نقدية؛ لا تُسحب أو تُستبدل بالنقد.', 'Non-cash points; they cannot be withdrawn or exchanged for cash.')}</p></div><div className="dashboard-wallet-mark"><Gift size={28}/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('تحويل نقاط', 'Transfer points')}</h2></div></div><p className="muted">{tr('100 إلى 1,000 نقطة للعملية، بلا رسوم أو حدّ لعدد العمليات. لا يمكن الإرسال إلى حسابك نفسه أو فوق رصيدك.', '100 to 1,000 points per transfer, no fee and no count limit. You cannot send to yourself or above your balance.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} placeholder="100–1,000"/><button className="button" onClick={onTransfer}><Send size={16}/>{tr('تحويل', 'Transfer')}</button></div></article><article className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('استبدال الاستحقاق', 'Redeem entitlement')}</h2></div></div><p className="muted">{tr('كل 100 نقطة تضيف يوماً كاملاً إلى استحقاق الخدمات. تُطبّق العملية ذرّياً لدى الخادم.', 'Every 100 points adds a full entitlement day. The server applies this atomically.')}</p><div className="dashboard-inline-form"><input className="field" type="number" min="1" step="1" value={redeemDays} onChange={(event) => setRedeemDays(event.target.value)} aria-label={tr('عدد الأيام', 'Number of days')}/><button className="button" onClick={onRedeem}><Gift size={16}/>{tr('استبدال 100 نقطة/يوم', 'Redeem 100 points/day')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('تُضاف 1,000 نقطة مرة واحدة فقط عند أول اشتراك مدفوع مؤهل ومعتمد للشخص المُحال، وليس عند التسجيل.', '1,000 points are added once only when the referred person’s first eligible paid subscription is approved, not at registration.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('دفتر الحركات', 'Ledger')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><strong>{Number(entry.amount ?? 0).toLocaleString(locale)}</strong><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed ledger entries to show yet.')} />}</section></section>; }
+function QuickLinkPanel({ fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) { const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] }; const links = activeLink ? [activeLink] : existing.filter((item) => !item.revoked); return <article className="card"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('رابط التعارف السريع', 'Quick introduction link')}</h2></div></div><p className="muted">{tr('يشارك حقولاً محددة فقط ولا يغير خصوصية موقعك الأساسي.', 'Shares only selected fields and never changes core-site privacy.')}</p><div className="dashboard-quick-fields">{Object.keys(fields).map((key) => <label key={key}><input type="checkbox" checked={fields[key]} onChange={(event) => setFields({ ...fields, [key]: event.target.checked })}/>{tr(...labels[key])}</label>)}</div><div className="dashboard-inline-form"><input className="field" type="number" min="1" value={days} onChange={(event) => setDays(event.target.value)} aria-label={tr('مدة الصلاحية بالأيام', 'Lifetime in days')}/><button className="button" onClick={onCreate}><Link2 size={16}/>{tr('إنشاء الرابط', 'Create link')}</button></div>{links.map((link) => <div className="dashboard-created-link" key={link.id}><a href={link.url} target="_blank" rel="noreferrer">{link.url || link.id}</a><button className="dashboard-icon-button" onClick={() => onRevoke(link.id)} aria-label={tr('إلغاء الرابط', 'Revoke link')}><Ban size={16}/></button></div>)}</article>; }
+function MessagesPanel({ tr, requests, conversations, selected, recipient, setRecipient, body, setBody, onRequest, onDecision, onOpen, onSend, onEnd, onBlock, onReport, expired, locale }: { tr: (ar: string, en: string) => string; requests: Record<string, unknown>[]; conversations: Conversation[]; selected: ConversationDetail | null; recipient: string; setRecipient: (value: string) => void; body: string; setBody: (value: string) => void; onRequest: () => void; onDecision: (id: string, accept: boolean) => void; onOpen: (conversation: Conversation) => void; onSend: () => void; onEnd: () => void; onBlock: () => void; onReport: () => void; expired: boolean; locale: string }) { return <section className="dashboard-messages"><aside className="dashboard-message-sidebar stack"><section className="card"><div className="dashboard-section-heading"><div><Send size={18}/><h2>{tr('طلب تواصل', 'Contact request')}</h2></div></div><p className="muted">{tr('لن تبدأ أي محادثة قبل قبول المستفيد الصريح.', 'No conversation starts without explicit recipient acceptance.')}</p><div className="dashboard-inline-form"><input className="field" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={tr('معرّف المستفيد C#', 'Recipient ID C#')}/><button className="button" onClick={onRequest}><Send size={16}/>{tr('إرسال', 'Send')}</button></div></section><section className="card"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('طلبات بانتظار قرارك', 'Requests awaiting you')}</h2></div></div>{requests.length ? <div className="dashboard-request-list">{requests.map((request, index) => <div key={String(request.id ?? index)}><div><strong>{String(request.from_name ?? request.from_id ?? '')}</strong><small>{formatDate(Number(request.created_at), locale)}</small></div><button className="dashboard-icon-button" aria-label={tr('قبول', 'Accept')} onClick={() => onDecision(String(request.id), true)}><Check size={16}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('رفض', 'Decline')} onClick={() => onDecision(String(request.id), false)}><X size={16}/></button></div>)}</div> : <EmptyInline text={tr('لا توجد طلبات.', 'No requests.')} />}</section><section className="card"><div className="dashboard-section-heading"><div><MessageCircle size={18}/><h2>{tr('جلساتك', 'Your sessions')}</h2></div></div>{conversations.length ? <div className="dashboard-conversation-list">{conversations.map((conversation) => <button key={conversation.id} className={selected?.id === conversation.id ? 'is-active' : ''} onClick={() => void onOpen(conversation)}><span><strong>{conversation.other_user?.name || `C${conversation.other_user?.id ?? ''}` || conversation.id}</strong><small>{conversation.status === 'active' ? tr('جلسة نشطة', 'Active session') : String(conversation.status || '')}</small></span><time>{formatDate(Number(conversation.last_activity), locale)}</time></button>)}</div> : <EmptyInline text={tr('لا توجد جلسات مراسلة.', 'No messaging sessions.')} />}</section></aside><section className="card dashboard-chat">{!selected ? <div className="dashboard-empty"><MessageCircle size={28}/><h2>{tr('اختر جلسة مراسلة', 'Choose a messaging session')}</h2><p className="muted">{tr('جلسة النصوص تنتهي بعد 24 ساعة من آخر نشاط.', 'Text-only sessions expire 24 hours after last activity.')}</p></div> : <><header className="dashboard-chat-header"><div><h2>{selected.other_user?.name || `C${selected.other_user?.id ?? ''}`}</h2><p className={expired ? 'dashboard-error' : 'muted'}>{expired ? tr('انتهت هذه الجلسة؛ يلزم طلب جديد.', 'This session has expired; a new request is required.') : tr('نشطة لمدة 24 ساعة من آخر نشاط.', 'Active for 24 hours from last activity.')}</p></div><div><button className="dashboard-icon-button" aria-label={tr('إبلاغ', 'Report')} onClick={onReport}><AlertTriangle size={17}/></button><button className="dashboard-icon-button" aria-label={tr('حظر', 'Block')} onClick={onBlock}><Ban size={17}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('إنهاء الجلسة', 'End session')} onClick={onEnd}><X size={17}/></button></div></header><div className="dashboard-chat-log">{asArray<Message>(selected.messages).map((message) => <div key={message.id} className={message.sender_id === undefined ? '' : 'is-message'}><p>{message.body}</p><time>{formatDate(message.created_at, locale)}</time></div>)}</div><div className="dashboard-chat-compose"><textarea className="field" rows={2} value={body} onChange={(event) => setBody(event.target.value)} disabled={expired} placeholder={tr('اكتب رسالة نصية مهنية...', 'Write a professional text message...')}/><button className="button" disabled={expired || !body.trim()} onClick={onSend}><Send size={17}/>{tr('إرسال', 'Send')}</button></div></>}</section></section>; }
+function PaymentInstructions({ value, tr }: { value: unknown; tr: (ar: string, en: string) => string }) { const hasValues = value && (typeof value === 'string' ? value.trim().length > 0 : typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0); if (!hasValues) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>; if (typeof value === 'string') return <pre className="dashboard-bank-details">{value}</pre>; const raw = value as Record<string, unknown>; const details = raw.instructions ?? raw.bank ?? raw; return <dl className="dashboard-bank-details">{typeof details === 'object' && details ? Object.entries(details as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{typeof item === 'string' || typeof item === 'number' ? item : JSON.stringify(item)}</dd></div>) : <div><dd>{String(details)}</dd></div>}</dl>; }
+function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) { return <div className="dashboard-modal-backdrop" role="presentation" onMouseDown={onClose}><section className="dashboard-preview-modal" role="dialog" aria-modal="true" aria-label={tr('معاينة المسودة', 'Draft preview')} onMouseDown={(event) => event.stopPropagation()}><header><div><p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة محلية للمسودة', 'Local draft preview')}</p><h2>{draft.name || tr('اسمك', 'Your name')}</h2></div><button className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button></header>{draft.cover && <img className="dashboard-preview-cover" src={draft.cover} alt=""/>}<div className="dashboard-preview-body">{draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}<p className="dashboard-preview-title">{draft.title}</p>{draft.bio && <p>{draft.bio}</p>}<div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill) => <span key={skill}>{skill}</span>)}</div>{site && <small>{site.name}</small>}</div><footer><p className="muted">{tr('هذه معاينة للمسودة فقط. إرسالها ينشئ لقطة مراجعة مستقلة ولا ينشرها.', 'This previews only your draft. Submitting creates an independent review snapshot and does not publish it.')}</p><div><button className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button><button className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('إرسال للمراجعة', 'Submit for review')}</button></div></footer></section></div>; }
