@@ -130,7 +130,7 @@
 .export-social-card__content h2 { margin: 11px 0 5px; font-size: 57px; line-height: 1.1; }
 .export-social-card__content strong { color: #efcf83; font-size: 26px; font-weight: 500; }
 .export-social-card__content p { max-width: 680px; margin: 18px 0 0; color: #d4eadc; font-size: 20px; line-height: 1.6; }
-.export-social-card__foot { position: absolute; inset-inline-start: 67px; bottom: 46px; color: #b4d4be; font-size: 18px; direction: ltr; text-align: left; }
+.export-social-card__foot { position: absolute; inset-inline-start: auto; left: 390px; right: 67px; bottom: 46px; overflow-wrap: anywhere; color: #b4d4be; font-size: 18px; direction: ltr; text-align: left; }
 
 .export-print-sheet { display: none; }
 

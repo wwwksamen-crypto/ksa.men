@@ -978,10 +978,21 @@ export function registerOperations(app: App): void {
     const body = await input(c);
     if (typeof body.enabled !== "boolean") fail(400, "enabled must be boolean", "invalid_input");
     const key = text(c.req.param("key"), "service key", { max: 96 });
-    const result = await run(c, "UPDATE services SET enabled=? WHERE key=?", body.enabled ? 1 : 0, key);
+    const current = await one<{policy:string}>(c,"SELECT policy FROM services WHERE key=?",key);
+    if(!current)fail(404,"Service not found","not_found");
+    const parsedPolicy=parseJson(current.policy);
+    const policy:Record<string,unknown> = parsedPolicy&&typeof parsedPolicy==='object'&&!Array.isArray(parsedPolicy)?parsedPolicy as Record<string,unknown>:{};
+    if(body.policy!==undefined){
+      if(!body.policy||typeof body.policy!=="object"||Array.isArray(body.policy))fail(400,"policy must be an object","invalid_input");
+      const proposed=body.policy as Record<string,unknown>;
+      for(const source of ['trial','subscription','grant','points']){
+        if(proposed[source]!==undefined){if(typeof proposed[source]!=="boolean")fail(400,"Policy source must be boolean","invalid_input");policy[source]=proposed[source];}
+      }
+    }
+    const result = await run(c, "UPDATE services SET enabled=?,policy=? WHERE key=?", body.enabled ? 1 : 0, JSON.stringify(policy), key);
     if (!changed(result)) fail(404, "Service not found", "not_found");
-    await audit(c, "service.platform", `service:${key}`, JSON.stringify({ enabled: body.enabled }));
-    return c.json({ service: { key, enabled: body.enabled } });
+    await audit(c, "service.platform", `service:${key}`, JSON.stringify({ enabled: body.enabled,policy }));
+    return c.json({ service: { key, enabled: body.enabled,policy } });
   });
 
   app.get("/api/admin/names", async (c) => {

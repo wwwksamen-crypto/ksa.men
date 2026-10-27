@@ -157,6 +157,7 @@ type Conversation = {
 type Message = { id: string; body: string; sender_id: number; created_at: number };
 type ConversationDetail = Conversation & { messages?: Message[] };
 type QuickMode = 'professional' | 'business' | 'quick';
+type TranslationTarget = 'ar' | 'en';
 type Quality = { score: number; recommendations: string[]; completed: string[] };
 type IdentityInsights = {
   siteId?: string | null;
@@ -198,6 +199,8 @@ const editorSections = [
 
 type EditorSection = (typeof editorSections)[number][0];
 
+const notificationSoundStorageKey = 'ksa-men:dashboard-notification-sound';
+type AudioContextConstructor = new () => AudioContext;
 const blankItem = (): ResumeItem => ({ title: '', organization: '', start: '', end: '', description: '' });
 const emptyDraft = (): ProfileDraft => ({
   name: '', title: '', bio: '', email: '', phone: '', whatsapp: '', city: '', country: 'المملكة العربية السعودية',
@@ -209,6 +212,13 @@ const emptyDraft = (): ProfileDraft => ({
 function asArray<T>(value: unknown): T[] { return Array.isArray(value) ? value as T[] : []; }
 function asText(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function asBool(value: unknown, fallback: boolean): boolean { return typeof value === 'boolean' ? value : fallback; }
+function retentionDays(value: unknown): number | null {
+  const days = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+function browserAudioContext(): AudioContextConstructor | undefined {
+  return window.AudioContext ?? (window as typeof window & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
+}
 function errorMessage(error: unknown): string {
   if (error && typeof error === 'object' && 'error' in error && typeof (error as { error?: unknown }).error === 'string') return (error as { error: string }).error;
   if (error instanceof Error) return error.message;
@@ -329,6 +339,7 @@ export default function Dashboard() {
   const [transferForm, setTransferForm] = useState({ recipient: new URLSearchParams(location.search).get('recipient')||'', amount: '' });
   const [redeemDays, setRedeemDays] = useState('1');
   const [translationConsent, setTranslationConsent] = useState(false);
+  const [translationTarget, setTranslationTarget] = useState<TranslationTarget>('en');
   const [nameTransfer, setNameTransfer] = useState({ name: '', recipient: '', confirmed: false });
   const [lockForm, setLockForm] = useState({ enabled: false, password: '', message: '' });
   const [pin, setPinValue] = useState('');
@@ -338,11 +349,14 @@ export default function Dashboard() {
   const [quickFields, setQuickFields] = useState<Record<string, boolean>>({ name: true, title: true, whatsapp: false, email: false, site: true });
   const [quickDays, setQuickDays] = useState('7');
   const [quickMode, setQuickMode] = useState<QuickMode>('professional');
-  const [exportLanguage, setExportLanguage] = useState<'ar' | 'en'>(lang);
+  const [exportLanguage, setExportLanguage] = useState<'ar' | 'en'>('ar');
   const [identityInsights, setIdentityInsights] = useState<IdentityInsights | null>(null);
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
+  const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
+    try { return window.localStorage.getItem(notificationSoundStorageKey) === 'on'; } catch { return false; }
+  });
 
   const draftRef = useRef(draft);
   const siteIdRef = useRef<string | null>(null);
@@ -350,15 +364,74 @@ export default function Dashboard() {
   const revisionRef = useRef(0);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
+  const notificationSoundRef = useRef(notificationSoundEnabled);
+  const notificationAudioRef = useRef<AudioContext | null>(null);
+  const seenNotificationIdsRef = useRef<Set<string> | null>(null);
 
   const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
   const locale = lang === 'ar' ? 'ar-SA' : 'en-US';
+
+  const playNotificationChime = useCallback(() => {
+    const context = notificationAudioRef.current;
+    if (!notificationSoundRef.current || !context || context.state !== 'running') return;
+    try {
+      const startedAt = context.currentTime;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, startedAt);
+      oscillator.frequency.exponentialRampToValueAtTime(1320, startedAt + 0.14);
+      gain.gain.setValueAtTime(0.0001, startedAt);
+      gain.gain.exponentialRampToValueAtTime(0.07, startedAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startedAt + 0.22);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(startedAt);
+      oscillator.stop(startedAt + 0.23);
+    } catch { /* Sound is optional and must never interrupt notification polling. */ }
+  }, []);
+
+  const observeNotifications = useCallback((items: Notification[]) => {
+    const nextIds = new Set(items.map((item) => item.id).filter(Boolean));
+    const previousIds = seenNotificationIdsRef.current;
+    if (previousIds && Array.from(nextIds).some((id) => !previousIds.has(id))) playNotificationChime();
+    seenNotificationIdsRef.current = nextIds;
+  }, [playNotificationChime]);
+
+  const setNotificationSound = async (enabled: boolean) => {
+    if (!enabled) {
+      notificationSoundRef.current = false;
+      setNotificationSoundEnabled(false);
+      try { window.localStorage.setItem(notificationSoundStorageKey, 'off'); } catch { /* Local preference is optional. */ }
+      return;
+    }
+    try {
+      const AudioContext = browserAudioContext();
+      if (!AudioContext) throw new Error('unsupported');
+      const context = notificationAudioRef.current ?? new AudioContext();
+      notificationAudioRef.current = context;
+      if (context.state === 'suspended') await context.resume();
+      if (context.state !== 'running') throw new Error('not-running');
+      notificationSoundRef.current = true;
+      setNotificationSoundEnabled(true);
+      try { window.localStorage.setItem(notificationSoundStorageKey, 'on'); } catch { /* Local preference is optional. */ }
+      notify(tr('تم تفعيل صوت التنبيه محلياً لهذا المتصفح.', 'Notification sound is enabled locally in this browser.'));
+    } catch {
+      notificationSoundRef.current = false;
+      setNotificationSoundEnabled(false);
+      try { window.localStorage.setItem(notificationSoundStorageKey, 'off'); } catch { /* Local preference is optional. */ }
+      notify(tr('تعذر تفعيل الصوت من المتصفح. بقي الخيار متوقفاً.', 'The browser could not enable sound. The option remains off.'));
+    }
+  };
+
+  useEffect(() => { notificationSoundRef.current = notificationSoundEnabled; }, [notificationSoundEnabled]);
+  useEffect(() => () => { void notificationAudioRef.current?.close(); }, []);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setLoadError('');
     try {
       const data = await api<DashboardData>('/api/dashboard');
+      observeNotifications(asArray<Notification>(data.notifications));
       setDashboard(data);
       const receivedServices = asArray<Service>(data.services);
       if (receivedServices.length) setServices(receivedServices);
@@ -374,7 +447,7 @@ export default function Dashboard() {
     }
   // openSite is stable enough for initial fetch; its declaration is hoisted in this closure at execution time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [observeNotifications]);
 
   const loadServices = useCallback(async () => {
     try {
@@ -390,6 +463,16 @@ export default function Dashboard() {
       setMessagesData({ ...response, conversations: asArray<Conversation>(response.conversations).map(normalizeConversation) });
     } catch (error) { if (activeTab === 'messages') notify(errorMessage(error)); }
   }, [activeTab, notify]);
+
+  const loadNotifications = useCallback(async () => {
+    try {
+      const response = await api<Pick<DashboardData, 'notifications'>>('/api/dashboard');
+      const nextNotifications = asArray<Notification>(response.notifications);
+      observeNotifications(nextNotifications);
+      // Notification polling intentionally merges only notifications: it never replaces an in-progress draft.
+      setDashboard((current) => current ? { ...current, notifications: nextNotifications } : current);
+    } catch { /* A background refresh must not disrupt the current dashboard. */ }
+  }, [observeNotifications]);
 
   const openSite = useCallback(async (summary: Site) => {
     siteIdRef.current = summary.id;
@@ -430,11 +513,33 @@ export default function Dashboard() {
 
   useEffect(() => { void loadDashboard(); void loadServices(); }, [loadDashboard, loadServices]);
   useEffect(() => { if (activeTab === 'messages') void loadMessages(); }, [activeTab, loadMessages]);
+  useEffect(() => {
+    let interval: number | undefined;
+    const stop = () => {
+      if (interval !== undefined) window.clearInterval(interval);
+      interval = undefined;
+    };
+    const start = () => {
+      if (document.visibilityState !== 'visible' || interval !== undefined) return;
+      interval = window.setInterval(() => {
+        if (document.visibilityState === 'visible') void loadNotifications();
+      }, 30_000);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void loadNotifications();
+        start();
+      } else stop();
+    };
+    start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVisibilityChange); };
+  }, [loadNotifications]);
   const loadIdentityInsights = useCallback(async () => {
     if (!activeSite) { setIdentityInsights(null); return; }
     setInsightsLoading(true);
     setInsightsError('');
-    try { setIdentityInsights(await api<IdentityInsights>('/api/analytics')); }
+    try { setIdentityInsights(await api<IdentityInsights>(`/api/analytics?siteId=${encodeURIComponent(activeSite.id)}`)); }
     catch (error) { setIdentityInsights(null); setInsightsError(errorMessage(error)); }
     finally { setInsightsLoading(false); }
   }, [activeSite?.id]);
@@ -601,31 +706,42 @@ export default function Dashboard() {
   const translateDraft = async () => {
     if (!activeSite || !translationConsent) return;
     try {
-      const response = await api<{ draft?: ProfileDraft; site?: Site; translations?: unknown; version?: number; draft_version?: number }>(`/api/translate`, { method: 'POST', body: JSON.stringify({ siteId: activeSite.id, target: 'en', consent: true }) });
+      const response = await api<{ draft?: ProfileDraft; site?: Site; version?: number; draft_version?: number }>('/api/translate', {
+        method: 'POST',
+        body: JSON.stringify({ siteId: activeSite.id, target: translationTarget, consent: true }),
+      });
       const received = response.draft ?? response.site?.draft;
-      if (!received) {
-        await openSite(activeSite);
-        const verified = draftRef.current.translations?.en;
-        if (!verified) throw new Error(tr('لم يعُد الخادم بمسودة مترجمة قابلة للتحقق.', 'The server did not return a verifiable translated draft.'));
-      } else {
-        const nextDraft = parseDraft(received);
-        if (!nextDraft.translations?.en) throw new Error(tr('لم تتضمن الاستجابة الترجمة المحفوظة.', 'The response did not include saved translations.'));
-        const nextVersion = Number(response.version ?? response.draft_version ?? response.site?.draft_version ?? response.site?.version);
-        if (Number.isFinite(nextVersion) && nextVersion >= 0) versionRef.current = nextVersion;
-        setActiveSite((current) => current ? { ...current, ...(response.site ?? {}), draft_version: Number.isFinite(nextVersion) ? nextVersion : current.draft_version } : current);
-        setDraft(nextDraft);
-        draftRef.current = nextDraft;
-        dirtyRef.current = false;
-        setSaveState('saved');
-      }
-      notify(tr('تم التحقق من حفظ الترجمة الإنجليزية في المسودة.', 'English translation was verified in the draft.'));
+      if (!received) throw new Error(tr('لم يعُد الخادم بمسودة مترجمة قابلة للتحقق.', 'The server did not return a verifiable translated draft.'));
+      const returnedDraft = parseDraft(received);
+      const storedTranslation = returnedDraft.translations?.[translationTarget];
+      if (!storedTranslation) throw new Error(tr('لم تتضمن الاستجابة الترجمة المحفوظة للاتجاه المحدد.', 'The response did not include the saved translation for the selected direction.'));
+      const nextVersion = Number(response.version ?? response.draft_version ?? response.site?.draft_version ?? response.site?.version);
+      if (Number.isFinite(nextVersion) && nextVersion >= 0) versionRef.current = nextVersion;
+      const wasDirty = dirtyRef.current;
+      const mergedDraft = {
+        ...draftRef.current,
+        translations: { ...draftRef.current.translations, [translationTarget]: storedTranslation },
+      };
+      // Preserve the main Arabic draft and any unsaved edits; accept only the server-returned target variant.
+      setDraft(mergedDraft);
+      draftRef.current = mergedDraft;
+      if (!wasDirty) setSaveState('saved');
+      setActiveSite((current) => {
+        if (!current) return current;
+        const { draft: _serverDraft, ...siteUpdate } = response.site ?? {};
+        return { ...current, ...siteUpdate, draft_version: Number.isFinite(nextVersion) ? nextVersion : current.draft_version };
+      });
+      notify(translationTarget === 'en'
+        ? tr('تم التحقق من حفظ الترجمة الإنجليزية في المسودة.', 'English translation was verified in the draft.')
+        : tr('تم التحقق من حفظ الترجمة العربية في المسودة.', 'Arabic translation was verified in the draft.'));
     } catch (error) { notify(errorMessage(error)); }
   };
 
-  const updateSavedTranslation = useCallback((patch: Partial<ProfileDraft>) => {
+  const updateSavedTranslation = useCallback((target: TranslationTarget, patch: Partial<ProfileDraft>) => {
     changeDraft((current) => {
-      const saved = parseDraft(current.translations?.en ?? current);
-      return { ...current, translations: { ...current.translations, en: { ...saved, ...patch } } };
+      const saved = current.translations?.[target];
+      if (!saved) return current;
+      return { ...current, translations: { ...current.translations, [target]: { ...saved, ...patch } } };
     });
   }, [changeDraft]);
 
@@ -660,10 +776,19 @@ export default function Dashboard() {
 
   const openConversation = async (conversation: Conversation) => {
     try {
-      const response = await api<ConversationDetail | { conversation?: Conversation; messages?: Message[] }>(`/api/conversations/${encodeURIComponent(conversation.id)}`);
-      const wrapped = response as { conversation?: Conversation; messages?: Message[] };
-      const detail = wrapped.conversation ?? response as ConversationDetail;
-      const messages = wrapped.conversation ? wrapped.messages : (detail as ConversationDetail).messages;
+      // The shared client API helper intentionally returns only an Error message. Read this GET locally so 410 has an explicit, truthful UI state.
+      const response = await fetch(`/api/conversations/${encodeURIComponent(conversation.id)}`, { credentials: 'same-origin', cache: 'no-store' });
+      const payload = await response.json().catch(() => ({})) as { error?: unknown; message?: unknown; conversation?: Conversation; messages?: Message[] };
+      if (response.status === 410) {
+        setSelectedConversation({ ...normalizeConversation({ ...conversation, status: 'expired' }), messages: [] });
+        setMessageBody('');
+        await loadMessages();
+        notify(tr('انتهت الجلسة ولم يعد الخادم يتيح سجل الرسائل. لا يعني ذلك حذفاً أو تطهيراً فورياً للبيانات.', 'The session expired and the server no longer makes message history available. This does not promise immediate data deletion or purging.'));
+        return;
+      }
+      if (!response.ok) throw new Error(asText(payload.error) || asText(payload.message) || tr('تعذر فتح الجلسة.', 'Could not open the session.'));
+      const detail = payload.conversation ?? payload as ConversationDetail;
+      const messages = payload.conversation ? payload.messages : (detail as ConversationDetail).messages;
       setSelectedConversation({ ...normalizeConversation(detail), messages: asArray<Message>(messages).map(normalizeMessage) });
     } catch (error) { notify(errorMessage(error)); }
   };
@@ -676,7 +801,15 @@ export default function Dashboard() {
       setMessageBody('');
       await openConversation(selectedConversation);
       await loadMessages();
-    } catch (error) { notify(errorMessage(error)); }
+    } catch (error) {
+      const message = errorMessage(error);
+      if (/conversation (?:has )?(?:expired|ended)/i.test(message)) {
+        setSelectedConversation((current) => current ? { ...current, status: 'expired', messages: [] } : current);
+        setMessageBody('');
+        void loadMessages();
+        notify(tr('لم تعد هذه الجلسة متاحة للمراسلة. لا يعني ذلك حذفاً أو تطهيراً فورياً للبيانات.', 'This session is no longer available for messaging. This does not promise immediate data deletion or purging.'));
+      } else notify(message);
+    }
   };
   const endConversation = async () => {
     if (!selectedConversation || !window.confirm(tr('سيُنهى التراسل فوراً، ويتطلب الاستئناف طلب تواصل جديداً. هل تريد المتابعة؟', 'Messaging ends immediately and resuming requires a new contact request. Continue?'))) return;
@@ -770,6 +903,7 @@ export default function Dashboard() {
   const analyticsEntries = siteAnalytics && typeof siteAnalytics === 'object' && !Array.isArray(siteAnalytics) ? Object.entries(siteAnalytics) : [];
   const reviews = asArray<Record<string, unknown>>(dashboard?.reviews).filter((review) => !activeSite || review.site_id === activeSite.id);
   const notifications = asArray<Notification>(dashboard?.notifications);
+  const selectedTranslation = draft.translations?.[translationTarget];
   const pendingTransfers = asArray<Record<string, unknown>>(dashboard?.transfers ?? dashboard?.nameTransfers).filter((item) => item.status === 'pending');
   const handovers = asArray<Record<string, unknown>>(dashboard?.handovers).filter((item) => item.status === 'pending');
   const conversations = asArray<Conversation>(messagesData?.conversations);
@@ -880,13 +1014,35 @@ export default function Dashboard() {
           <article className="card dashboard-quality"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('جودة الهوية', 'Identity quality')}</h2></div><button className="dashboard-icon-button" onClick={() => void loadIdentityInsights()} disabled={insightsLoading} aria-label={tr('تحديث تقييم الجودة', 'Refresh quality assessment')}><RefreshCw className={insightsLoading ? 'spin' : ''} size={16}/></button></div>{insightsError ? <p className="dashboard-error">{insightsError}</p> : serverQuality ? <><div className="dashboard-quality-score"><strong>{serverQuality.score}%</strong><span>{tr('تقييم خادمي للمسودة', 'Server-assessed draft')}</span></div><ul>{serverQuality.completed.map((item) => <li className="is-ready" key={item}><Check size={16}/><span>{qualityCopy(item, tr)}</span></li>)}{serverQuality.recommendations.map((item) => <li key={item}><CircleHelp size={16}/><span>{qualityCopy(item, tr)}</span></li>)}</ul></> : <EmptyInline text={insightsLoading ? tr('نحدّث التقييم من الخادم…', 'Refreshing the server assessment…') : tr('لا تتوفر نتيجة جودة معتمدة للموقع المحدد.', 'No server-approved quality result is available for the selected site.')} />}</article>
           <article className="card dashboard-opportunity"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('مؤشر الفرص', 'Opportunity indicator')}</h2></div></div>{serverQuality ? <><strong>{serverQuality.score}%</strong><div className="dashboard-progress"><span style={{ width: `${serverQuality.score}%` }}/></div><p className="muted">{tr('مؤشر إرشادي لجاهزية ملفك مبني على تقييم الجودة الخادمي؛ لا يضمن وظيفة أو نتيجة خارج المنصة.', 'A guidance signal for profile readiness based on the server quality assessment; it does not guarantee a job or external outcome.')}</p></> : <EmptyInline text={tr('يظهر عند توفر تقييم الجودة الفعلي.', 'Shown when a live quality assessment is available.')} />}</article>
         </section>
-        <section className="card dashboard-translation"><div className="dashboard-section-heading"><div><Languages size={18}/><h2>{tr('الترجمة المحفوظة', 'Saved translation')}</h2></div>{draft.translations?.en && <span className="dashboard-status">{tr('الإنجليزية محفوظة', 'English saved')}</span>}</div>{!draft.translations?.en ? <><p className="muted">{tr('بموافقتك، يُرسل محتوى مسودتك إلى خدمة الترجمة المهيأة من المنصة لحفظ نسخة إنجليزية قابلة للتعديل. لن ندّعي نجاحها ما لم تعُد المسودة المترجمة من الخادم.', 'With your consent, your draft content is sent to the platform-configured translation service to save an editable English version. Success is only shown when the translated draft returns from the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)} />{tr('أوافق على معالجة محتوى مسودتي لترجمته إلى الإنجليزية.', 'I consent to processing my draft content for English translation.')}</label><button className="button" disabled={!activeSite || !translationConsent} onClick={() => void translateDraft()}><Languages size={17}/>{tr('ترجمة وحفظ الإنجليزية', 'Translate and save English')}</button></> : <TranslationEditor translation={parseDraft(draft.translations.en)} onChange={updateSavedTranslation} tr={tr} />}</section>
-        <section className="card dashboard-exports"><div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('التصديرات الفعلية', 'Live exports')}</h2></div></div><p className="muted">{tr('اختَر مصدر التصدير. النسخة الإنجليزية لا تتاح هنا إلا بعد حفظها وتظل قابلة للتعديل أعلاه.', 'Choose an export source. English is available here only after it has been saved and remains editable above.')}</p><div className="dashboard-export-language" role="group" aria-label={tr('لغة التصدير', 'Export language')}><button className={`button button--quiet ${exportLanguage === 'ar' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'ar'} onClick={() => setExportLanguage('ar')}>العربية</button><button className={`button button--quiet ${exportLanguage === 'en' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'en'} onClick={() => setExportLanguage('en')}>English {draft.translations?.en ? <Check size={15}/> : <Lock size={15}/>}</button></div><div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => activeSite && (exportLanguage === 'ar' || draft.translations?.en) ? <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite.id)}&lang=${exportLanguage}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('سيرة ATS', 'ATS résumé') : kind === 'profile' ? tr('PDF تعريفي', 'Identity PDF') : kind.toUpperCase()}<ExternalLink size={13}/></a> : <span className="button button--quiet dashboard-export-disabled" key={kind}><Lock size={16}/>{tr('احفظ الترجمة أولاً', 'Save translation first')}</span>)}</div></section>
+        <section className="card dashboard-translation">
+          <div className="dashboard-section-heading"><div><Languages size={18}/><h2>{tr('الترجمة المحفوظة', 'Saved translation')}</h2></div>{selectedTranslation && <span className="dashboard-status">{translationTarget === 'en' ? tr('الإنجليزية محفوظة', 'English saved') : tr('العربية محفوظة', 'Arabic saved')}</span>}</div>
+          <p className="muted">{tr('يبقى محرر المسودة العربية الرئيسي أعلاه كما هو؛ هذا القسم يحفظ ويحرر نسخة الهدف المنفصلة فقط.', 'The main Arabic draft editor above remains unchanged; this section saves and edits only a separate target version.')}</p>
+          <div className="dashboard-translation-direction" role="group" aria-label={tr('اتجاه الترجمة', 'Translation direction')}>
+            <button className={`button button--quiet ${translationTarget === 'en' ? 'is-active' : ''}`} aria-pressed={translationTarget === 'en'} onClick={() => setTranslationTarget('en')}>{tr('العربية ← الإنجليزية', 'Arabic → English')}</button>
+            <button className={`button button--quiet ${translationTarget === 'ar' ? 'is-active' : ''}`} aria-pressed={translationTarget === 'ar'} onClick={() => setTranslationTarget('ar')}>{tr('الإنجليزية ← العربية', 'English → Arabic')}</button>
+          </div>
+          {!selectedTranslation ? <>
+            <p className="muted">{translationTarget === 'en'
+              ? tr('بموافقتك، يُرسل محتوى المسودة إلى خدمة الترجمة المهيأة من المنصة لحفظ نسخة إنجليزية قابلة للتعديل. لا نعرض محتوى مترجماً إلا إذا أعاده الخادم وحفظه.', 'With your consent, draft content is sent to the platform-configured translation service to save an editable English version. No translated content is shown unless the server returns and saves it.')
+              : tr('بموافقتك، يُرسل المصدر المتاح إلى خدمة الترجمة المهيأة من المنصة لحفظ نسخة عربية منفصلة قابلة للتعديل. لا نعرض محتوى مترجماً إلا إذا أعاده الخادم وحفظه.', 'With your consent, the available source is sent to the platform-configured translation service to save a separate editable Arabic version. No translated content is shown unless the server returns and saves it.')}</p>
+            <label className="dashboard-check"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)} />{tr('أوافق على معالجة محتوى المسودة للترجمة في الاتجاه المحدد.', 'I consent to processing draft content for the selected translation direction.')}</label>
+            <button className="button" disabled={!activeSite || !translationConsent} onClick={() => void translateDraft()}><Languages size={17}/>{translationTarget === 'en' ? tr('ترجمة وحفظ الإنجليزية', 'Translate and save English') : tr('ترجمة وحفظ العربية', 'Translate and save Arabic')}</button>
+          </> : <TranslationEditor target={translationTarget} translation={parseDraft(selectedTranslation)} onChange={(patch) => updateSavedTranslation(translationTarget, patch)} tr={tr} />}
+        </section>
+        <section className="card dashboard-exports">
+          <div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('التصديرات الفعلية', 'Live exports')}</h2></div></div>
+          <p className="muted">{tr('اختَر مصدر التصدير. النسخة الإنجليزية لا تتاح هنا إلا بعد حفظها وتظل قابلة للتعديل أعلاه.', 'Choose an export source. English is available here only after it has been saved and remains editable above.')}</p>
+          <div className="dashboard-export-language" role="group" aria-label={tr('لغة التصدير', 'Export language')}>
+            <button className={`button button--quiet ${exportLanguage === 'ar' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'ar'} onClick={() => setExportLanguage('ar')}>العربية</button>
+            <button className={`button button--quiet ${exportLanguage === 'en' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'en'} disabled={!draft.translations?.en} onClick={() => setExportLanguage('en')}>English {draft.translations?.en ? <Check size={15}/> : <Lock size={15}/>}</button>
+          </div>
+          <div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => activeSite && (exportLanguage === 'ar' || draft.translations?.en) ? <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite.id)}&lang=${exportLanguage}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('سيرة ATS', 'ATS résumé') : kind === 'profile' ? tr('PDF تعريفي', 'Identity PDF') : kind.toUpperCase()}<ExternalLink size={13}/></a> : <span className="button button--quiet dashboard-export-disabled" key={kind}><Lock size={16}/>{tr('احفظ الترجمة أولاً', 'Save translation first')}</span>)}</div>
+        </section>
         <section className="dashboard-services-list card"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('إتاحة الخدمات', 'Service availability')}</h2></div><button className="button button--quiet" onClick={() => void loadServices()}><RefreshCw size={15}/>{tr('تحديث', 'Refresh')}</button></div>{services.length ? <div className="dashboard-service-grid">{services.map((service) => { const enabled = Boolean(service.enabled); const entitled = service.entitled !== false; return <article key={service.key} className={!enabled || !entitled ? 'is-unavailable' : ''}><div><strong>{lang === 'ar' ? service.name_ar || service.key : service.name_en || service.key}</strong><small>{!enabled ? tr('معلّقة على مستوى المنصة', 'Suspended platform-wide') : !entitled ? tr('تتطلب استحقاقاً', 'Entitlement required') : tr('متاحة لحسابك', 'Available to your account')}</small></div><span>{enabled && entitled ? <Check size={17}/> : <Lock size={16}/>}</span></article>; })}</div> : <EmptyInline text={tr('لا توجد حالة خدمات مؤكدة من الخادم حالياً.', 'No server-confirmed service status is available yet.')} />}</section>
         <section className="dashboard-insights-grid"><article className="card"><div className="dashboard-section-heading"><div><BookOpen size={18}/><h2>{tr('قياسات الحضور', 'Presence measurements')}</h2></div></div>{presenceMeasurements.length ? <dl className="dashboard-metrics">{presenceMeasurements.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'number' ? value.toLocaleString(locale) : String(value)}</dd></div>)}</dl> : <EmptyInline text={tr('لا توجد قياسات مسجلة بعد. لا نعرض تقديرات كأنها قياسات.', 'No measurements are recorded yet. Estimates are not shown as measurements.')} />}</article><QuickLinkPanel mode={quickMode} setMode={setQuickMode} fields={quickFields} setFields={setQuickFields} days={quickDays} setDays={setQuickDays} activeLink={quickLink} existing={existingQuickLinks} onCreate={createQuickLink} onRevoke={revokeQuickLink} tr={tr} /></section>
       </section>}
 
-      {activeTab === 'messages' && <MessagesPanel tr={tr} userId={numericId(user?.id)} requests={requests} blocks={asArray<Record<string, unknown>>(messagesData?.blocks)} conversations={conversations} selected={selectedConversation} recipient={messageRecipient} setRecipient={setMessageRecipient} body={messageBody} setBody={setMessageBody} onRequest={requestContact} onDecision={decideContact} onOpen={openConversation} onSend={sendMessage} onEmoji={(emoji) => setMessageBody((current) => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${emoji}`.slice(0, 1_000))} onEnd={endConversation} onBlock={blockConversationUser} onReport={reportConversation} expired={sessionExpired} locale={locale} />}
+      {activeTab === 'messages' && <MessagesPanel tr={tr} userId={numericId(user?.id)} requests={requests} blocks={asArray<Record<string, unknown>>(messagesData?.blocks)} conversations={conversations} retention={messagesData?.retention} selected={selectedConversation} recipient={messageRecipient} setRecipient={setMessageRecipient} body={messageBody} setBody={setMessageBody} onRequest={requestContact} onDecision={decideContact} onOpen={openConversation} onSend={sendMessage} onEmoji={(emoji) => setMessageBody((current) => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${emoji}`.slice(0, 1_000))} onEnd={endConversation} onBlock={blockConversationUser} onReport={reportConversation} expired={sessionExpired} locale={locale} />}
 
       {activeTab === 'subscription' && <section className="dashboard-subscription stack">
         <section className="card dashboard-entitlement"><div><p className="dashboard-kicker"><CreditCard size={15}/>{tr('الاستحقاق', 'Entitlement')}</p><h2>{tr('التجربة والاشتراك', 'Trial and subscription')}</h2><p className="muted">{tr('يبقى موقعك الأساسي وبياناته وQR متاحين بعد انتهاء التجربة ما لم تعلّقه الإدارة. الخدمات الإضافية تتبع الاستحقاق الفعلي.', 'Your core site, data, and QR remain available after trial expiration unless administration suspends it. Additional services follow actual entitlement.')}</p></div><dl><div><dt>{tr('نهاية التجربة', 'Trial end')}</dt><dd>{formatDate(Number(user?.trial_until), locale)}</dd></div><div><dt>{tr('نهاية الاستحقاق', 'Entitlement end')}</dt><dd>{formatDate(Number(user?.entitlement_until), locale)}</dd></div></dl></section>
@@ -895,6 +1051,7 @@ export default function Dashboard() {
       </section>}
 
       {activeTab === 'settings' && <section className="dashboard-settings stack">
+        <section className="card dashboard-notification-sound"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('صوت التنبيهات', 'Notification sound')}</h2></div></div><p className="muted">{tr('خيار محلي لهذا المتصفح، متوقف افتراضياً. يتطلب التفعيل تفاعلك لتهيئة الصوت؛ لا يُرسل هذا التفضيل إلى الخادم.', 'A local preference for this browser, off by default. Enabling requires your interaction to initialize audio; this preference is not sent to the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={notificationSoundEnabled} onChange={(event) => void setNotificationSound(event.target.checked)}/>{tr('تشغيل نغمة للتنبيهات الجديدة فقط', 'Play a chime only for newly observed notifications')}</label></section>
         <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
         <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
         <section className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('نقل الاسم المميز', 'Distinctive name transfer')}</h2></div></div><p className="muted">{tr('يُنقل الاسم فقط؛ لا تنتقل المسودة أو المحتوى أو الصور أو روابط QR تلقائياً، وقد تتأثر الروابط القديمة.', 'Only the name transfers. Draft, content, images, and QR links do not transfer automatically, and old links may be affected.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الاسم المملوك', 'Owned name')}</span><input className="field" value={nameTransfer.name} onChange={(event) => setNameTransfer({ ...nameTransfer, name: event.target.value })}/></label><label><span>{tr('المستفيد (C# أو اسم)', 'Recipient (C# or name)')}</span><input className="field" value={nameTransfer.recipient} onChange={(event) => setNameTransfer({ ...nameTransfer, recipient: event.target.value })}/></label></div><label className="dashboard-check"><input type="checkbox" checked={nameTransfer.confirmed} onChange={(event) => setNameTransfer({ ...nameTransfer, confirmed: event.target.checked })}/>{tr('أفهم أثر النقل وفصل الاسم عن بيانات الموقع.', 'I understand the transfer consequences and separation from site data.')}</label><button className="button" disabled={!nameTransfer.confirmed} onClick={() => void beginNameTransfer()}><ArrowLeftRight size={16}/>{tr('إنشاء طلب نقل', 'Create transfer request')}</button>{pendingTransfers.length > 0 && <div className="dashboard-pending-list">{pendingTransfers.map((transfer, index) => <div key={String(transfer.id ?? index)}><span>{String(transfer.name ?? tr('اسم مميز', 'Distinctive name'))}</span><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(transfer.id))}>{tr('قبول النقل', 'Accept transfer')}</button></div>)}</div>}</section>
@@ -952,14 +1109,44 @@ function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activ
   const links = activeLink ? [activeLink] : existing.filter((item) => !item.revoked);
   return <article className="card dashboard-quick-link"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('بطاقة ورابط التعارف', 'Introduction card and link')}</h2></div></div><p className="muted">{tr('اختر وضعاً ثم راجع الحقول المشتركة. الرابط مستقل عن خصوصية موقعك الأساسي ويمكن إلغاؤه فوراً.', 'Choose a mode, then review the shared fields. The link is independent of core-site privacy and can be revoked immediately.')}</p><div className="dashboard-intro-modes" role="group" aria-label={tr('وضع التعارف', 'Introduction mode')}>{modes.map((item) => <button key={item.key} className={`button button--quiet ${mode === item.key ? 'is-active' : ''}`} aria-pressed={mode === item.key} onClick={() => chooseMode(item)}><UsersRound size={15}/>{tr(item.ar, item.en)}</button>)}</div><div className="dashboard-quick-fields">{Object.keys(fields).map((key) => <label key={key}><input type="checkbox" checked={fields[key]} onChange={(event) => setFields({ ...fields, [key]: event.target.checked })}/>{tr(...labels[key])}</label>)}</div><div className="dashboard-inline-form"><input className="field" type="number" min="1" value={days} onChange={(event) => setDays(event.target.value)} aria-label={tr('مدة الصلاحية بالأيام', 'Lifetime in days')}/><button className="button" onClick={onCreate}><Link2 size={16}/>{tr('إنشاء الرابط', 'Create link')}</button></div>{links.map((link) => <div className="dashboard-created-link" key={link.id}><a href={link.url} target="_blank" rel="noreferrer">{link.url || link.id}</a><button className="dashboard-icon-button" onClick={() => onRevoke(link.id)} aria-label={tr('إلغاء الرابط', 'Revoke link')}><Ban size={16}/></button></div>)}</article>;
 }
-function MessagesPanel({ tr, userId, requests, blocks, conversations, selected, recipient, setRecipient, body, setBody, onRequest, onDecision, onOpen, onSend, onEmoji, onEnd, onBlock, onReport, expired, locale }: { tr: (ar: string, en: string) => string; userId?: number; requests: Record<string, unknown>[]; blocks: Record<string, unknown>[]; conversations: Conversation[]; selected: ConversationDetail | null; recipient: string; setRecipient: (value: string) => void; body: string; setBody: (value: string) => void; onRequest: () => void; onDecision: (id: string, accept: boolean) => void; onOpen: (conversation: Conversation) => void; onSend: () => void; onEmoji: (emoji: string) => void; onEnd: () => void; onBlock: () => void; onReport: () => void; expired: boolean; locale: string }) {
+function MessageRetention({ retention, tr }: { retention: unknown; tr: (ar: string, en: string) => string }) {
+  const values = retention && typeof retention === 'object' && !Array.isArray(retention) ? retention as Record<string, unknown> : {};
+  const periods = [
+    { key: 'messagesDays', ar: 'الرسائل', en: 'Messages' },
+    { key: 'reportDays', ar: 'أدلة البلاغات', en: 'Report evidence' },
+    { key: 'authDays', ar: 'بيانات التحقق', en: 'Authentication data' },
+  ].flatMap(({ key, ar, en }) => {
+    const days = retentionDays(values[key]);
+    return days === null ? [] : [{ key, label: tr(ar, en), days }];
+  });
+  return <section className="card dashboard-message-retention"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('فترات الاحتفاظ', 'Retention periods')}</h2></div></div>{periods.length ? <dl>{periods.map((period) => <div key={period.key}><dt>{period.label}</dt><dd>{period.days} {tr('يوماً', 'days')}</dd></div>)}</dl> : <p className="muted">{tr('لم يُعد الخادم حالياً فترة احتفاظ قابلة للعرض.', 'The server did not return a displayable retention period.')}</p>}<p className="dashboard-retention-note">{tr('هذه الفترات كما يعيدها الخادم. انتهاء الجلسة أو عدم إتاحة سجلها لا يعني وعداً بالحذف أو التطهير الفوري للبيانات.', 'These periods are returned by the server. Session expiration or unavailable history does not promise immediate data deletion or purging.')}</p></section>;
+}
+
+function MessagesPanel({ tr, userId, requests, blocks, conversations, retention, selected, recipient, setRecipient, body, setBody, onRequest, onDecision, onOpen, onSend, onEmoji, onEnd, onBlock, onReport, expired, locale }: { tr: (ar: string, en: string) => string; userId?: number; requests: Record<string, unknown>[]; blocks: Record<string, unknown>[]; conversations: Conversation[]; retention: unknown; selected: ConversationDetail | null; recipient: string; setRecipient: (value: string) => void; body: string; setBody: (value: string) => void; onRequest: () => void; onDecision: (id: string, accept: boolean) => void; onOpen: (conversation: Conversation) => void; onSend: () => void; onEmoji: (emoji: string) => void; onEnd: () => void; onBlock: () => void; onReport: () => void; expired: boolean; locale: string }) {
   const incoming = requests.filter((request) => request.status === 'pending' && numericId(request.to_id ?? request.toId) === userId);
   const outgoing = requests.filter((request) => request.status === 'pending' && numericId(request.from_id ?? request.fromId) === userId);
   const positiveEmoji = ['🙂', '😊', '👍', '🙏', '✨', '🌟', '🎉', '🤝', '💚', '❤️'];
-  return <section className="dashboard-messages"><aside className="dashboard-message-sidebar stack"><section className="card"><div className="dashboard-section-heading"><div><Send size={18}/><h2>{tr('طلب تواصل', 'Contact request')}</h2></div></div><p className="muted">{tr('لن تبدأ أي محادثة قبل قبول المستفيد الصريح. النص والرموز الإيجابية المنتقاة فقط مسموحة في الجلسة.', 'No conversation starts without explicit recipient acceptance. Only text and selected positive emoji are allowed in a session.')}</p><div className="dashboard-inline-form"><input className="field" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={tr('معرّف المستفيد C#', 'Recipient ID C#')}/><button className="button" onClick={onRequest}><Send size={16}/>{tr('إرسال', 'Send')}</button></div></section><section className="card"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('طلبات بانتظار قرارك', 'Requests awaiting you')}</h2></div></div>{incoming.length ? <div className="dashboard-request-list">{incoming.map((request, index) => <div key={String(request.id ?? index)}><div><strong>{String(request.from_name ?? request.fromName ?? request.from_id ?? '')}</strong><small>{formatDate(Number(request.created_at ?? request.createdAt), locale)}</small></div><button className="dashboard-icon-button" aria-label={tr('قبول', 'Accept')} onClick={() => onDecision(String(request.id), true)}><Check size={16}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('رفض', 'Decline')} onClick={() => onDecision(String(request.id), false)}><X size={16}/></button></div>)}</div> : <EmptyInline text={tr('لا توجد طلبات تحتاج قرارك.', 'No requests need your decision.')} />}{outgoing.length > 0 && <p className="dashboard-pending-note">{tr(`لديك ${outgoing.length} طلب/طلبات مرسلة بانتظار موافقة المستفيد.`, `You have ${outgoing.length} sent request(s) awaiting recipient approval.`)}</p>}</section><section className="card"><div className="dashboard-section-heading"><div><MessageCircle size={18}/><h2>{tr('جلساتك', 'Your sessions')}</h2></div></div>{conversations.length ? <div className="dashboard-conversation-list">{conversations.map((conversation) => <button key={conversation.id} className={selected?.id === conversation.id ? 'is-active' : ''} onClick={() => void onOpen(conversation)}><span><strong>{conversation.other_user?.name || (conversation.other_user?.id ? `C${conversation.other_user.id}` : conversation.id)}</strong><small>{conversation.status === 'active' ? tr('جلسة نشطة', 'Active session') : String(conversation.status || '')}</small></span><time>{formatDate(Number(conversation.last_activity), locale)}</time></button>)}</div> : <EmptyInline text={tr('لا توجد جلسات مراسلة.', 'No messaging sessions.')} />}</section>{blocks.length > 0 && <section className="card dashboard-block-list"><div className="dashboard-section-heading"><div><Ban size={18}/><h2>{tr('حسابات محظورة', 'Blocked accounts')}</h2></div></div>{blocks.map((block, index) => <p key={String(block.blocked_id ?? index)}>{String(block.blocked_name ?? `C${block.blocked_id ?? ''}`)}</p>)}</section>}</aside><section className="card dashboard-chat">{!selected ? <div className="dashboard-empty"><MessageCircle size={28}/><h2>{tr('اختر جلسة مراسلة', 'Choose a messaging session')}</h2><p className="muted">{tr('جلسة النصوص تنتهي بعد 24 ساعة من آخر نشاط.', 'Text-only sessions expire 24 hours after last activity.')}</p></div> : <><header className="dashboard-chat-header"><div><h2>{selected.other_user?.name || (selected.other_user?.id ? `C${selected.other_user.id}` : '')}</h2><p className={expired ? 'dashboard-error' : 'muted'}>{expired ? tr('انتهت هذه الجلسة؛ يلزم طلب جديد.', 'This session has expired; a new request is required.') : tr('نشطة لمدة 24 ساعة من آخر نشاط.', 'Active for 24 hours from last activity.')}</p></div><div><button className="dashboard-icon-button" aria-label={tr('إبلاغ', 'Report')} onClick={onReport}><AlertTriangle size={17}/></button><button className="dashboard-icon-button" aria-label={tr('حظر', 'Block')} onClick={onBlock}><Ban size={17}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('إنهاء الجلسة', 'End session')} onClick={onEnd}><X size={17}/></button></div></header><div className="dashboard-chat-log">{asArray<Message>(selected.messages).map((message) => <div key={message.id} className={message.sender_id === userId ? 'is-mine' : ''}><p>{message.body}</p><time>{formatDate(message.created_at, locale)}</time></div>)}</div><div className="dashboard-chat-compose"><textarea className="field" rows={2} maxLength={1000} value={body} onChange={(event) => setBody(event.target.value)} disabled={expired} placeholder={tr('اكتب رسالة نصية مهنية...', 'Write a professional text message...')}/><div className="dashboard-chat-actions"><div className="dashboard-emoji-picker" aria-label={tr('رموز إيجابية مسموحة', 'Allowed positive emoji')}>{positiveEmoji.map((emoji) => <button key={emoji} className="dashboard-icon-button" type="button" disabled={expired} onClick={() => onEmoji(emoji)} aria-label={emoji}>{emoji}</button>)}</div><button className="button" disabled={expired || !body.trim()} onClick={onSend}><Send size={17}/>{tr('إرسال', 'Send')}</button></div></div></>}</section></section>;
+  return <section className="dashboard-messages">
+    <aside className="dashboard-message-sidebar stack">
+      <section className="card"><div className="dashboard-section-heading"><div><Send size={18}/><h2>{tr('طلب تواصل', 'Contact request')}</h2></div></div><p className="muted">{tr('لن تبدأ أي محادثة قبل قبول المستفيد الصريح. النص والرموز الإيجابية المنتقاة فقط مسموحة في الجلسة.', 'No conversation starts without explicit recipient acceptance. Only text and selected positive emoji are allowed in a session.')}</p><div className="dashboard-inline-form"><input className="field" value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder={tr('معرّف المستفيد C#', 'Recipient ID C#')}/><button className="button" onClick={onRequest}><Send size={16}/>{tr('إرسال', 'Send')}</button></div></section>
+      <MessageRetention retention={retention} tr={tr} />
+      <section className="card"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('طلبات بانتظار قرارك', 'Requests awaiting you')}</h2></div></div>{incoming.length ? <div className="dashboard-request-list">{incoming.map((request, index) => <div key={String(request.id ?? index)}><div><strong>{String(request.from_name ?? request.fromName ?? request.from_id ?? '')}</strong><small>{formatDate(Number(request.created_at ?? request.createdAt), locale)}</small></div><button className="dashboard-icon-button" aria-label={tr('قبول', 'Accept')} onClick={() => onDecision(String(request.id), true)}><Check size={16}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('رفض', 'Decline')} onClick={() => onDecision(String(request.id), false)}><X size={16}/></button></div>)}</div> : <EmptyInline text={tr('لا توجد طلبات تحتاج قرارك.', 'No requests need your decision.')} />}{outgoing.length > 0 && <p className="dashboard-pending-note">{tr(`لديك ${outgoing.length} طلب/طلبات مرسلة بانتظار موافقة المستفيد.`, `You have ${outgoing.length} sent request(s) awaiting recipient approval.`)}</p>}</section>
+      <section className="card"><div className="dashboard-section-heading"><div><MessageCircle size={18}/><h2>{tr('جلساتك', 'Your sessions')}</h2></div></div>{conversations.length ? <div className="dashboard-conversation-list">{conversations.map((conversation) => <button key={conversation.id} className={selected?.id === conversation.id ? 'is-active' : ''} onClick={() => void onOpen(conversation)}><span><strong>{conversation.other_user?.name || (conversation.other_user?.id ? `C${conversation.other_user.id}` : conversation.id)}</strong><small>{conversation.status === 'active' ? tr('جلسة نشطة', 'Active session') : conversation.status === 'expired' ? tr('جلسة منتهية', 'Expired session') : String(conversation.status || '')}</small></span><time>{formatDate(Number(conversation.last_activity), locale)}</time></button>)}</div> : <EmptyInline text={tr('لا توجد جلسات مراسلة.', 'No messaging sessions.')} />}</section>
+      {blocks.length > 0 && <section className="card dashboard-block-list"><div className="dashboard-section-heading"><div><Ban size={18}/><h2>{tr('حسابات محظورة', 'Blocked accounts')}</h2></div></div>{blocks.map((block, index) => <p key={String(block.blocked_id ?? index)}>{String(block.blocked_name ?? `C${block.blocked_id ?? ''}`)}</p>)}</section>}
+    </aside>
+    <section className="card dashboard-chat">
+      {!selected ? <div className="dashboard-empty"><MessageCircle size={28}/><h2>{tr('اختر جلسة مراسلة', 'Choose a messaging session')}</h2><p className="muted">{tr('جلسة النصوص تنتهي بعد 24 ساعة من آخر نشاط.', 'Text-only sessions expire 24 hours after last activity.')}</p></div> : <>
+        <header className="dashboard-chat-header"><div><h2>{selected.other_user?.name || (selected.other_user?.id ? `C${selected.other_user.id}` : '')}</h2><p className={expired ? 'dashboard-error' : 'muted'}>{expired ? tr('انتهت هذه الجلسة ولم يعد الخادم يتيح سجل الرسائل. يلزم طلب جديد؛ لا يعني ذلك حذفاً أو تطهيراً فورياً للبيانات.', 'This session expired and the server no longer makes message history available. A new request is required; this does not promise immediate data deletion or purging.') : tr('نشطة لمدة 24 ساعة من آخر نشاط.', 'Active for 24 hours from last activity.')}</p></div><div><button className="dashboard-icon-button" aria-label={tr('إبلاغ', 'Report')} onClick={onReport}><AlertTriangle size={17}/></button><button className="dashboard-icon-button" aria-label={tr('حظر', 'Block')} onClick={onBlock}><Ban size={17}/></button><button className="dashboard-icon-button is-danger" aria-label={tr('إنهاء الجلسة', 'End session')} onClick={onEnd} disabled={expired}><X size={17}/></button></div></header>
+        <div className="dashboard-chat-log">{expired ? <EmptyInline text={tr('لا يتيح الخادم سجل هذه الجلسة المنتهية.', 'The server does not make this expired session history available.')} /> : asArray<Message>(selected.messages).map((message) => <div key={message.id} className={message.sender_id === userId ? 'is-mine' : ''}><p>{message.body}</p><time>{formatDate(message.created_at, locale)}</time></div>)}</div>
+        <div className="dashboard-chat-compose"><textarea className="field" rows={2} maxLength={1000} value={body} onChange={(event) => setBody(event.target.value)} disabled={expired} placeholder={tr('اكتب رسالة نصية مهنية...', 'Write a professional text message...')}/><div className="dashboard-chat-actions"><div className="dashboard-emoji-picker" aria-label={tr('رموز إيجابية مسموحة', 'Allowed positive emoji')}>{positiveEmoji.map((emoji) => <button key={emoji} className="dashboard-icon-button" type="button" disabled={expired} onClick={() => onEmoji(emoji)} aria-label={emoji}>{emoji}</button>)}</div><button className="button" disabled={expired || !body.trim()} onClick={onSend}><Send size={17}/>{tr('إرسال', 'Send')}</button></div></div>
+      </>}
+    </section>
+  </section>;
 }
-function TranslationEditor({ translation, onChange, tr }: { translation: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string }) {
-  const updateStrings = (key: 'skills' | 'hobbies', text: string) => onChange({ [key]: text.split(/[,\n]/).map((item) => item.trim()).filter(Boolean) });
+
+function TranslationEditor({ target, translation, onChange, tr }: { target: TranslationTarget; translation: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string }) {
+  const targetName = target === 'ar' ? tr('العربية', 'Arabic') : tr('الإنجليزية', 'English');
+  const updateStrings = (key: 'skills' | 'hobbies', value: string) => onChange({ [key]: value.split(/[,\n]/).map((item) => item.trim()).filter(Boolean) });
   const updateStructured = (key: 'experience' | 'education' | 'training' | 'timeline', index: number, patch: Partial<ResumeItem>) => onChange({ [key]: translation[key].map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
   const sections: Array<{ key: 'experience' | 'education' | 'training' | 'timeline'; ar: string; en: string; titles: boolean }> = [
     { key: 'experience', ar: 'الخبرات', en: 'Experience', titles: true },
@@ -967,7 +1154,7 @@ function TranslationEditor({ translation, onChange, tr }: { translation: Profile
     { key: 'training', ar: 'التدريب', en: 'Training', titles: false },
     { key: 'timeline', ar: 'السجل الزمني', en: 'Timeline', titles: true },
   ];
-  return <div className="dashboard-translation-editor"><p className="muted">{tr('حرر النصوص الإنجليزية المحفوظة ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.', 'Edit the saved English text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.')}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى الإنجليزي', 'English title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة الإنجليزية', 'English city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة الإنجليزية', 'English country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة الإنجليزية', 'English biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات الإنجليزية، مفصولة بفواصل', 'English skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات الإنجليزية، مفصولة بفواصل', 'English hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
+  return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
 function PaymentInstructions({ value, tr }: { value: unknown; tr: (ar: string, en: string) => string }) { const hasValues = value && (typeof value === 'string' ? value.trim().length > 0 : typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0); if (!hasValues) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>; if (typeof value === 'string') return <pre className="dashboard-bank-details">{value}</pre>; const raw = value as Record<string, unknown>; const details = raw.instructions ?? raw.bank ?? raw; return <dl className="dashboard-bank-details">{typeof details === 'object' && details ? Object.entries(details as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{typeof item === 'string' || typeof item === 'number' ? item : JSON.stringify(item)}</dd></div>) : <div><dd>{String(details)}</dd></div>}</dl>; }
 function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) { return <div className="dashboard-modal-backdrop" role="presentation" onMouseDown={onClose}><section className="dashboard-preview-modal" role="dialog" aria-modal="true" aria-label={tr('معاينة المسودة', 'Draft preview')} onMouseDown={(event) => event.stopPropagation()}><header><div><p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة محلية للمسودة', 'Local draft preview')}</p><h2>{draft.name || tr('اسمك', 'Your name')}</h2></div><button className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button></header>{draft.cover && <img className="dashboard-preview-cover" src={draft.cover} alt=""/>}<div className="dashboard-preview-body">{draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}<p className="dashboard-preview-title">{draft.title}</p>{draft.bio && <p>{draft.bio}</p>}<div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill) => <span key={skill}>{skill}</span>)}</div>{site && <small>{site.name}</small>}</div><footer><p className="muted">{tr('هذه معاينة للمسودة فقط. إرسالها ينشئ لقطة مراجعة مستقلة ولا ينشرها.', 'This previews only your draft. Submitting creates an independent review snapshot and does not publish it.')}</p><div><button className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button><button className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('إرسال للمراجعة', 'Submit for review')}</button></div></footer></section></div>; }

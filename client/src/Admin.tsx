@@ -104,6 +104,13 @@ const economicMetrics = [
   ['operating_profitability', 'الربحية التشغيلية', 'Operating profitability'],
 ] as const;
 
+const entitlementPolicySources = [
+  { key: 'trial', ar: 'التجربة', en: 'Trial' },
+  { key: 'subscription', ar: 'الاشتراك', en: 'Subscription' },
+  { key: 'grant', ar: 'المنح الإداري', en: 'Administrative grant' },
+  { key: 'points', ar: 'النقاط', en: 'Points' },
+] as const;
+
 function record(value: unknown): MaybeRecord {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonRecord : undefined;
 }
@@ -283,6 +290,7 @@ export default function Admin() {
   const [backupVerification, setBackupVerification] = useState<Record<string, MaybeRecord>>({});
   const [backupsLoaded, setBackupsLoaded] = useState(false);
   const [expense, setExpense] = useState({ label: '', amount: '', notes: '' });
+  const [servicePolicies, setServicePolicies] = useState<Record<string, JsonRecord>>({});
 
   const availableTabs = useMemo(() => tabs.filter((item) => item.roles.includes(ownRole)), [ownRole]);
 
@@ -352,6 +360,20 @@ export default function Admin() {
   const names = useMemo(() => records(data.names), [data.names]);
   const transfers = useMemo(() => records(data.transfers), [data.transfers]);
   const audit = useMemo(() => records(data.audit), [data.audit]);
+
+  useEffect(() => {
+    setServicePolicies((current) => {
+      let changed = false;
+      const next = { ...current };
+      services.forEach((service) => {
+        const key = text(field(service, 'key', 'id'), '');
+        if (!key || next[key]) return;
+        next[key] = { ...(record(field(service, 'policy')) ?? {}) };
+        changed = true;
+      });
+      return changed ? next : current;
+    });
+  }, [services]);
 
   useEffect(() => {
     if (!serviceKey && services.length) setServiceKey(text(field(services[0], 'key', 'id'), ''));
@@ -597,17 +619,17 @@ export default function Admin() {
 
   const renderReviews = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('تُعرض الحقول المتغيرة قبل/بعد، وتظهر صورة الوسيط المتغير فقط من مسار وسائط المنصة. معاينة الموقع الكامل لا تُعرض إلا عندما يعيد الخادم رابطاً صريحاً.', 'Changed fields are shown before/after, and changed media is rendered only from a platform media path. A full-site preview is offered only when the server returns an explicit URL.')}</p></div></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('راجع التغييرات قبل وبعد، وافتح معاينة الموقع عند الحاجة، ثم اتخذ قراراً واضحاً.', 'Review the changes before and after, open the site preview when needed, then make a clear decision.')}</p></div></section>
       {reviews.length ? reviews.map((review) => {
         const id = idOf(review);
         const expanded = selectedReview && idOf(selectedReview) === id;
-        const preview = text(field(review, 'preview_url', 'snapshot_url'), '');
+        const preview = text(field(review, 'preview_url', 'snapshot_url'), id ? `/api/admin/reviews/${encodeURIComponent(id)}/preview` : '');
         return <article className="card admin-review" key={id || text(field(review, 'submitted_at'))}>
           <div className="row admin-review-top"><div><h2>{text(field(review, 'site_name', 'name', 'title'))}</h2><p className="muted">{tr('المقدم', 'Submitted by')}: {text(field(review, 'submitter_name', 'user_name', 'email'))} · {asDate(field(review, 'submitted_at', 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(review, 'status'))}`}>{text(field(review, 'status', 'decision'), tr('قيد المراجعة', 'In review'))}</span></div>
           <SnapshotDiff review={review} tr={tr} />
           <div className="admin-actions">
             <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء القرار', 'Hide decision controls') : tr('فتح القرار', 'Open decision controls')}</button>
-            {preview ? <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('معاينة الموقع الكامل', 'Preview full site')}</a> : <span className="admin-route-note">{tr('لم يعُد مسار المراجعة برابط معاينة كامل لهذه اللقطة.', 'The review route did not return a full-preview URL for this snapshot.')}</span>}
+            {preview && <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('فتح معاينة الموقع', 'Open site preview')}</a>}
           </div>
           {expanded && <div className="admin-review-detail stack"><div className="admin-key-values">{Object.entries(review).filter(([key]) => !['diff', 'changes', 'delta', 'snapshot'].includes(key)).map(([key, value]) => <div key={key}><span>{prettyKey(key)}</span><strong>{typeof value === 'object' ? '…' : text(value)}</strong></div>)}</div><label className="field"><span>{tr('سبب الرفض أو ملاحظة القرار', 'Rejection reason or decision note')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={busy === `review-${id}-approve`} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر ذري', 'Approve & publish atomically')}</button><button className="button button-danger" type="button" disabled={busy === `review-${id}-reject`} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div></div>}
         </article>;
@@ -640,12 +662,15 @@ export default function Admin() {
 
   const renderServices = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('محرك الخدمات والاستحقاقات', 'Services & entitlements')}</h1><p className="muted">{tr('الحالة العالمية المعروضة من كتالوج الخدمات. التبديل العام محصور بالمالك؛ المنح أو التعليق الفردي من بطاقة المستخدم ضمن النطاق.', 'Global state is read from the service catalog. Global toggles are owner-only; individual grants or pauses are available from an in-scope user card.')}</p></div></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('محرك الخدمات والاستحقاقات', 'Services & entitlements')}</h1><p className="muted">{owner ? tr('اضبط مصادر الاستحقاق لكل خدمة واحفظ التغييرات صراحة. تظل حالة الخدمة العامة وإعداداتها الأخرى محفوظة مع كل تحديث.', 'Set the entitlement sources for each service and save changes explicitly. The global service state and every other setting are retained with each update.') : tr('تظهر حالة الخدمات العامة ضمن نطاقك. إعداد مصادر الاستحقاق محصور بالمالك.', 'Global service status is shown within your scope. Entitlement-source settings are reserved for the owner.')}</p></div></section>
       <div className="admin-service-grid">{services.length ? services.map((service) => {
         const key = text(field(service, 'key', 'id'), '');
         const enabled = Boolean(field(service, 'enabled', 'is_enabled'));
         const name = lang === 'ar' ? text(field(service, 'name_ar', 'name', 'title', 'key')) : text(field(service, 'name_en', 'name', 'title', 'key'));
-        return <article className="card admin-service" key={key}><div><h2>{name}</h2><p className="muted">{displayJson(field(service, 'policy', 'description'))}</p></div><div className="row"><span className={`admin-status ${enabled ? 'success' : 'danger'}`}>{enabled ? tr('مفعلة عالمياً', 'Globally enabled') : tr('معلقة عالمياً', 'Globally paused')}</span>{owner && <button type="button" className="button button-quiet" disabled={!key || busy === `service-${key}`} onClick={() => void mutate(`service-${key}`, () => api(`/api/admin/services/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ enabled: !enabled }) }), { fresh: true, success: enabled ? tr('تم إرسال تعليق الخدمة عالمياً.', 'The global service pause was sent.') : tr('تم إرسال إعادة التفعيل عالمياً.', 'The global service re-enable was sent.') })}>{enabled ? tr('تعليق', 'Pause') : tr('إعادة تفعيل', 'Re-enable')}</button>}</div></article>;
+        const loadedPolicy = record(field(service, 'policy')) ?? {};
+        const policy = servicePolicies[key] ?? loadedPolicy;
+        const savePolicy = () => void mutate(`service-${key}`, () => api(`/api/admin/services/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ enabled, policy }) }), { fresh: true, success: tr('حُفظت سياسة الاستحقاق للخدمة.', 'The service entitlement policy was saved.') });
+        return <article className="card admin-service" key={key}><div><h2>{name}</h2><p className="admin-service-key">{key}</p></div><div className="row"><span className={`admin-status ${enabled ? 'success' : 'danger'}`}>{enabled ? tr('مفعلة عالمياً', 'Globally enabled') : tr('معلقة عالمياً', 'Globally paused')}</span>{owner && <button type="button" className="button button-quiet" disabled={!key || busy === `service-${key}`} onClick={() => void mutate(`service-${key}`, () => api(`/api/admin/services/${encodeURIComponent(key)}`, { method: 'PUT', body: JSON.stringify({ enabled: !enabled, policy }) }), { fresh: true, success: enabled ? tr('تم تعليق الخدمة عالمياً.', 'The service was paused globally.') : tr('تمت إعادة تفعيل الخدمة عالمياً.', 'The service was enabled globally.') })}>{enabled ? tr('تعليق', 'Pause') : tr('إعادة تفعيل', 'Re-enable')}</button>}</div>{owner && <form className="admin-service-policy" onSubmit={(event) => { event.preventDefault(); if (!key) { setError(tr('تعذر تحديد مفتاح الخدمة للحفظ.', 'The service key is unavailable, so this policy cannot be saved.')); return; } savePolicy(); }}><fieldset className="admin-policy-fieldset"><legend>{tr('مصادر الاستحقاق', 'Entitlement sources')}</legend><p className="admin-policy-help">{tr('اختر الطرق التي تمنح الوصول إلى هذه الخدمة.', 'Choose which sources may grant access to this service.')}</p><div className="admin-policy-chips">{entitlementPolicySources.map((source) => { const allowed = policy[source.key] !== false; return <label className="admin-policy-chip" key={source.key}><input type="checkbox" checked={allowed} onChange={(event) => setServicePolicies((current) => ({ ...current, [key]: { ...(current[key] ?? loadedPolicy), [source.key]: event.target.checked } }))} /><span>{tr(source.ar, source.en)}</span></label>; })}</div></fieldset><button className="button" type="submit" disabled={!key || busy === `service-${key}`}>{busy === `service-${key}` ? tr('جارٍ الحفظ…', 'Saving…') : tr('حفظ سياسة الخدمة', 'Save service policy')}</button></form>}</article>;
       }) : <Empty title={tr('لا يوجد كتالوج خدمات معروض.', 'No service catalog was returned.')} />}</div>
     </div>
   );

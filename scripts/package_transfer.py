@@ -6,6 +6,7 @@ p=argparse.ArgumentParser();p.add_argument('output',type=pathlib.Path);p.add_arg
 if a.output.exists():raise SystemExit('Output exists; refusing overwrite.')
 if a.clone and not all([a.domain,a.owner_email,a.brand]):raise SystemExit('Clone requires domain, owner-email and brand.')
 if a.domain and not re.fullmatch(r'[a-z0-9.-]+',a.domain):raise SystemExit('Invalid domain.')
+if a.brand and (len(a.brand)>100 or any(char in a.brand for char in ['\'','"','<','>','\\'])):raise SystemExit('Brand must not contain code/markup delimiters.')
 files=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard'],cwd=ROOT,text=True).splitlines();manifest=[]
 with zipfile.ZipFile(a.output,'x',compression=zipfile.ZIP_DEFLATED) as z:
  for name in sorted(set(files)):
@@ -17,6 +18,9 @@ with zipfile.ZipFile(a.output,'x',compression=zipfile.ZIP_DEFLATED) as z:
    data=json.loads(content);data['name']='clone-config-required';data['account_id']='ACCOUNT_ID_REQUIRED';data['vars']['ROOT_DOMAIN']=a.domain;data['vars']['OWNER_EMAIL']=a.owner_email;data['d1_databases'][0]['database_id']='DATABASE_ID_REQUIRED';data['d1_databases'][0]['database_name']='clone-database-config-required';data['r2_buckets'][0]['bucket_name']='clone-bucket-config-required';content=(json.dumps(data,ensure_ascii=False,indent=2)+'\n').encode()
   elif a.clone and path.suffix in ['.ts','.tsx','.json','.html','.md','.sql','.js','.py']:
    text=content.decode();text=text.replace('www.ksa.men@gmail.com',a.owner_email).replace('ksa.men',a.domain).replace('KSA.MEN',a.brand)
+   text=text.replace('SA5380000296608010947219','').replace('296000010006080947219','').replace('7050011712','').replace('10/05/2025','').replace('شركة رجال الوطن القابضة',a.brand).replace('شركة رجال الوطن',a.brand)
+   text=text.replace('c4bed103a44f2fc99adeb96126a0a9ff','ACCOUNT_ID_REQUIRED').replace('dd006d15-8b4c-4469-9809-af08cbb42ad4','DATABASE_ID_REQUIRED')
+   if name=='client/src/main.tsx':text=re.sub(r'<section className="section"><div className="section-heading"><span className="eyebrow">\{t\(\'وضوح يبني الثقة\'[\s\S]*?className="company-documents"[\s\S]*?</section>','',text)
    if name.startswith('migrations/'):
     text=text.replace('SA5380000296608010947219','').replace('296000010006080947219','').replace('7050011712','').replace('10/05/2025','').replace('شركة رجال الوطن القابضة',a.brand).replace('شركة رجال الوطن',a.brand)
     # Independent clone keeps intake disabled until its own official recipient is configured.

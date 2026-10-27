@@ -344,19 +344,28 @@ const labels = {
 
 type PdfInlineText = string | Array<{ text: string }>;
 
-/**
- * PDFMake shapes Arabic glyphs but does not expose a paragraph-direction option.
- * Reversing word runs for its visual layout, while keeping every word as live
- * Unicode text, produces a right-to-left PDF that pdftotext can still extract.
- */
-function pdfText(value: string, rtl: boolean): PdfInlineText {
-  if (!rtl || !value.trim()) return value;
-  const lines = value.split(/\r?\n/);
-  return lines.flatMap((line, lineIndex) => {
-    const words = line.trim().split(/\s+/u).filter(Boolean).reverse();
-    const output = words.flatMap((word, wordIndex) => wordIndex ? [{ text: ' ' }, { text: word }] : [{ text: word }]);
-    if (lineIndex < lines.length - 1) output.push({ text: '\n' });
-    return output;
+/** Wrap logical lines first; reorder Arabic word runs per line, preserving LTR phrases. */
+function pdfText(value: string, rtl: boolean, width = 500, size = 10.5): PdfInlineText {
+  if (!rtl || !/[\u0600-\u06ff]/u.test(value)) return value;
+  const canvas=document.createElement('canvas');const measure=canvas.getContext('2d');
+  if(measure)measure.font=`${size}px Tajawal`;
+  const lines:string[]=[];
+  for(const paragraph of value.split(/\r?\n/)){
+    let line='';
+    for(const word of paragraph.trim().split(/\s+/u).filter(Boolean)){
+      const candidate=line?line+' '+word:word;
+      if(line&&measure&&measure.measureText(candidate).width>width){lines.push(line);line=word;}else line=candidate;
+    }
+    lines.push(line);
+  }
+  return lines.flatMap((line,lineIndex)=>{
+    const runs:Array<{text:string,latin:boolean}>=[];
+    for(const word of line.split(/\s+/u).filter(Boolean)){
+      const latin=!/[\u0600-\u06ff]/u.test(word);const last=runs[runs.length-1];
+      if(latin&&last?.latin)last.text+=' '+word;else runs.push({text:word,latin});
+    }
+    const output=runs.reverse().flatMap((run,index)=>index?[{text:' '},{text:run.text}]:[{text:run.text}]);
+    if(lineIndex<lines.length-1)output.push({text:'\n'});return output;
   });
 }
 
@@ -462,15 +471,12 @@ function luxuryPdf(profile: Profile, data: ExportData, lang: Language) {
   const content: any[] = [
     { canvas: [{ type: 'rect', x: 0, y: 0, w: 515, h: 7, color: '#006837' }], margin: [0, 0, 0, 22] },
     {
-      columns: rtl
-        ? [
-          { width: '*', stack: [{ text: pdfText(name, rtl), style: 'name' }, title ? { text: pdfText(title, rtl), style: 'title' } : {}, { text: pdfText(copy.professional, rtl), style: 'eyebrow' }] },
-          { width: 118, text: 'KSA.MEN', style: 'brand', alignment: 'left' },
-        ]
-        : [
-          { width: 118, text: 'KSA.MEN', style: 'brand' },
-          { width: '*', stack: [{ text: pdfText(name, rtl), style: 'name' }, title ? { text: pdfText(title, rtl), style: 'title' } : {}, { text: pdfText(copy.professional, rtl), style: 'eyebrow' }], alignment: 'right' },
-        ],
+      stack: [
+        {text:'KSA.MEN',style:'brand',margin:[0,0,0,12]},
+        {text:pdfText(name,rtl,500,25),style:'name'},
+        title?{text:pdfText(title,rtl,500,13),style:'title'}:{},
+        {text:pdfText(copy.professional,rtl),style:'eyebrow'},
+      ],
       margin: [0, 0, 0, 24],
     },
   ];
@@ -517,7 +523,7 @@ function atsPdf(profile: Profile, data: ExportData, lang: Language) {
   const title = field(profile, 'title');
   const bio = field(profile, 'bio');
   const contact = [field(profile, 'email'), field(profile, 'phone'), field(profile, 'whatsapp'), [field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(', ')].filter(Boolean).join(' | ');
-  const content: any[] = [{ text: pdfText(name, rtl), style: 'name' }];
+  const content: any[] = [{ text: pdfText(name, rtl, 500, 22), style: 'name' }];
   if (title) content.push({ text: pdfText(title, rtl), style: 'role' });
   if (contact) content.push({ text: pdfText(contact, rtl), style: 'contact' });
   if (bio) content.push({ text: pdfText(copy.summary, rtl), style: 'heading' }, { text: pdfText(bio, rtl), style: 'body' });
@@ -640,6 +646,8 @@ export default function Exports() {
     setBusy(ats ? 'ats' : 'pdf');
     try {
       const pdfMake = await loadPdfMaker();
+      await window.document.fonts.load('10.5px Tajawal');
+      await window.document.fonts.load('bold 25px Tajawal');
       const document = ats ? atsPdf(profile, data, exportLang) : luxuryPdf(profile, data, exportLang);
       pdfMake.createPdf(document).download(filename(ats ? 'ats' : 'profile', 'pdf'));
       notify(t('بدأ تنزيل ملف PDF قابل لاستخراج النص.', 'Your text-extractable PDF download has started.'));

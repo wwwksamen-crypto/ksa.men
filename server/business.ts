@@ -1264,7 +1264,8 @@ export function registerBusiness(app: App): void {
       apiError(422, 'fields contains an unsupported or duplicate field', 'VALIDATION');
     }
     const expiresDays = asInteger(body.expiresDays, 'expiresDays', 1, 1_000_000);
-    const site = await primarySite(c, userId);
+    const requestedSite=c.req.query('siteId');
+    const site = requestedSite?await editableSiteFor(c,requestedSite,user):await primarySite(c, userId);
     if (!site) apiError(409, 'Create a profile site before sharing a quick link', 'SITE_REQUIRED');
     const profile = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
     const values: Json = {};
@@ -1415,7 +1416,8 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     await service(c, 'analytics', userId);
-    const site = await primarySite(c, userId);
+    const requestedSite=c.req.query('siteId');
+    const site = requestedSite?await editableSiteFor(c,requestedSite,user):await primarySite(c, userId);
     if (!site) {
       return c.json({ siteId: null, periodDays: 30, events: { visits: 0, contactClicks: 0, vcardDownloads: 0, qrInteractions: 0, total: 0, byEvent: {} }, activity: { last7Days: 0, last30Days: 0 }, quality: quality(defaultProfile(String(user.name ?? ''))) });
     }
@@ -1437,7 +1439,7 @@ export function registerBusiness(app: App): void {
     const visits = (byEvent.visit ?? 0) + (byEvent.page_view ?? 0);
     const contactClicks = (byEvent.contact_click ?? 0) + (byEvent.contact ?? 0);
     const vcardDownloads = (byEvent.vcard_download ?? 0) + (byEvent.vcard ?? 0);
-    const qrInteractions = (byEvent.qr_scan ?? 0) + (byEvent.qr_interaction ?? 0);
+    const qrInteractions = (byEvent.qr ?? 0) + (byEvent.qr_scan ?? 0) + (byEvent.qr_interaction ?? 0);
     const profile = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
     return c.json({
       siteId: site.id,

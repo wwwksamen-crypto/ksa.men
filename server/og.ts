@@ -1,5 +1,5 @@
 import type { App, Ctx } from './core';
-import { one, publicProfile, digest } from './core';
+import { one, publicProfile, digest, role, siteFor } from './core';
 import { HTTPException } from 'hono/http-exception';
 import { Resvg, initWasm } from '@resvg/resvg-wasm';
 import wasm from './vendor/resvg.wasm';
@@ -15,10 +15,7 @@ export async function shareSite(c:Ctx,name:string){
  if(!site||site.owner_status!=='active')throw new HTTPException(404);
  return site;
 }
-export function registerOG(app:App){
- app.get('/api/public/og/:name',async c=>{
-  const site=await shareSite(c,c.req.param('name'));
-  if(site.lock_hash)throw new HTTPException(423,{message:'الموقع خاص، ولا تتوفر له صورة مشاركة عامة'});
+async function renderShare(c:Ctx,site:any){
   const lang=c.req.query('lang')==='en'?'en':'ar';
   const profile=shareProfile(site.published,lang);
   const cacheKey='sharing/'+site.id+'/'+site.published_version+'-'+lang+'-'+await digest(JSON.stringify(profile))+'.png';
@@ -34,7 +31,10 @@ export function registerOG(app:App){
   const image=renderer.render();const png=new Uint8Array(image.asPng());image.free();renderer.free();
   await c.env.MEDIA.put(cacheKey,png,{httpMetadata:{contentType:'image/png'},customMetadata:{siteId:site.id,publishedVersion:String(site.published_version),lang}});
   return new Response(png,{headers:{'Content-Type':'image/png','Cache-Control':'private, no-store'}});
- });
+}
+export function registerOG(app:App){
+ app.get('/api/public/og/:name',async c=>{const site=await shareSite(c,c.req.param('name'));if(site.lock_hash)throw new HTTPException(423,{message:'الموقع خاص، ولا تتوفر له صورة مشاركة عامة'});return renderShare(c,site);});
+ app.get('/api/admin/sites/:id/share-image',async c=>{role(c,['owner','manager']);const site=await siteFor(c,c.req.param('id'));if(!site.published)throw new HTTPException(404);const named:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? LIMIT 1',site.id);return renderShare(c,{...site,name:named?.name||'KSA.MEN'});});
 }
 export async function personalizedHTML(c:Ctx,html:string){
  const url=new URL(c.req.url),root=c.env.ROOT_DOMAIN;

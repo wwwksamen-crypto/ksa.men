@@ -324,6 +324,7 @@ async function fetchFeed(source: RadarSource, fetchedAt: number): Promise<RadarI
 }
 
 /** Maps titles only; no article bodies or inferred qualifications are collected. */
+export function inferredRadarRegion(title:string,fallback:string){if(/(?:السعودية|المملكة العربية السعودية|\bsaudi\b|\briyadh\b|\bksa\b)/iu.test(title))return 'saudi';if(/(?:دبي|أبوظبي|الإمارات|الكويت|قطر|عمان|البحرين|\bdubai\b|\buae\b|\bkuwait\b|\bqatar\b|\bbahrain\b|\boman\b)/iu.test(title))return 'gulf';return normalizeRadarRegion(fallback);}
 export function classifyRadarCategory(title: string, fallback = 'professional'): string {
   for (const [category, expression] of Object.entries(radarCategories)) {
     if (expression.test(title)) return category;
@@ -378,7 +379,7 @@ export async function fetchRadar(env: Env): Promise<RadarRefreshResult> {
         item.link,
         source.id,
         classifyRadarCategory(item.title, source.category),
-        normalizeRadarRegion(source.region),
+        inferredRadarRegion(item.title,source.region),
         item.published_at,
         fetchedAt,
         item.link,
@@ -668,7 +669,7 @@ export function registerIntelligence(app: App): void {
         source: item.source,
         sourceURL: item.source_url,
         category: classifyRadarCategory(item.title, item.category),
-        region: normalizeRadarRegion(item.region),
+        region: inferredRadarRegion(item.title,item.region),
       })),
       sources: sources.map((source) => ({
         id: source.id,

@@ -1,0 +1,7 @@
+# أدلة مصادر الاستكمال — 27 أكتوبر 2026
+
+توليد PNG فعلي في Workers: التوثيق الرسمي يطلب استيراد WebAssembly.Module مسبق التجميع، ولا يسمح بتجميع WASM محمل بالـfetch في وقت التنفيذ. تم تضمين resvg-wasm 2.6.2 وملف WASM في المصدر، مع Tajawal المحلي. المصدر الرسمي: https://developers.cloudflare.com/workers/runtime-apis/webassembly/javascript/ . مثال معماري: https://tom-sherman.com/blog/dynamic-og-image-cloudflare-workers . قيد تحميل WASM: https://github.com/thx/resvg-js/issues/307 . واجهة المكتبة الفعلية تمت قراءتها من index.d.ts بعد التثبيت، بما فيها fontBuffers وinitWasm وasPng.
+
+رادار المصادر الإقليمية الحالي: HBR Arabia https://hbrarabic.com/feed/ ، Wamda https://www.wamda.com/feed ، Forbes Middle East https://www.forbesmiddleeast.com/feed . وحدته تحصر URL الناشر ولا تتبع redirects، وتعتمد تاريخ النشر ونافذة سبعة أيام، لا تاريخ الجلب. مصدر Forbes حجمه المقاس بواسطة الوكيل 1,947,574 بايت، لذلك حد الجلب 2,000,000 بايت.
+
+بحث المصادر السعودية الإضافية: https://www.wadhefa.com/english/index/ يعلن صراحة https://www.wadhefa.com/cross_network/latest_jobs_rss.php . لكن الخلاصة أعادت تواريخ 1 يناير 1970، وشروط https://www.wadhefa.com/english/terms/ تمنع الاستخدام غير الشخصي غير التجاري دون إذن كتابي؛ لم تُضف هذه الخلاصة للمنصة ولم تُعرض فرصها كأخبار حديثة. موقع https://nadiaglobal.sa/feed/ أعاد RSS حقيقيًا للموارد البشرية بتاريخ آخر مادة يونيو 2026، لذلك لا يمكن عرضها ضمن سبعة أيام. فهرس الاكتشاف فقط: https://rss.feedspot.com/saudi_arabia_rss_feeds/ ؛ لا يُستخدم كناشر أو مصدر تاريخ للنتائج.

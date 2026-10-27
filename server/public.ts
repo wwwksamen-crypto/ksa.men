@@ -148,7 +148,7 @@ export function registerPublic(app:App){
     try{raw=JSON.parse(site.draft) as Record<string,unknown>;}catch{throw new HTTPException(500,{message:'تعذر قراءة المسودة للتصدير بأمان'});}
     const lang=c.req.query('lang')==='en'?'en':'ar';
     const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
-    const name:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? AND owner_id=? LIMIT 1',site.id,site.user_id);
+    const name:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? LIMIT 1',site.id);
     return c.json({profile:visibleProfile(raw,lang,true),name:name?.name??'',site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation});
   });
 
@@ -182,6 +182,10 @@ export function registerPublic(app:App){
     let authorized=user?.id===media.owner_id;
     if(media.purpose==='receipt'&&!authorized){
       authorized=!!user&&(user.role==='owner'||(user.role==='manager'&&!!user.financial));
+    }
+    if(media.purpose!=='receipt'&&!authorized&&media.site_id&&user&&['owner','manager','moderator'].includes(user.role)){
+      if(user.role!=='moderator'){try{await siteFor(c,media.site_id);authorized=true;}catch{}}
+      else authorized=!!await one(c,"SELECT id FROM reviews WHERE site_id=? AND instr(snapshot,?)>0 LIMIT 1",media.site_id,'/api/media/'+media.id);
     }
     if(media.purpose!=='receipt'&&!authorized){
       const site:any=media.site_id?await one(c,"SELECT * FROM sites WHERE id=? AND status='published'",media.site_id):null;
