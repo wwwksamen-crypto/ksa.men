@@ -24,14 +24,14 @@
 }
 
 /* Required shared primitives, scoped visually for this console but usable in its descendants. */
-.card {
+.admin-console .card {
   background: linear-gradient(145deg, rgba(15, 45, 31, .96), rgba(7, 25, 17, .98));
   border: 1px solid var(--admin-line);
   border-radius: 18px;
   box-shadow: var(--admin-shadow);
 }
 
-.button {
+.admin-console .button {
   min-height: 40px;
   display: inline-flex;
   align-items: center;
@@ -49,9 +49,9 @@
   transition: transform .18s ease, background .18s ease, border-color .18s ease, opacity .18s ease;
 }
 
-.button:hover:not(:disabled) { transform: translateY(-1px); background: linear-gradient(135deg, #087a43, #0c9d5e); }
-.button:focus-visible, .admin-console input:focus-visible, .admin-console textarea:focus-visible, .admin-console select:focus-visible, .admin-tabs button:focus-visible { outline: 3px solid rgba(214, 175, 100, .76); outline-offset: 2px; }
-.button:disabled { cursor: not-allowed; opacity: .45; transform: none; }
+.admin-console .button:hover:not(:disabled) { transform: translateY(-1px); background: linear-gradient(135deg, #087a43, #0c9d5e); }
+.admin-console .button:focus-visible, .admin-console input:focus-visible, .admin-console textarea:focus-visible, .admin-console select:focus-visible, .admin-tabs button:focus-visible { outline: 3px solid rgba(214, 175, 100, .76); outline-offset: 2px; }
+.admin-console .button:disabled { cursor: not-allowed; opacity: .45; transform: none; }
 .button-quiet { color: var(--admin-ink); background: rgba(255, 255, 255, .04); border-color: var(--admin-line); }
 .button-quiet:hover:not(:disabled) { background: rgba(255, 255, 255, .09); border-color: rgba(214, 175, 100, .5); }
 .button-secondary { background: linear-gradient(135deg, #304838, #1b3023); }
@@ -59,11 +59,11 @@
 .button-danger:hover:not(:disabled) { background: linear-gradient(135deg, #b24951, #e16b6e); }
 .button-small { min-height: 34px; padding: 6px 10px; font-size: .85rem; }
 
-.muted { color: var(--admin-muted); }
+.admin-console .muted { color: var(--admin-muted); }
 
-.field { display: grid; gap: 6px; color: var(--admin-muted); font-size: .9rem; }
-.field > span { font-weight: 700; }
-.field input, .field textarea, .field select, .admin-inline-form input, .admin-mini-form > input, .admin-mini-form > select {
+.admin-console .field { display: grid; gap: 6px; color: var(--admin-muted); font-size: .9rem; }
+.admin-console .field > span { font-weight: 700; }
+.admin-console .field input, .field textarea, .field select, .admin-inline-form input, .admin-mini-form > input, .admin-mini-form > select {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid rgba(180, 224, 197, .2);
@@ -73,12 +73,12 @@
   background: rgba(1, 14, 8, .42);
   font: inherit;
 }
-.field textarea { resize: vertical; min-height: 76px; }
-.field select, .admin-mini-form > select { appearance: auto; }
+.admin-console .field textarea { resize: vertical; min-height: 76px; }
+.admin-console .field select, .admin-mini-form > select { appearance: auto; }
 
-.stack { display: grid; gap: 15px; }
-.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.page-title { margin: 0; color: #f3fcf6; font-size: clamp(1.6rem, 5vw, 2.55rem); line-height: 1.14; letter-spacing: -.02em; }
+.admin-console .stack { display: grid; gap: 15px; }
+.admin-console .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.admin-console .page-title { margin: 0; color: #f3fcf6; font-size: clamp(1.6rem, 5vw, 2.55rem); line-height: 1.14; letter-spacing: -.02em; }
 
 .admin-topbar {
   display: flex;
@@ -249,21 +249,20 @@
   .admin-service-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@media (prefers-color-scheme: light) {
-  .admin-console { --admin-ink: #102a1c; --admin-muted: #60796b; --admin-line: rgba(0, 68, 34, .15); --admin-surface: #f4faf5; --admin-surface-raised: #ffffff; --admin-surface-soft: #e8f4ec; --admin-shadow: 0 14px 42px rgba(0, 62, 31, .09); color: var(--admin-ink); }
-  .card { background: linear-gradient(145deg, #ffffff, #f3f9f4); }
-  .admin-hero { background: radial-gradient(circle at 91% 15%, rgba(0, 151, 82, .2), transparent 34%), linear-gradient(140deg, #fafffb, #e8f5ec 76%); }
-  .page-title, .admin-grid h2, .admin-content-layout h2, .admin-payment h2, .admin-review h2, .admin-backup-card h2, .admin-detail-heading h1 { color: #06351e; }
-  .field input, .field textarea, .field select, .admin-inline-form input, .admin-mini-form > input, .admin-mini-form > select { color: #103120; background: rgba(255,255,255,.8); }
-  .admin-key-values > div, .admin-diff-grid > div { background: rgba(255,255,255,.8); }
-  .admin-key-values strong { color: #17412a; }
-  .admin-user-context pre, .admin-bank-info, .admin-diff-grid pre { color: #28563a; }
-  .admin-user-context > div, .admin-mini-form { background: rgba(0,104,55,.025); }
-  .admin-tabs button.active { color: #073f23; background: linear-gradient(130deg, rgba(0,104,55,.15), rgba(255,255,255,.9)); }
-  .admin-brand-glyph, .admin-backup-mark { background: radial-gradient(circle at 35% 30%, #d8f0df, #eff9f1); }
-}
+[data-theme="light"] .admin-console { --admin-ink: #102a1c; --admin-muted: #60796b; --admin-line: rgba(0, 68, 34, .15); --admin-surface: #f4faf5; --admin-surface-raised: #ffffff; --admin-surface-soft: #e8f4ec; --admin-shadow: 0 14px 42px rgba(0, 62, 31, .09); color: var(--admin-ink); }
+[data-theme="light"] .admin-console .card { background: linear-gradient(145deg, #ffffff, #f3f9f4); }
+[data-theme="light"] .admin-console .admin-hero { background: radial-gradient(circle at 91% 15%, rgba(0, 151, 82, .2), transparent 34%), linear-gradient(140deg, #fafffb, #e8f5ec 76%); }
+[data-theme="light"] .admin-console .page-title, [data-theme="light"] .admin-console .admin-grid h2, [data-theme="light"] .admin-console .admin-content-layout h2, [data-theme="light"] .admin-console .admin-payment h2, [data-theme="light"] .admin-console .admin-review h2, [data-theme="light"] .admin-console .admin-backup-card h2, [data-theme="light"] .admin-console .admin-detail-heading h1 { color: #06351e; }
+[data-theme="light"] .admin-console .field input, [data-theme="light"] .admin-console .field textarea, [data-theme="light"] .admin-console .field select, [data-theme="light"] .admin-console .admin-inline-form input, [data-theme="light"] .admin-console .admin-mini-form > input, [data-theme="light"] .admin-console .admin-mini-form > select { color: #103120; background: rgba(255,255,255,.8); }
+[data-theme="light"] .admin-console .admin-key-values > div, [data-theme="light"] .admin-console .admin-diff-grid > div { background: rgba(255,255,255,.8); }
+[data-theme="light"] .admin-console .admin-key-values strong { color: #17412a; }
+[data-theme="light"] .admin-console .admin-user-context pre, [data-theme="light"] .admin-console .admin-bank-info, [data-theme="light"] .admin-console .admin-diff-grid pre { color: #28563a; }
+[data-theme="light"] .admin-console .admin-user-context > div, [data-theme="light"] .admin-console .admin-mini-form { background: rgba(0,104,55,.025); }
+[data-theme="light"] .admin-console .admin-tabs button.active { color: #073f23; background: linear-gradient(130deg, rgba(0,104,55,.15), rgba(255,255,255,.9)); }
+[data-theme="light"] .admin-console .admin-brand-glyph, [data-theme="light"] .admin-console .admin-backup-mark { background: radial-gradient(circle at 35% 30%, #d8f0df, #eff9f1); }
+[data-theme="light"] .admin-metric strong{color:#103120}
 
 @media (prefers-reduced-motion: reduce) {
-  .button { transition: none; }
-  .button:hover:not(:disabled) { transform: none; }
+  .admin-console .button { transition: none; }
+  .admin-console .button:hover:not(:disabled) { transform: none; }
 }
