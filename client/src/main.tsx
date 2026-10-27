@@ -60,8 +60,8 @@ function Auth(){
   </section>
   <section className="auth-card card">
    <div className="eyebrow">KSA.MEN</div>
-   <h2>{quick?t('الدخول بالبريد وPIN','Email & PIN sign-in'):challenge?t('تحقق من بريدك','Check your email'):mode==='register'?t('أنشئ موقعك','Create your site'):mode==='recover'?t('استرجاع الحساب','Recover your account'):t('عودًا مرحبًا','Welcome back')}</h2>
-   <p className="muted">{challenge?t('أدخل الرمز المرسل إلى '+email,'Enter the code sent to '+email):quick?t('أدخل بريد الحساب وPIN. يعمل فقط على جهاز موثوق لهذا الحساب؛ للجهاز الجديد استخدم رمز البريد.','Enter your account email and PIN. This device must be trusted for that same account. Use email verification on a new device.'):t('التحقق من البريد يحمي حسابك وبياناتك.','Email verification protects your account and data.')}</p>
+   <h2>{quick?t('الدخول السريع','Email & PIN sign-in'):challenge?t('تحقق من بريدك','Check your email'):mode==='register'?t('أنشئ موقعك','Create your site'):mode==='recover'?t('استرجاع الحساب','Recover your account'):t('عودًا مرحبًا','Welcome back')}</h2>
+   <p className="muted">{challenge?t('أدخل الرمز المرسل إلى '+email,'Enter the code sent to '+email):quick?t('أدخل بريد الحساب ورمزك الشخصي. يعمل فقط على جهاز موثوق للحساب نفسه؛ للجهاز الجديد استخدم رمز البريد.','Enter your account email and PIN. This device must be trusted for that same account. Use email verification on a new device.'):t('التحقق من البريد يحمي حسابك وبياناتك.','Email verification protects your account and data.')}</p>
    <form onSubmit={submit} className="stack">
     {!challenge&&<label className="field">{t('البريد الإلكتروني','Email')}<input required type="email" name="email" autoComplete={quick?'username':'email'} value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" dir="ltr" autoCapitalize="none" spellCheck={false}/></label>}
     {!quick&&!challenge&&mode==='register'&&<>
