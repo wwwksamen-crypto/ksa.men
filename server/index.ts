@@ -21,7 +21,7 @@ function security(c: any, isStatic = false) {
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   c.header('Strict-Transport-Security', 'max-age=31536000');
   c.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; frame-src https://www.youtube-nocookie.com https://www.youtube.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
-  c.header('Cache-Control', isStatic && c.res.status >= 200 && c.res.status < 300 ? (/[-.][A-Za-z0-9_-]{8,}\.(js|css)$/.test(new URL(c.req.url).pathname) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600') : 'private, no-store');
+  c.header('Cache-Control', isStatic && ((c.res.status >= 200 && c.res.status < 300) || c.res.status === 304) ? (/[-.][A-Za-z0-9_-]{8,}\.(js|css)$/.test(new URL(c.req.url).pathname) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600') : 'private, no-store');
 }
 async function gate(c: any, lock: any) {
   const value = getCookie(c, '__Host-ksa_gate') || '';
@@ -119,6 +119,8 @@ app.get('/robots.txt', async c => {
 app.get('*', async c => {
   const path = new URL(c.req.url).pathname;
   const asset = await c.env.ASSETS.fetch(new Request(new URL(path === '/' ? '/index.html' : path, c.req.url), c.req.raw));
+  // Preserve conditional (304), range (206) and missing-asset responses unchanged.
+  if (staticPath(path)) return asset;
   if (asset.status === 200) { if(new URL(c.req.url).hostname!==c.env.ROOT_DOMAIN&&path==='/')return c.html(await personalizedHTML(c,await asset.text()));return asset; }
   if (path.startsWith('/assets/') || path.includes('.') || path.startsWith('/api/')) throw new HTTPException(404);
   return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url), c.req.raw));
