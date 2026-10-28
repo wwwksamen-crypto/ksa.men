@@ -365,6 +365,18 @@ export default function Sanad() {
     blink();
   }, [blink, isTemporarilyUnavailable]);
 
+  useEffect(() => {
+    const openRequested = () => openGuide();
+    window.addEventListener('ksa:sanad-open',openRequested);
+    return () => window.removeEventListener('ksa:sanad-open',openRequested);
+  },[openGuide]);
+  useEffect(() => {
+    if (!open) return;
+    const previous=document.body.style.overflow;
+    document.body.style.overflow='hidden';
+    return () => {document.body.style.overflow=previous;};
+  },[open]);
+
   const hideGuide = useCallback(() => {
     close();
     sourceRef.current?.disconnect();
@@ -526,11 +538,11 @@ export default function Sanad() {
               )}
             </section>
 
-            <section className="sanad-transcript" aria-labelledby="sanad-transcript-title">
-              <span className="sanad-label" id="sanad-transcript-title">{t('النص المسجل', 'Recorded transcript')}</span>
+            <details className="sanad-transcript">
+              <summary>{t('قراءة النص الصوتي', 'Read the audio transcript')}</summary>
               <p lang={lang}>{transcript}</p>
               <small>{t('يمكنك سماع الإرشاد أو قراءته. نصيحتك الحالية تظهر أعلاه.', 'Listen or read at your own pace. Your current tip is shown above.')}</small>
-            </section>
+            </details>
 
             {playerError && <p className="sanad-player-error" role="alert">{playerError}</p>}
 

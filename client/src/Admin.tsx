@@ -845,7 +845,7 @@ export default function Admin() {
   return <main className="admin-console" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
     <header className="admin-workbench-topbar">
       <div className="admin-brand">
-        <span className="admin-brand-glyph" aria-hidden="true">K</span>
+        <span className="admin-brand-glyph" aria-hidden="true"><img src="/assets/logo-emblem.webp" alt=""/></span>
         <div><strong>KSA.MEN</strong><span>{tr('منضدة الإدارة', 'ADMIN WORKBENCH')}</span></div>
       </div>
       <div className="admin-topbar-actions">

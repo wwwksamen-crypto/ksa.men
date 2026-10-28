@@ -5,9 +5,9 @@
   --sanad-accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
   --sanad-danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
   box-sizing: border-box;
-  position: sticky;
+  position: relative;
   z-index: 80;
-  bottom: clamp(12px, 2vw, 24px);
+  bottom: auto;
   inline-size: min(var(--content, 1240px), calc(100% - (var(--gutter, 18px) * 2)));
   min-block-size: 76px;
   margin-block: 18px 12px;
@@ -447,7 +447,9 @@
 
   .sanad-dialog {
     inset-block: auto 0;
-    inline-size: 100vw;
+    inset-inline: 0;
+    inline-size: 100%;
+    max-inline-size: 100%;
     max-block-size: min(86vh, 760px);
     margin: 0;
     border-inline: 0;
@@ -473,7 +475,7 @@
   }
 
   .sanad-portrait-panel .sanad-sprite {
-    inline-size: 76px;
+    inline-size: 110px;
   }
 
   .sanad-content {
@@ -502,3 +504,9 @@
     animation-iteration-count: 1 !important;
   }
 }
+
+.sanad-transcript summary{cursor:pointer;min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--accent);font-weight:700;list-style:none}
+.sanad-transcript summary::after{content:'+';font-size:1.15rem}
+.sanad-transcript[open] summary::after{content:'−'}
+.sanad-transcript summary::-webkit-details-marker{display:none}
+.sanad-transcript summary:focus-visible{outline:3px solid var(--gold);outline-offset:3px;border-radius:8px}

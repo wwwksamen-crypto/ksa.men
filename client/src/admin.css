@@ -514,3 +514,6 @@
   .admin-console *::before,
   .admin-console *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.admin-console .admin-brand-glyph{display:grid;place-items:center;overflow:hidden}
+.admin-console .admin-brand-glyph img{width:27px;height:27px;object-fit:contain}

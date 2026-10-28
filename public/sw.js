@@ -1,5 +1,5 @@
 /* PWA caches only public, immutable application assets, never account/API responses. */
-const VERSION='ksa-static-v2';
+const VERSION='ksa-static-design-20261028';
 self.addEventListener('install',event=>event.waitUntil(caches.open(VERSION).then(cache=>cache.add('/offline.html'))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==VERSION).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('message',event=>{
@@ -8,7 +8,7 @@ self.addEventListener('message',event=>{
 });
 self.addEventListener('fetch',event=>{
  const url=new URL(event.request.url);
- if(url.origin!==self.location.origin||event.request.method!=='GET')return;
+ if(url.origin!==self.location.origin||event.request.method!=='GET'||event.request.headers.has('Range'))return;
  if(event.request.mode==='navigate'){
   event.respondWith(fetch(event.request,{cache:'no-store'}).catch(async()=>await caches.match('/offline.html')||new Response('أنت غير متصل. أعد الاتصال للمتابعة.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}})));
   return;
@@ -17,7 +17,7 @@ self.addEventListener('fetch',event=>{
  const immutable=/[-.][A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(url.pathname);
  event.respondWith(caches.open(VERSION).then(async cache=>{
   if(immutable){const saved=await cache.match(event.request);if(saved)return saved;}
-  try{const response=await fetch(event.request);if(response.ok&&response.headers.get('Cache-Control')?.includes('public'))await cache.put(event.request,response.clone());return response;}
+  try{const response=await fetch(event.request);if(response.status===200&&response.headers.get('Cache-Control')?.includes('public'))await cache.put(event.request,response.clone());return response;}
   catch(error){const saved=await cache.match(event.request);if(saved)return saved;throw error;}
  }));
 });

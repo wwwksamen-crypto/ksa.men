@@ -216,3 +216,11 @@ html[data-season] .header{border-bottom-color:color-mix(in srgb,var(--gold) 35%,
 @media(max-width:360px){.header-inner{gap:6px}.brand{font-size:18px}.language-tool{min-width:38px}.icon-button{min-width:40px}.hero h1{font-size:31px}.hero-emblem{height:194px;width:212px}.hero-emblem img{width:147px}.hero-actions .button{font-size:12px}.feature-grid{grid-template-columns:1fr}.search-caption>span{max-width:180px}.auth-card{padding:21px}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 @media print{.header,.footer,.sanad-dock,.platform-controls,.toast,.update-bar,.skip-link{display:none!important}body{background:#fff;color:#111}.card{box-shadow:none;border-color:#ddd}.page{padding:0}.muted,p{color:#444}}
+
+/* Final composition and assistive entry points; no business styles or data. */
+.nav-sanad{display:none;background:transparent;border:0;color:var(--accent);font:inherit;align-items:center;gap:8px;cursor:pointer;min-height:44px;text-align:start}
+.emblem-face{display:grid;place-items:center;width:206px;height:206px;border-radius:48px;border:1px solid #d4d5b952;background:radial-gradient(ellipse at 24% 12%,#e0e2c252,transparent 64%),linear-gradient(150deg,#61776a42,#0a1e1699 45%,#4169535c);box-shadow:inset 0 2px 7px #ebefd736,inset 0 -6px 14px #0007,0 22px 32px #0006,0 0 52px #80ad6b15;transform:rotate(-6deg);position:relative;z-index:1}
+.hero-emblem .emblem-face img{width:162px;max-height:162px;transform:rotate(6deg);filter:drop-shadow(0 4px 3px #0006)}
+[data-theme="light"] .emblem-face{background:radial-gradient(ellipse at 24% 12%,#fff,transparent 64%),linear-gradient(145deg,#e1e5cf,#cadacb);box-shadow:inset 0 2px 7px #fff9,inset 0 -4px 12px #3d604533,0 16px 22px #203c2b19}
+@media(max-width:640px){.sanad-header-open{display:none}.nav-sanad{display:flex}.emblem-face{width:170px;height:170px;border-radius:40px}.hero-emblem .emblem-face img{width:138px;max-height:138px}}
+@media(max-width:360px){.emblem-face{width:155px;height:155px;border-radius:36px}.hero-emblem .emblem-face img{width:124px;max-height:124px}}

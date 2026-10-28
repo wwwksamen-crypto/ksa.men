@@ -808,3 +808,9 @@
   .dashboard *::before,
   .dashboard *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* A long DNS label must not move the save indicator outside a 320px screen. */
+.dashboard-hero__actions{min-width:0;max-width:100%}
+.dashboard-site-switch{min-width:0;max-inline-size:100%}
+.dashboard-site-switch > span{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:640px){.dashboard-hero__actions{inline-size:100%;justify-items:start}.dashboard-site-switch{inline-size:100%}}
