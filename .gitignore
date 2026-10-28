@@ -8,3 +8,4 @@ dist/
 checkpoints/
 private/
 *.log
+__pycache__/
