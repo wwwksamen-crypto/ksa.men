@@ -517,3 +517,5 @@
 
 .admin-console .admin-brand-glyph{display:grid;place-items:center;overflow:hidden}
 .admin-console .admin-brand-glyph img{width:27px;height:27px;object-fit:contain}
+
+.admin-console .button:not(.button-quiet):not(.button-secondary){color:#fff}

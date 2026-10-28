@@ -814,3 +814,5 @@
 .dashboard-site-switch{min-width:0;max-inline-size:100%}
 .dashboard-site-switch > span{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:640px){.dashboard-hero__actions{inline-size:100%;justify-items:start}.dashboard-site-switch{inline-size:100%}}
+
+.dashboard .button:not(.button--quiet){color:#fff}
