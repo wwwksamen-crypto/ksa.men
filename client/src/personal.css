@@ -788,3 +788,16 @@ dialog.identity-lightbox::backdrop { background: #031009e8; backdrop-filter: blu
   .identity-group { margin-bottom: 22px; }
   .identity-section { break-inside: avoid; margin-bottom: 14px; }
 }
+
+/* Keep mixed Arabic/Latin professional names readable without a narrow portrait column. */
+@media(max-width:640px){
+ .identity-hero__content{grid-template-columns:82px minmax(0,1fr);gap:12px 16px;padding-top:116px}
+ .identity-hero__portrait{grid-column:1;grid-row:1}
+ .identity-hero__copy{display:contents}
+ .identity-hero__meta{grid-column:2;grid-row:1;align-self:center;min-width:0}
+ .identity-hero__meta bdi{overflow-wrap:anywhere;max-width:100%}
+ .identity-hero h1{grid-column:1/-1;grid-row:2;min-width:0;font-size:clamp(27px,7.8vw,33px);line-height:1.35;text-wrap:balance}
+ .identity-hero__title{grid-column:1/-1;grid-row:3;margin:0;line-height:1.65}
+ .identity-hero__location{grid-column:1/-1;grid-row:4;margin:0}
+ .identity-hero__actions{grid-column:1/-1;grid-row:5;margin-top:6px}
+}

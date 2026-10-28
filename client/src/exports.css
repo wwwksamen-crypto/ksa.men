@@ -466,7 +466,7 @@
 .exports-preview-frame .export-digital-card__brand {
   top: 6.2%;
   inset-inline-start: 8.2%;
-  font-size: clamp(10px, 7.3cqw, 27px);
+  font-size: clamp(10px, 3cqw, 27px);
   letter-spacing: .22em;
 }
 
@@ -491,22 +491,22 @@
 }
 
 .exports-preview-frame .export-digital-card__content { inset-inline: 8.3%; bottom: 15%; }
-.exports-preview-frame .export-digital-card__content p { margin-bottom: 2.4%; font-size: clamp(9px, 6.7cqw, 25px); letter-spacing: .08em; }
-.exports-preview-frame .export-digital-card__content h2 { max-width: 100%; font-size: clamp(21px, 17.3cqw, 66px); }
+.exports-preview-frame .export-digital-card__content p { margin-bottom: 2.4%; font-size: clamp(9px, 2.78cqw, 25px); letter-spacing: .08em; }
+.exports-preview-frame .export-digital-card__content h2 { max-width: 100%; font-size: clamp(21px, 7.33cqw, 66px); }
 .exports-preview-frame .export-digital-card__content strong,
-.exports-preview-frame .export-digital-card__content small { margin-top: 2.1%; font-size: clamp(11px, 8.2cqw, 31px); }
-.exports-preview-frame .export-digital-card__content small { font-size: clamp(9px, 6.4cqw, 24px); overflow-wrap: anywhere; }
-.exports-preview-frame .export-digital-card__foot { inset-inline: 8.3%; bottom: 5.3%; padding-top: 2.8%; font-size: clamp(8px, 5.6cqw, 21px); overflow-wrap: anywhere; }
+.exports-preview-frame .export-digital-card__content small { margin-top: 2.1%; font-size: clamp(11px, 3.44cqw, 31px); }
+.exports-preview-frame .export-digital-card__content small { font-size: clamp(9px, 2.67cqw, 24px); overflow-wrap: anywhere; }
+.exports-preview-frame .export-digital-card__foot { inset-inline: 8.3%; bottom: 5.3%; padding-top: 2.8%; font-size: clamp(8px, 2.33cqw, 21px); overflow-wrap: anywhere; }
 
-.exports-preview-frame .export-social-card__brand { top: 8.3%; inset-inline-start: 5.6%; font-size: clamp(9px, 5.5cqw, 23px); letter-spacing: .22em; }
+.exports-preview-frame .export-social-card__brand { top: 8.3%; inset-inline-start: 5.6%; font-size: clamp(9px, 1.92cqw, 23px); letter-spacing: .22em; }
 .exports-preview-frame .export-social-card__content { top: 24.5%; inset-inline-start: 5.6%; width: 59%; }
-.exports-preview-frame .export-social-card__content > span { font-size: clamp(8px, 5cqw, 22px); }
-.exports-preview-frame .export-social-card__content h2 { margin: 1.6% 0 .7%; font-size: clamp(20px, 13.5cqw, 57px); overflow-wrap: anywhere; }
-.exports-preview-frame .export-social-card__content strong { font-size: clamp(10px, 6.2cqw, 26px); overflow-wrap: anywhere; }
-.exports-preview-frame .export-social-card__content p { margin-top: 2.3%; font-size: clamp(8px, 4.8cqw, 20px); line-height: 1.55; }
+.exports-preview-frame .export-social-card__content > span { font-size: clamp(8px, 1.83cqw, 22px); }
+.exports-preview-frame .export-social-card__content h2 { margin: 1.6% 0 .7%; font-size: clamp(18px, 4.75cqw, 57px); overflow-wrap: anywhere; }
+.exports-preview-frame .export-social-card__content strong { font-size: clamp(9px, 2.17cqw, 26px); overflow-wrap: anywhere; }
+.exports-preview-frame .export-social-card__content p { margin-top: 2.3%; font-size: clamp(8px, 1.67cqw, 20px); line-height: 1.55; }
 .exports-preview-frame .export-social-card__portrait { top: 20.6%; inset-inline-end: 7%; width: 19.85%; height: auto; aspect-ratio: 1; border-width: clamp(2px, .5cqw, 6px); }
 .exports-preview-frame .export-social-card__qr { inset-inline-end: 9.4%; bottom: 6.7%; width: 9.35%; height: auto; aspect-ratio: 1; padding: clamp(1px, .5cqw, 6px); border-radius: clamp(3px, 1cqw, 12px); }
-.exports-preview-frame .export-social-card__foot { left: 32.5%; right: 5.6%; bottom: 7.3%; font-size: clamp(7px, 4.3cqw, 18px); overflow-wrap: anywhere; }
+.exports-preview-frame .export-social-card__foot { left: 32.5%; right: 5.6%; bottom: 7.3%; font-size: clamp(7px, 1.5cqw, 18px); overflow-wrap: anywhere; }
 
 .exports-qr-preview {
   display: grid;

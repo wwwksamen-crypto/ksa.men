@@ -54,15 +54,17 @@ function App(){
  return <AppContext.Provider value={ctx}><div className={'app-shell '+(workspace?'workspace-shell':'')+(sub?' identity-shell':'')}>
   <a href="#main-content" className="skip-link">{t('تخطّ إلى المحتوى','Skip to content')}</a>
   <header className="header"><div className="header-inner">
-   <a className="brand" href={prefix+'/'} aria-label="KSA.MEN"><img src="/assets/icon-192.png" alt=""/><span>KSA<span className="brand-dot">.</span>MEN</span></a>
+   <a className="brand" href={prefix+'/'} aria-label="KSA.MEN"><img src="/assets/icon-192.png?rev=design20261028" alt=""/><span>KSA<span className="brand-dot">.</span>MEN</span></a>
    <nav id="main-nav" aria-label={t('التنقل الرئيسي','Main navigation')} className={menu?'nav open':'nav'}>
     <a href={prefix+'/search'}>{t('اكتشف الهويات','Discover')}</a><a href={prefix+'/features'}>{t('المزايا','Features')}</a><a href={prefix+'/about'}>{t('قصتنا','Our story')}</a>
     {user&&user.role!=='user'&&<a href={prefix+'/admin'}>{t('الإدارة','Admin')}</a>}
-    <button className="nav-sanad" type="button" onClick={()=>{setMenu(false);window.dispatchEvent(new Event("ksa:sanad-open"));}}><MessageCircle size={17}/>{t("معك سند","Ask Sanad")}</button>
+    {!sub&&<button className="nav-sanad" type="button" onClick={()=>{setMenu(false);window.dispatchEvent(new Event("ksa:sanad-open"));}}><MessageCircle size={17}/>{t("معك سند","Ask Sanad")}</button>}
     <a href={prefix+(user?'/dashboard':'/auth')} className="nav-main">{user?t('مساحتي','My space'):t('الدخول','Sign in')}<UserRound size={16}/></a>
+    {user&&<button className="nav-logout" type="button" onClick={logout}>{t("تسجيل الخروج","Sign out")}</button>}
    </nav>
    <div className="header-tools">{!sub&&<button className="icon-button sanad-header-open" type="button" onClick={()=>window.dispatchEvent(new Event("ksa:sanad-open"))} aria-label={t("فتح دليل سند","Open Sanad guide")}><MessageCircle size={19}/></button>}<button className="icon-button language-tool" onClick={()=>setLang(lang==='ar'?'en':'ar')} aria-label={t('English','العربية')}><Globe size={17}/><span>{lang==='ar'?'EN':'ع'}</span></button><button className="icon-button" onClick={()=>setTheme(theme==='dark'?'light':'dark')} aria-label={t('تبديل المظهر','Switch theme')}>{theme==='dark'?<Sun size={19}/>:<Moon size={19}/>}</button>{user&&<button className="icon-button logout" onClick={logout}>{t('خروج','Exit')}</button>}<button className="icon-button menu-button" onClick={()=>setMenu(!menu)} aria-label={t('القائمة','Menu')} aria-expanded={menu} aria-controls="main-nav">{menu?<X size={22}/>:<Menu size={22}/>}</button></div>
   </div></header>
+  {update&&<div className="update-bar" role="status"><span>{t('تجربة أحدث جاهزة. احفظ عملك ثم حدّث.','A fresh experience is ready. Save your work before updating.')}</span><Button onClick={()=>{update.postMessage('SKIP_WAITING');navigator.serviceWorker.addEventListener('controllerchange',()=>location.reload(),{once:true});}}>{t('تحديث','Update')}</Button></div>}
   <main id="main-content"><Suspense fallback={<div className="loader"><span className="load-line"/><p>{t('جارٍ التحميل','Loading')}</p></div>}>{page}</Suspense></main>
   {!sub&&<Sanad/>}
   <div className="platform-controls">
@@ -70,7 +72,6 @@ function App(){
    {!sub&&/iPad|iPhone|iPod/.test(navigator.userAgent)&&!matchMedia('(display-mode: standalone)').matches&&<details className="ios-install"><summary>{t('ثبّت KSA.MEN على iPhone','Install KSA.MEN on iPhone')}</summary><p>{t('من Safari: مشاركة، ثم «إضافة إلى الشاشة الرئيسية».','In Safari: Share, then Add to Home Screen.')}</p></details>}
   </div>
   <Footer sub={sub} platform={platform}/>
-  {update&&<div className="update-bar" role="status"><span>{t('تجربة أحدث جاهزة. احفظ عملك ثم حدّث.','A fresh experience is ready. Save your work before updating.')}</span><Button onClick={()=>{update.postMessage('SKIP_WAITING');navigator.serviceWorker.addEventListener('controllerchange',()=>location.reload(),{once:true});}}>{t('تحديث','Update')}</Button></div>}
   {toast&&<div className="toast" role="status"><Check size={18}/><span>{toast}</span></div>}
  </div></AppContext.Provider>;
 }
@@ -80,7 +81,7 @@ function Footer({sub,platform}:{sub:boolean,platform:any}){
  useEffect(()=>{let current=true;if(sub)return;api('/api/content/footer').then(d=>{if(current)setContent(d);}).catch(()=>{});return()=>{current=false;};},[sub]);
  const prefix=sub?'https://ksa.men':'',contact=platform?.contact||{},email=typeof contact.email==='string'?contact.email:'',whatsapp=typeof contact.whatsapp==='string'?contact.whatsapp.replace(/\D/g,''):'';
  const note=typeof content?.['body_'+lang]==='string'?content['body_'+lang].trim():'';
- return <footer className="footer"><div className="footer-inner"><div className="footer-signature"><a className="brand" href={prefix+'/'}><img src="/assets/icon-192.png" alt=""/>KSA.MEN</a><p>{note||t('ظهور رقمي يليق بك.','A presence worthy of you.')}</p></div><nav className="footer-links" aria-label={t('روابط المنصة','Platform links')}><a href={prefix+'/features'}>{t('المزايا','Features')}</a><a href={prefix+'/about'}>{t('من نحن','About')}</a><a href={prefix+'/contact'}>{t('تواصل معنا','Contact')}</a><a href={prefix+'/blog'}>{t('المدونة','Journal')}</a><a href={prefix+'/privacy'}>{t('الخصوصية','Privacy')}</a><a href={prefix+'/terms'}>{t('الاستخدام','Terms')}</a><a href={prefix+'/admin'}>{t('الإدارة والإشراف','Administration')}</a></nav><div className="footer-contact">{email&&<a href={'mailto:'+email}><Mail size={14}/><bdi dir="ltr">{email}</bdi></a>}{whatsapp&&<a href={'https://wa.me/'+whatsapp} target="_blank" rel="noreferrer"><Phone size={14}/>{t('تواصل عبر واتساب','WhatsApp')}</a>}</div></div><div className="footer-bottom"><p>© {new Date().getFullYear()} KSA.MEN</p><span>{t('هويتك. قصتك. أثرك.','Your identity. Your story. Your impact.')}</span></div></footer>;
+ return <footer className="footer"><div className="footer-inner"><div className="footer-signature"><a className="brand" href={prefix+'/'}><img src="/assets/icon-192.png?rev=design20261028" alt=""/>KSA.MEN</a><p>{note||t('ظهور رقمي يليق بك.','A presence worthy of you.')}</p></div><nav className="footer-links" aria-label={t('روابط المنصة','Platform links')}><a href={prefix+'/features'}>{t('المزايا','Features')}</a><a href={prefix+'/about'}>{t('من نحن','About')}</a><a href={prefix+'/contact'}>{t('تواصل معنا','Contact')}</a><a href={prefix+'/blog'}>{t('المدونة','Journal')}</a><a href={prefix+'/privacy'}>{t('الخصوصية','Privacy')}</a><a href={prefix+'/terms'}>{t('الاستخدام','Terms')}</a><a href={prefix+'/admin'}>{t('الإدارة والإشراف','Administration')}</a></nav><div className="footer-contact">{email&&<a href={'mailto:'+email}><Mail size={14}/><bdi dir="ltr">{email}</bdi></a>}{whatsapp&&<a href={'https://wa.me/'+whatsapp} target="_blank" rel="noreferrer"><Phone size={14}/>{t('تواصل عبر واتساب','WhatsApp')}</a>}</div></div><div className="footer-bottom"><p>© {new Date().getFullYear()} KSA.MEN</p><span>{t('هويتك. قصتك. أثرك.','Your identity. Your story. Your impact.')}</span></div></footer>;
 }
 function useManagedContent(slug:string){const[data,setData]=useState<any>(null);useEffect(()=>{let active=true;api('/api/content/'+slug).then(value=>{if(active)setData(value);}).catch(()=>{});return()=>{active=false;};},[slug]);return data;}
 function ManagedText({slug,fallback}:{slug:string,fallback:React.ReactNode}){const{lang}=useApp();const[data,setData]=useState<any>(null);useEffect(()=>{let current=true;api('/api/content/'+slug).then(value=>{if(current)setData(value);}).catch(()=>{if(current)setData(null);});return()=>{current=false;};},[slug]);const body=data?.['body_'+lang];if(typeof body!=='string'||!body.trim())return <>{fallback}</>;return <>{body.split(/\n\n/).filter(Boolean).map((paragraph:string,index:number)=><p key={index}>{paragraph}</p>)}</>;}
@@ -131,7 +132,7 @@ function Auth(){
    <div className="auth-mark"><img src="/assets/logo-emblem.webp" alt=""/></div><span className="eyebrow">{t('الخطوة الأولى إلى حضورك','YOUR NEXT CHAPTER')}</span>
    <h1>{t('اسمك عنوانك.','Your name. Your address.')}<br/><span>{t('والقصة قصتك.','The story is yours.')}</span></h1>
    <p>{t('مساحة مستقلة لخبرتك، تبدأ بخطوة بسيطة.','An independent place for your expertise. Start with one simple step.')}</p>
-   <img src="/assets/cover-720.webp" alt=""/>
+   <img src="/assets/cover-720.webp?rev=design20261028" alt=""/>
    <div className="auth-benefits"><p><Check/>{t('عنوان مستقل يحمل اسمك','An independent address')}</p><p><Check/>{t('٣ أيام مجانية لجميع المزايا','3 free days with every feature')}</p><p><ShieldCheck/>{t('رمز بريد آمن، دون كلمة مرور عامة','Secure email verification')}</p></div>
   </section>
   <section className="auth-card card">

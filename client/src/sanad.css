@@ -510,3 +510,5 @@
 .sanad-transcript[open] summary::after{content:'−'}
 .sanad-transcript summary::-webkit-details-marker{display:none}
 .sanad-transcript summary:focus-visible{outline:3px solid var(--gold);outline-offset:3px;border-radius:8px}
+
+.sanad-sprite--dock{background-image:url('/assets/sanad/portrait.webp');background-size:cover;background-position:center}
