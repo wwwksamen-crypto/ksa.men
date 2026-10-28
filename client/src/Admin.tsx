@@ -339,7 +339,7 @@ export default function Admin() {
   const [expense, setExpense] = useState({ label: '', amount: '', notes: '' });
   const [servicePolicies, setServicePolicies] = useState<Record<string, JsonRecord>>({});
 
-  const availableTabs = useMemo(() => tabs.filter((item) => item.roles.includes(ownRole)), [ownRole]);
+  const availableTabs = useMemo(() => tabs.filter((item) => item.roles.includes(ownRole) && (item.id !== 'payments' || financialOperator)), [ownRole, financialOperator]);
   const error = tabErrors[tab] ?? '';
   const setTabError = useCallback((target: AdminTab, message: string) => {
     setTabErrors((current) => ({ ...current, [target]: message }));
@@ -753,7 +753,7 @@ export default function Admin() {
             <div><dt>{tr('إصدار النشر الحالي', 'Current published version')}</dt><dd><bdi dir="ltr">{text(currentPublishedVersion, tr('غير متاح', 'Unavailable'))}</bdi></dd></div>
             <div><dt>{tr('حالة الأساس', 'Base state')}</dt><dd><span className={`admin-status ${stale === true ? 'danger' : stale === false ? 'success' : 'neutral'}`}>{stale === true ? tr('قديمة — تغيّر النشر', 'Stale — publication changed') : stale === false ? tr('مطابقة للنشر الحالي', 'Matches current publication') : tr('غير متاح', 'Unavailable')}</span></dd></div>
           </dl>
-          <section className="admin-review-comparison" aria-label={tr('مقارنة اللقطة', 'Snapshot comparison')}><div className="admin-review-comparison-heading"><strong>{tr('مقارنة فعلية للّقطة', 'Actual snapshot comparison')}</strong><span className="muted">{tr('النشر الحالي مقابل اللقطة المرسلة غير القابلة للتغيير.', 'Current publication versus the immutable submitted snapshot.')}</span></div><SnapshotDiff review={review} tr={tr} /></section>
+          <details className="admin-review-comparison"><summary className="admin-review-comparison-heading"><strong>{tr('عرض مقارنة اللقطة', 'View snapshot comparison')}</strong><span className="muted">{tr('افتح تفاصيل الحقول عند الحاجة؛ معاينة اللقطة والقرار مستقلان أدناه.', 'Expand field details as needed; preview and decision remain separately accessible below.')}</span></summary><SnapshotDiff review={review} tr={tr} /></details>
           <div className="admin-actions">
             <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء التفاصيل', 'Hide review details') : pending ? tr('فتح منطقة القرار', 'Open decision area') : tr('عرض تفاصيل القرار', 'View decision details')}</button>
             {preview && <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('فتح معاينة اللقطة المحمية', 'Open protected snapshot preview')}</a>}
@@ -902,7 +902,7 @@ export default function Admin() {
           <span>{activeTab ? tr(activeTab.ar, activeTab.en) : tr('الإدارة', 'Administration')}</span>
           <ChevronDown size={18} strokeWidth={1.7} aria-hidden="true" />
         </summary>
-        <AdminNavigation tabs={availableTabs} activeTab={tab} tr={tr} onSelect={switchTab} />
+        <AdminNavigation tabs={availableTabs} activeTab={tab} tr={tr} onSelect={(nextTab) => { switchTab(nextTab); document.querySelector<HTMLDetailsElement>('.admin-mobile-nav')?.removeAttribute('open'); }} />
       </details>
       <section className="admin-workspace" aria-busy={initialLoad}>
         {error && <div className="admin-alert" role="alert"><span>{error}</span>{freshRequiredTabs[tab] ? <a className="button button-quiet button-small" href="/auth?reauth=1">{tr('إعادة التحقق', 'Reauthenticate')}</a> : <button type="button" onClick={() => setError('')} aria-label={tr('إغلاق', 'Dismiss')}>×</button>}</div>}

@@ -219,8 +219,8 @@ html[data-season] .header{border-bottom-color:color-mix(in srgb,var(--gold) 35%,
 
 /* Final composition and assistive entry points; no business styles or data. */
 .nav-sanad{display:none;background:transparent;border:0;color:var(--accent);font:inherit;align-items:center;gap:8px;cursor:pointer;min-height:44px;text-align:start}
-.emblem-face{display:grid;place-items:center;width:206px;height:206px;border-radius:48px;border:1px solid #d4d5b952;background:radial-gradient(ellipse at 24% 12%,#e0e2c252,transparent 64%),linear-gradient(150deg,#61776a42,#0a1e1699 45%,#4169535c);box-shadow:inset 0 2px 7px #ebefd736,inset 0 -6px 14px #0007,0 22px 32px #0006,0 0 52px #80ad6b15;transform:rotate(-6deg);position:relative;z-index:1}
-.hero-emblem .emblem-face img{width:162px;max-height:162px;transform:rotate(6deg);filter:drop-shadow(0 4px 3px #0006)}
+.emblem-face{display:grid;place-items:center;width:206px;height:206px;border-radius:48px;border:1px solid #d4d5b952;background:radial-gradient(ellipse at 24% 12%,#fff,transparent 68%),linear-gradient(150deg,#eef6ed,#d6e8d9 60%,#b7d3bd);box-shadow:inset 0 2px 7px #ffffff9e,inset 0 -4px 12px #255d382b,0 22px 38px #0005,0 0 66px #72ab6e20;transform:rotate(-6deg);position:relative;z-index:1}
+.hero-emblem .emblem-face img{width:162px;max-height:162px;transform:rotate(6deg);filter:drop-shadow(0 4px 3px #153d251f)}
 [data-theme="light"] .emblem-face{background:radial-gradient(ellipse at 24% 12%,#fff,transparent 64%),linear-gradient(145deg,#e1e5cf,#cadacb);box-shadow:inset 0 2px 7px #fff9,inset 0 -4px 12px #3d604533,0 16px 22px #203c2b19}
 @media(max-width:640px){.sanad-header-open{display:none}.nav-sanad{display:flex}.emblem-face{width:170px;height:170px;border-radius:40px}.hero-emblem .emblem-face img{width:138px;max-height:138px}}
 @media(max-width:360px){.emblem-face{width:155px;height:155px;border-radius:36px}.hero-emblem .emblem-face img{width:124px;max-height:124px}}
@@ -232,3 +232,8 @@ html[data-season] .header{border-bottom-color:color-mix(in srgb,var(--gold) 35%,
 .identity-legal{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:12px 28px;border-top:1px solid var(--border);padding:12px var(--gutter);color:var(--muted);font-size:12px}.identity-legal a{display:flex;align-items:center;min-height:44px}.identity-legal a:hover{color:var(--accent)}
 
 .boot-recovery{width:min(90%,480px);margin:12vh auto;padding:32px;border:1px solid var(--line);border-radius:24px;background:var(--surface);color:var(--text);text-align:start}.boot-recovery h1{font-size:28px}.boot-recovery p{line-height:1.8;margin:16px 0 24px}
+
+/* One deliberate welcome movement; no perpetual animation or distraction. */
+@keyframes ksa-mark-arrive{0%{transform:translateY(9px) rotate(-9deg);opacity:.7}50%{transform:translateY(-3px) rotate(-4deg);opacity:1}100%{transform:translateY(0) rotate(-6deg);opacity:1}}
+@keyframes ksa-orbit-arrive{0%{transform:rotate(-65deg);opacity:0}40%{opacity:.85}100%{transform:rotate(-30deg);opacity:1}}
+@media(prefers-reduced-motion:no-preference){.hero-emblem .emblem-face{animation:ksa-mark-arrive 4.6s cubic-bezier(.2,.8,.2,1) 1}.hero-emblem .orbit-two{animation:ksa-orbit-arrive 4.6s ease-out 1}.hero-emblem:hover .emblem-face{box-shadow:inset 0 2px 7px #fff9,inset 0 -4px 12px #255d382b,0 22px 38px #0005,0 0 75px #72ab6e35;transition:box-shadow .35s}}

@@ -734,6 +734,7 @@ export function registerOperations(app: App): void {
     const rows = await all<DecidedReviewRow & { published: string | null; current_published_version: number; site_status: string; submitter_name: string }>(
       c,
       `SELECT r.*,s.published,s.published_version AS current_published_version,s.status AS site_status,u.name AS submitter_name,
+              (SELECT dn.name FROM dns_names dn WHERE dn.site_id=s.id ORDER BY dn.created_at,dn.name LIMIT 1) AS site_name,
               d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
        FROM reviews r JOIN sites s ON s.id=r.site_id JOIN users u ON u.id=r.user_id
        LEFT JOIN review_decisions d ON d.review_id=r.id
@@ -1363,6 +1364,7 @@ export function registerOperations(app: App): void {
   app.get("/api/content/:slug", async (c) => {
     const slug = text(c.req.param("slug"), "slug", { max: 96 });
     const content = await one<Record<string, unknown>>(c, "SELECT slug,title_ar,title_en,body_ar,body_en,status,updated_at FROM content WHERE slug=? AND status='published'", slug);
+    if (!content && slug === "footer") return c.json({ slug, available: false, content: null });
     if (!content) fail(404, "Content not found", "not_found");
     return c.json({ ...content, content });
   });

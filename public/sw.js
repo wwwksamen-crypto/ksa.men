@@ -1,5 +1,5 @@
 /* PWA caches only public, immutable application assets, never account/API responses. */
-const VERSION='ksa-static-launch-20261028';
+const VERSION='ksa-static-launch-20261028-2';
 self.addEventListener('install',event=>event.waitUntil(caches.open(VERSION).then(cache=>cache.add('/offline.html'))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==VERSION).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('message',event=>{
@@ -17,7 +17,7 @@ self.addEventListener('fetch',event=>{
  const immutable=/[-.][A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(url.pathname);
  event.respondWith(caches.open(VERSION).then(async cache=>{
   if(immutable){const saved=await cache.match(event.request);if(saved)return saved;}
-  try{const response=await fetch(event.request,{cache:immutable?'no-cache':'default'});if(response.status===200&&response.headers.get('Cache-Control')?.includes('public'))await cache.put(event.request,response.clone());return response;}
+  try{const response=await fetch(event.request,{cache:['reload','no-store'].includes(event.request.cache)?event.request.cache:'no-cache'});if(response.status===200&&response.headers.get('Cache-Control')?.includes('public'))await cache.put(event.request,response.clone());return response;}
   catch(error){const saved=await cache.match(event.request);if(saved)return saved;throw error;}
  }));
 });

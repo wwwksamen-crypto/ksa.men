@@ -6,7 +6,7 @@ p=root/'server/index.ts';s=p.read_text();s=s.replace("'/offline.html', '/gate.js
 s=s.replace("if (error instanceof HTTPException) return c.json({ error: error.message || 'تعذر تنفيذ الطلب' }, error.status);","""if (error instanceof HTTPException) {
     const response = error.getResponse();
     if (response.headers.get('Content-Type')?.includes('application/json')) {
-      return c.newResponse(response.body, { status: response.status, headers: response.headers });
+      return c.newResponse(response.body, error.status, Object.fromEntries(response.headers));
     }
     return c.json({ error: error.message || 'تعذر تنفيذ الطلب' }, error.status);
   }""")

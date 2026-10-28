@@ -294,7 +294,8 @@ function clearWalletIdempotencyKey(operation: WalletOperation, key: string) {
   } catch { /* Storage is optional after a definitive response. */ }
 }
 function ambiguousNetworkFailure(error: unknown) {
-  return error instanceof TypeError || (error instanceof Error && /(?:failed to fetch|network(?:error)?|load failed)/i.test(error.message));
+  const status = Number((error as { status?: number } | null)?.status || 0);
+  return status >= 500 || status === 408 || error instanceof TypeError || (error instanceof DOMException && ['AbortError', 'TimeoutError'].includes(error.name)) || (error instanceof Error && /(?:failed to fetch|network(?:error)?|load failed)/i.test(error.message));
 }
 function routeParams() {
   const query = new URLSearchParams(window.location.search);
@@ -534,7 +535,7 @@ export default function Dashboard() {
   }, [previewOpen]);
 
   const loadDashboard = useCallback(async () => {
-    setLoading(true);
+    if (!siteIdRef.current) setLoading(true);
     setLoadError('');
     try {
       const data = await api<DashboardData>('/api/dashboard');
@@ -547,6 +548,10 @@ export default function Dashboard() {
       // A delegated editor link is always resolved by the server route; it is never fabricated from URL data.
       if (!siteIdRef.current && explicitSite) await openSite({ id: explicitSite });
       else if (!siteIdRef.current && candidates[0]) await openSite(candidates[0]);
+      else {
+        const current = candidates.find((site) => site.id === siteIdRef.current);
+        if (current) setActiveSite((existing) => existing ? { ...existing, ...current } : existing);
+      }
     } catch (error) {
       setLoadError(errorMessage(error));
     } finally {
@@ -735,9 +740,18 @@ export default function Dashboard() {
       return false;
     } finally {
       savingRef.current = false;
+      if (dirtyRef.current && revisionRef.current !== revision && siteIdRef.current === siteId) {
+        window.setTimeout(() => { void saveDraft(true); }, 350);
+      }
     }
   }, [notify, tr]);
 
+  useEffect(() => {
+    if (!dirtyRef.current) return;
+    const timer = window.setTimeout(() => { void saveDraft(true); }, 900);
+    return () => window.clearTimeout(timer);
+  }, [draft, saveDraft]);
+  useEffect(() => () => { siteIdRef.current = null; }, []);
   useEffect(() => {
     const interval = window.setInterval(() => { if (dirtyRef.current) void saveDraft(true); }, 15_000);
     return () => window.clearInterval(interval);
@@ -1092,7 +1106,7 @@ export default function Dashboard() {
   const bankIntakeReason = asText(paymentInstructions?.reason) || (paymentInstructions === null
     ? tr('اعرض التعليمات الرسمية أولاً قبل إرسال الطلب.', 'Show the official instructions before submitting a request.')
     : tr('بوابة الحوالة غير نشطة حالياً، لذلك لا يمكن إرسال الطلب.', 'Bank-transfer intake is not active, so this request cannot be submitted.'));
-  const initialReservationFlow = !activeSite && activeTab === 'editor' && unboundNames.length === 0;
+  const initialReservationFlow = !activeSite && activeTab === 'editor';
   const profileCompletion = useMemo(() => {
     const signals = [draft.name, draft.title, draft.bio, draft.city, draft.photo, draft.experience.length, draft.skills.length, draft.languages.length, draft.socials.length, draft.workImages.length];
     return Math.round((signals.filter(Boolean).length / signals.length) * 100);
@@ -1152,7 +1166,13 @@ export default function Dashboard() {
       </section>}
 
       {activeTab === 'editor' && <section className="dashboard-editor">
-        {!activeSite ? <InitialNameReservation
+        {!activeSite ? <>
+          {(handovers.length > 0 || pendingTransfers.length > 0 || unboundNames.length > 0) && <section className="card dashboard-received-invites"><h2>{tr('خطوة جاهزة لك', 'A ready next step')}</h2><p className="muted">{tr('لديك اسم أو تسليم مرتبط بحسابك. يمكنك إكماله هنا دون حجز اسم إضافي.', 'A name or handover is associated with your account. Complete it here without reserving another name.')}</p>
+            {unboundNames.map((item) => <div key={item.name}><strong dir="ltr">{item.name}.ksa.men</strong><button className="button" disabled={Boolean(attachingName)} onClick={() => void attachUnboundName(item.name, null)}>{tr('ابدأ بهذا الاسم', 'Start with this name')}</button></div>)}
+            {handovers.map((item) => <div key={String(item.id)}><span>{tr('موقع بانتظار قبول تسليمه', 'A site awaits your handover acceptance')}</span><button className="button" onClick={() => void acceptHandover(String(item.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}
+            {pendingTransfers.map((item) => <div key={String(item.id)}><strong dir="ltr">{String(item.name)}.ksa.men</strong><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(item.id))}>{tr('قبول الاسم المنقول', 'Accept transferred name')}</button></div>)}
+          </section>}
+          <InitialNameReservation
           candidate={nameCandidate}
           availability={nameAvailability?.name === normalizedNameCandidate ? nameAvailability : null}
           checking={checkingName}
@@ -1161,7 +1181,7 @@ export default function Dashboard() {
           onChange={(value) => setNameCandidate(value.toLowerCase())}
           onReserve={reserveInitialName}
           tr={tr}
-        /> : <>
+        /></> : <>
         <div className="dashboard-editor-top card">
           <div className="dashboard-site-row">
             <div>
@@ -1265,7 +1285,7 @@ export default function Dashboard() {
       {activeTab === 'settings' && <section className="dashboard-settings stack">
         <section className="card dashboard-notification-sound"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('صوت التنبيهات', 'Notification sound')}</h2></div></div><p className="muted">{tr('خيار محلي لهذا المتصفح، متوقف افتراضياً. يتطلب التفعيل تفاعلك لتهيئة الصوت؛ لا يُرسل هذا التفضيل إلى الخادم.', 'A local preference for this browser, off by default. Enabling requires your interaction to initialize audio; this preference is not sent to the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={notificationSoundEnabled} onChange={(event) => void setNotificationSound(event.target.checked)}/>{tr('تشغيل نغمة للتنبيهات الجديدة فقط', 'Play a chime only for newly observed notifications')}</label></section>
         <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
-        <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div><a className="button button--quiet" href="/auth?return=%2Fdashboard%3Ftab%3Dsettings">{tr('إعادة التحقق بالبريد', 'Verify again by email')}</a></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/[٠-٩۰-۹]/g, (character) => String(character.charCodeAt(0) - (character.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660))).replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/[٠-٩۰-۹]/g, (character) => String(character.charCodeAt(0) - (character.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660))).replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
         {unboundNames.length > 0 && <section className="card dashboard-unbound-names"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('ربط اسم منقول', 'Attach transferred name')}</h2></div></div><p className="muted">{tr('الاسم المنقول ملك لك لكنه غير مرتبط بمسودة. اختر مسودة قائمة أو أنشئ الأولى منه.', 'This transferred name belongs to you but is not attached to a draft. Choose an existing draft or create the first one from it.')}</p>{attachSites.length > 0 && <label><span>{tr('المسودة المستهدفة', 'Target draft')}</span><select className="field" value={attachmentSiteId || ''} onChange={(event) => setAttachTargetId(event.target.value)}>{attachSites.map((site) => <option key={site.id} value={site.id}>{site.name ? `${site.name}.ksa.men` : site.id}</option>)}</select></label>}<div className="dashboard-unbound-name-list">{unboundNames.map((item) => <div key={item.name}><strong dir="ltr"><bdi>{item.name}.ksa.men</bdi></strong><button className="button button--quiet" disabled={Boolean(attachingName)} onClick={() => void attachUnboundName(item.name, attachmentSiteId)}>{attachingName === item.name ? <RefreshCw className="spin" size={16}/> : <Link2 size={16}/>} {attachmentSiteId ? tr('ربط بالمسودة', 'Attach to draft') : tr('إنشاء مسودة وربط الاسم', 'Create draft & attach')}</button></div>)}</div></section>}
         <section className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('نقل الاسم المميز', 'Distinctive name transfer')}</h2></div></div><p className="muted">{tr('يُنقل الاسم فقط؛ لا تنتقل المسودة أو المحتوى أو الصور أو روابط QR تلقائياً، وقد تتأثر الروابط القديمة.', 'Only the name transfers. Draft, content, images, and QR links do not transfer automatically, and old links may be affected.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الاسم المملوك', 'Owned name')}</span><input className="field" value={nameTransfer.name} onChange={(event) => setNameTransfer({ ...nameTransfer, name: event.target.value })}/></label><label><span>{tr('المستفيد (C# أو اسم)', 'Recipient (C# or name)')}</span><input className="field" value={nameTransfer.recipient} onChange={(event) => setNameTransfer({ ...nameTransfer, recipient: event.target.value })}/></label></div><label className="dashboard-check"><input type="checkbox" checked={nameTransfer.confirmed} onChange={(event) => setNameTransfer({ ...nameTransfer, confirmed: event.target.checked })}/>{tr('أفهم أثر النقل وفصل الاسم عن بيانات الموقع.', 'I understand the transfer consequences and separation from site data.')}</label><button className="button" disabled={!nameTransfer.confirmed} onClick={() => void beginNameTransfer()}><ArrowLeftRight size={16}/>{tr('إنشاء طلب نقل', 'Create transfer request')}</button>{pendingTransfers.length > 0 && <div className="dashboard-pending-list">{pendingTransfers.map((transfer, index) => <div key={String(transfer.id ?? index)}><span>{String(transfer.name ?? tr('اسم مميز', 'Distinctive name'))}</span><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(transfer.id))}>{tr('قبول النقل', 'Accept transfer')}</button></div>)}</div>}</section>
         {handovers.length > 0 && <section className="card"><div className="dashboard-section-heading"><div><UsersRound size={18}/><h2>{tr('تسليمات بانتظار قبولك', 'Handovers awaiting your acceptance')}</h2></div></div>{handovers.map((handover, index) => <div className="dashboard-history-row" key={String(handover.id ?? index)}><p>{String(handover.site_id ?? '')}</p><time>{formatDate(Number(handover.created_at), locale)}</time><button className="button button--quiet" onClick={() => void acceptHandover(String(handover.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}</section>}

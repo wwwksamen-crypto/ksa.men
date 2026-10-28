@@ -24,7 +24,8 @@ const errorText:Record<string,[string,string]>={
   INSUFFICIENT_BALANCE:['رصيد النقاط لا يكفي لهذه العملية.','There are not enough points for this operation.'],
 };
 function readableError(data:any,status:number){
-  const english=localStorage.getItem('ksa-lang')==='en';
+  let english=document.documentElement.lang==='en';
+  try { english=localStorage.getItem('ksa-lang')==='en'||english; } catch { /* Language still follows the current document. */ }
   const code=String(data.code||'').toUpperCase();
   if(errorText[code])return errorText[code][english?1:0];
   const message=String(data.error||data.message||'');

@@ -253,8 +253,9 @@ export default function Personal() {
   const profile = data?.profile || {};
   const siteName = stringValue(data?.name);
   const profileUrl = siteName ? `https://${siteName}.ksa.men` : '';
-  const profilePhoto = stringValue(profile.photo) || '/assets/icon-192.png';
-  const profileCover = stringValue(profile.cover) || '/assets/cover-1600.webp';
+  const staticImage = (value: string) => value.startsWith('/assets/') && !value.includes('?') ? value + '?rev=launch20261028' : value;
+  const profilePhoto = staticImage(stringValue(profile.photo) || '/assets/icon-192.png');
+  const profileCover = staticImage(stringValue(profile.cover) || '/assets/cover-1600.webp');
   const displayName = stringValue(profile.name) || siteName;
   const location = [stringValue(profile.city), stringValue(profile.country)].filter(Boolean).join(lang === 'ar' ? '، ' : ', ');
 

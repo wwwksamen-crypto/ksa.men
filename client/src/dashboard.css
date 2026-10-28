@@ -865,3 +865,5 @@
 @media(max-width:640px){.dashboard-hero__actions{inline-size:100%;justify-items:start}.dashboard-site-switch{inline-size:100%}}
 
 .dashboard .button:not(.button--quiet){color:#fff}
+
+.dashboard-received-invites{display:grid;gap:16px}.dashboard-received-invites>div{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.dashboard-received-invites strong{overflow-wrap:anywhere;min-width:0}
