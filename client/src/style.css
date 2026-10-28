@@ -228,3 +228,5 @@ html[data-season] .header{border-bottom-color:color-mix(in srgb,var(--gold) 35%,
 .nav-logout{display:none;background:transparent;border:0;color:var(--muted);font:inherit;min-height:44px;text-align:start;cursor:pointer}
 .update-bar{position:relative;inset:auto;transform:none;margin:12px auto 0;inline-size:min(700px,calc(100% - var(--gutter)*2));max-inline-size:100%;z-index:1}
 @media(max-width:640px){.nav-logout{display:flex;align-items:center}.update-bar{flex-wrap:wrap;font-size:13px;justify-content:space-between;margin-block:10px 0}}
+
+.identity-legal{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:12px 28px;border-top:1px solid var(--border);padding:12px var(--gutter);color:var(--muted);font-size:12px}.identity-legal a{display:flex;align-items:center;min-height:44px}.identity-legal a:hover{color:var(--accent)}

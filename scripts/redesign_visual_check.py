@@ -46,6 +46,30 @@ async def main():
    await g.get_by_role('button',name='متابعة',exact=True).click();await g.wait_for_timeout(400);await g.locator('.sanad-dialog').get_by_role('button',name='إخفاء',exact=True).click();CHECKS.append({'hiddenPreferenceSaved':await g.evaluate("localStorage.getItem('ksa-sanad')==='hidden'"),'inlineGuidancePresent':await g.locator('.sanad-inline-guide').is_visible()})
    await g.locator('.sanad-inline-guide').click();await g.get_by_role('button',name='تشغيل التسجيل',exact=True).click();await g.wait_for_timeout(900);CHECKS.append({'restoreSpeechWorks':await g.locator('audio').evaluate('(a)=>!a.paused&&a.currentTime>.5'),'restoreFrame':await g.locator('.sanad-portrait-panel .sanad-sprite').get_attribute('class')});await g.keyboard.press('Escape');CHECKS.append({'closeStopsAudio':await g.locator('audio').evaluate('(a)=>a.paused&&a.currentTime===0')})
    await guest.close()
+  elif MODE=='polished':
+   for width in [1366,390]:
+    await capture('final-home-'+str(width),'/','.hero',width,True)
+    await capture('final-admin-'+str(width),'/admin','.admin-console',width)
+   await capture('final-editor-320','/dashboard?site='+SITE['id'],'.dashboard-edit-card',320)
+   await page.get_by_role('button',name='تبديل المظهر',exact=True).click();await page.screenshot(path=str(OUT/'final-editor-light-320.png'))
+   await capture('final-admin-light-390','/admin','.admin-console',390)
+   await page.get_by_role('button',name='تبديل المظهر',exact=True).click();await page.screenshot(path=str(OUT/'final-admin-light-390.png'))
+   guest=await browser.new_context(viewport={'width':1366,'height':920});await guest.route('**/api/**',safe);g=await guest.new_page();g.on('pageerror',lambda e:errors.append(str(e)))
+   loaded=[];g.on('request',lambda r:loaded.append(r.url) if '/assets/sanad/' in r.url else None)
+   await g.goto('https://ksa.men/auth',wait_until='networkidle');await g.locator('.auth-card').wait_for();CHECKS.append({'atlasLoadedBeforeOpening':any('sprites.webp' in x for x in loaded),'recordingLoadedBeforeClick':any('.mp3' in x for x in loaded)})
+   for width in [1366,390]:
+    await g.set_viewport_size({'width':width,'height':920 if width>760 else 844})
+    if width>760:await g.get_by_role('button',name='فتح دليل سند',exact=True).click()
+    else:
+     await g.get_by_role('button',name='القائمة',exact=True).click();await g.locator('.nav-sanad').click()
+    await g.locator('.sanad-dialog[open]').wait_for();CHECKS.append({'dialogWidth':width,'rect':await g.locator('.sanad-dialog').evaluate('(e)=>e.getBoundingClientRect().toJSON()')})
+    await g.get_by_role('button',name='تشغيل التسجيل',exact=True).click();await g.wait_for_timeout(1200);frames=set()
+    for i in range(8):frames.add(await g.locator('.sanad-portrait-panel .sanad-sprite').get_attribute('class'));await g.wait_for_timeout(120)
+    CHECKS.append({'speechWidth':width,'audio':await g.locator('audio').evaluate('(a)=>({playing:!a.paused,time:a.currentTime,error:a.error?.code||null})'),'frames':sorted(frames)})
+    await g.screenshot(path=str(OUT/('final-sanad-'+str(width)+'.png')));await g.keyboard.press('Escape')
+    CHECKS.append({'closeWidth':width,'audioStopped':await g.locator('audio').evaluate('(a)=>a.paused&&a.currentTime===0')})
+   await g.get_by_role('button',name='English',exact=True).click();await g.get_by_role('button',name='Menu',exact=True).click();await g.locator('.nav-sanad').click();await g.get_by_role('button',name='Play recording',exact=True).click();await g.wait_for_timeout(1000);CHECKS.append({'englishSpeech':await g.locator('audio').evaluate('(a)=>({playing:!a.paused,english:a.currentSrc.includes("home-en.mp3")})'),'documentDirection':await g.evaluate('document.documentElement.dir')});await g.screenshot(path=str(OUT/'final-sanad-english-mobile.png'));await g.keyboard.press('Escape');await guest.close()
+   reduced=await browser.new_context(viewport={'width':390,'height':844},reduced_motion='reduce');await reduced.route('**/api/**',safe);rg=await reduced.new_page();await rg.goto('https://ksa.men/auth',wait_until='networkidle');await rg.get_by_role('button',name='القائمة',exact=True).click();await rg.locator('.nav-sanad').click();await rg.get_by_role('button',name='تشغيل التسجيل',exact=True).click();await rg.wait_for_timeout(700);CHECKS.append({'reducedMotionRespected':await rg.locator('.sanad-portrait-panel .sanad-sprite').get_attribute('class'),'reducedMotionAudioWorks':await rg.locator('audio').evaluate('(a)=>!a.paused'),'motionButtonDisabled':await rg.get_by_role('button',name='الحركة مخفّضة حسب جهازك',exact=True).is_disabled()});await rg.keyboard.press('Escape');await reduced.close()
   elif MODE=='private':
    profile=json.loads(ROW['published']);hidden=profile.get('hidden',[])
    for key in hidden:profile.pop(key,None)
@@ -65,7 +89,9 @@ async def main():
    await context.unroute('**/api/**',safe);await context.route('**/*',fixture)
    for width in [1366,390]:
     await page.set_viewport_size({'width':width,'height':920 if width>760 else 844});await page.goto('https://'+ROW['site_name']+'.ksa.men/',wait_until='networkidle');await page.locator('.identity-page').wait_for();await page.screenshot(path=str(OUT/('private-profile-'+str(width)+'.png')),full_page=True);CHECKS.append({'screen':'private-profile-'+str(width),'isolatedExistingData':True,'width':width,'documentWidth':await page.evaluate('document.documentElement.scrollWidth')})
-   await page.goto('https://ksa.men/export/card?site='+ROW['id'],wait_until='networkidle');await page.locator('.exports-preview-panel').wait_for();await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'private-output-studio-mobile.png'),full_page=True)
+   if len(sys.argv)>2 and sys.argv[2]=='profile':
+    (OUT/'visual-private-profile-final.json').write_text(json.dumps({'checks':CHECKS,'pageErrors':errors},ensure_ascii=False,indent=2));await context.close();print('Final private profile capture completed.',flush=True);return
+   await page.goto('https://ksa.men/export/card?site='+ROW['id'],wait_until='networkidle');await page.locator('.exports-preview-panel').wait_for();await page.set_viewport_size({'width':390,'height':844});await page.screenshot(path=str(OUT/'private-output-studio-mobile.png'),full_page=True);await page.locator('.exports-preview-panel').screenshot(path=str(OUT/'final-card-preview-mobile.png'))
    with_download=page.get_by_role('button',name='تنزيل البطاقة الرقمية',exact=False)
    if await with_download.count():
     async with page.expect_download(timeout=30000) as di:await with_download.click()
