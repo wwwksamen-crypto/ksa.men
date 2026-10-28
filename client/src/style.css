@@ -230,3 +230,5 @@ html[data-season] .header{border-bottom-color:color-mix(in srgb,var(--gold) 35%,
 @media(max-width:640px){.nav-logout{display:flex;align-items:center}.update-bar{flex-wrap:wrap;font-size:13px;justify-content:space-between;margin-block:10px 0}}
 
 .identity-legal{display:flex;justify-content:center;align-items:center;flex-wrap:wrap;gap:12px 28px;border-top:1px solid var(--border);padding:12px var(--gutter);color:var(--muted);font-size:12px}.identity-legal a{display:flex;align-items:center;min-height:44px}.identity-legal a:hover{color:var(--accent)}
+
+.boot-recovery{width:min(90%,480px);margin:12vh auto;padding:32px;border:1px solid var(--line);border-radius:24px;background:var(--surface);color:var(--text);text-align:start}.boot-recovery h1{font-size:28px}.boot-recovery p{line-height:1.8;margin:16px 0 24px}

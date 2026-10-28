@@ -67,7 +67,9 @@ type ErrorStatus = 400 | 401 | 403 | 404 | 409 | 410 | 429;
 
 const DAY = 86_400;
 const MESSAGE_WINDOW = 24 * 60 * 60;
-const POSITIVE_EMOJI = new Set(["🙂", "😊", "👍", "🙏", "✨", "🌟", "🎉", "🤝", "💚", "❤️"]);
+// This is deliberately a closed picker allow-list. Store the heart in its base
+// form because Unicode property matching exposes U+2764 separately from VS16.
+const POSITIVE_EMOJI = new Set(["🙂", "😊", "👍", "🙏", "✨", "🌟", "🎉", "🤝", "💚", "❤"]);
 const PUBLIC_SETTING_KEYS = new Set(["lock", "bank", "contact", "retention", "prices", "season"]);
 const BACKUP_TABLES = [
   "settings",
@@ -284,12 +286,27 @@ function shallowChanges(previousText: string | null, nextText: string): Array<{ 
 
 function validMessage(body: string): boolean {
   if (!body || body.length > 1_000 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F]/.test(body)) return false;
-  const pictographs = body.match(/\p{Extended_Pictographic}/gu) ?? [];
-  return pictographs.every((character) => POSITIVE_EMOJI.has(character));
+  // Match complete emoji sequences so a modifier or ZWJ sequence cannot piggyback
+  // on an approved base. VS16 is normalized only for comparison, which accepts
+  // the picker heart (❤️) and its base (❤) without accepting arbitrary emoji.
+  const emojiSequences = body.match(/\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier}|\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})?)*/gu) ?? [];
+  return emojiSequences.every((sequence) => POSITIVE_EMOJI.has(sequence.replace(/\uFE0F/g, "")));
 }
 
 function contactPairSql(): string {
   return "((from_id=? AND to_id=?) OR (from_id=? AND to_id=?))";
+}
+
+function managerReviewScope(): string {
+  // Keep list/count visibility aligned with siteFor(), which is used by preview
+  // and decision routes: a manager may reach their own site, an explicitly
+  // managed site, or a site whose owner is assigned to them.
+  return `AND EXISTS(
+    SELECT 1 FROM sites scoped
+    LEFT JOIN users scoped_owner ON scoped_owner.id=scoped.user_id
+    WHERE scoped.id=r.site_id
+      AND (scoped.manager_id=? OR scoped.user_id=? OR scoped_owner.assigned_to=?)
+  )`;
 }
 
 function publicSetting(row: { key: string; value: string }): { key: string; value: unknown } {
@@ -464,9 +481,9 @@ export function registerOperations(app: App): void {
     const pendingReviews = await one<{ count: number }>(
       c,
       scoped
-        ? "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id) AND EXISTS(SELECT 1 FROM sites s WHERE s.id=r.site_id AND (s.manager_id=? OR s.user_id=?))"
+        ? `SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id) ${managerReviewScope()}`
         : "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)",
-      ...(scoped ? [user.id, user.id] : []),
+      ...(scoped ? [user.id, user.id, user.id] : []),
     );
     const [trials, subscriptions, transfers, contacts, newRegistrations, serviceActivity] = await Promise.all([
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.trial_until>? AND u.entitlement_until<=u.trial_until` : "SELECT COUNT(*) AS count FROM users WHERE trial_until>? AND entitlement_until<=trial_until", ...(scoped ? [user.id, user.id, user.id, now()] : [now()])),
@@ -712,34 +729,52 @@ export function registerOperations(app: App): void {
     const status = c.req.query("status") ?? "pending";
     if (!(["pending", "approved", "rejected"] as string[]).includes(status)) fail(400, "Review status is invalid", "invalid_input");
     const scope = user.role === "manager"
-      ? "AND EXISTS(SELECT 1 FROM sites scoped WHERE scoped.id=r.site_id AND (scoped.manager_id=? OR scoped.user_id=?))"
+      ? managerReviewScope()
       : "";
-    const rows = await all<DecidedReviewRow & { published: string | null; site_status: string; submitter_name: string }>(
+    const rows = await all<DecidedReviewRow & { published: string | null; current_published_version: number; site_status: string; submitter_name: string }>(
       c,
-      `SELECT r.*,s.published,s.status AS site_status,u.name AS submitter_name,
+      `SELECT r.*,s.published,s.published_version AS current_published_version,s.status AS site_status,u.name AS submitter_name,
               d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
        FROM reviews r JOIN sites s ON s.id=r.site_id JOIN users u ON u.id=r.user_id
        LEFT JOIN review_decisions d ON d.review_id=r.id
        WHERE COALESCE(d.status,r.status)=? ${scope}
        ORDER BY r.created_at ASC LIMIT ?`,
       status,
-      ...(user.role === "manager" ? [user.id, user.id] : []),
+      ...(user.role === "manager" ? [user.id, user.id, user.id] : []),
       limit,
     );
     return c.json({
       reviews: rows.map((row) => {
         const review = resolvedReview(row);
-        const published = row.published;
+        const currentPublished = parseJson(row.published);
+        const currentPublishedVersion = Number(row.current_published_version);
+        const baseVersion = Number(review.base_version);
+        const isStale = baseVersion !== currentPublishedVersion;
+        const currentChanges = shallowChanges(row.published, review.snapshot);
         return {
         ...review,
+        base_version: baseVersion,
+        baseVersion,
+        current_published_version: currentPublishedVersion,
+        currentPublishedVersion,
+        is_stale: isStale,
+        isStale,
         preview_url:'/api/admin/reviews/'+review.id+'/preview',
         snapshot: parseJson(review.snapshot),
         diff: {
-          before: parseJson(published),
+          // The historic publication is not retained. Never misrepresent the
+          // current live version as the snapshot's original base once stale.
+          before: isStale ? null : currentPublished,
           after: parseJson(review.snapshot),
-          changes: shallowChanges(published, review.snapshot),
+          changes: isStale ? [] : currentChanges,
+          current_published: currentPublished,
+          currentPublished,
+          current_changes: currentChanges,
+          currentChanges,
         },
-        changes: shallowChanges(published, review.snapshot),
+        changes: isStale ? [] : currentChanges,
+        current_changes: currentChanges,
+        currentChanges,
         published: undefined,
         };
       }),
@@ -758,6 +793,9 @@ export function registerOperations(app: App): void {
     );
     if (!review) fail(404, "Review not found", "not_found");
     const reviewer = await reviewScope(c, review);
+    if (review.user_id === reviewer.id) {
+      fail(403, "You cannot decide a review you submitted; an independent owner, manager, or moderator must review it", "reviewer_submitter_conflict");
+    }
     if (review.status !== "pending" || review.decision_status) fail(409, "This review is no longer pending", "review_stale");
     const decidedAt = now();
     try {
@@ -1515,7 +1553,21 @@ export function registerOperations(app: App): void {
     const id = c.req.param("id");
     const clock = now();
     await run(c, "UPDATE conversations SET status='expired' WHERE id=? AND status='active' AND last_activity<?", id, clock - MESSAGE_WINDOW);
-    const conversation = await one<Record<string, unknown>>(c, "SELECT * FROM conversations WHERE id=? AND (from_id=? OR to_id=?)", id, user.id, user.id);
+    const conversation = await one<Record<string, unknown>>(
+      c,
+      `SELECT c.*,
+              CASE WHEN c.from_id=? THEN tu.id ELSE fu.id END AS other_id,
+              CASE WHEN c.from_id=? THEN tu.name ELSE fu.name END AS other_name
+       FROM conversations c
+       JOIN users fu ON fu.id=c.from_id
+       JOIN users tu ON tu.id=c.to_id
+       WHERE c.id=? AND (c.from_id=? OR c.to_id=?)`,
+      user.id,
+      user.id,
+      id,
+      user.id,
+      user.id,
+    );
     if (!conversation) fail(404, "Conversation not found", "not_found");
     if (conversation.status === "expired") fail(410, "This conversation has expired; message history is unavailable", "conversation_expired");
     const messages = await all<Record<string, unknown>>(c, "SELECT id,conversation_id,sender_id,body,created_at FROM messages WHERE conversation_id=? ORDER BY created_at ASC", id);

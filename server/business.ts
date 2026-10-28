@@ -511,7 +511,8 @@ async function resolveRecipient(c: any, value: unknown): Promise<NamedUser> {
   if (typeof value !== 'string') apiError(422, 'recipient must be a C identifier, account name, profile name, or email', 'VALIDATION');
   const recipient = value.trim();
   if (!recipient || recipient.length > 254) apiError(422, 'recipient has an invalid length', 'VALIDATION');
-  const cMatch = /^C([1-9]\d*)$/.exec(recipient);
+  // C identifiers are case-insensitive at the API boundary; the canonical response remains C#.
+  const cMatch = /^c([1-9]\d*)$/i.exec(recipient);
   let results: NamedUser[];
   if (cMatch) {
     results = await all<NamedUser>(c, 'SELECT id,email,name,status FROM users WHERE id=? AND status=\'active\'', Number(cMatch[1]));
@@ -644,7 +645,7 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     const checkedAt = now();
-    const [sites, reviews, wallet, ledger, payments, services, notifications, quickLinks, transfers, handovers, analyticsRows] = await Promise.all([
+    const [sites, reviews, wallet, ledger, payments, services, notifications, quickLinks, transfers, handovers, analyticsRows, unboundNames] = await Promise.all([
       all<SiteRow>(
         c,
         `SELECT s.*,(
@@ -713,6 +714,11 @@ export function registerBusiness(app: App): void {
         String(user.role ?? ''),
         userId,
         checkedAt - 30 * 86_400,
+      ),
+      all<{ name: string }>(
+        c,
+        'SELECT name FROM dns_names WHERE owner_id=? AND site_id IS NULL ORDER BY created_at ASC LIMIT 100',
+        userId,
       ),
     ]);
 
@@ -800,6 +806,10 @@ export function registerBusiness(app: App): void {
         creator_id: `C${handover.creator_id}`,
         created_at: Number(handover.created_at),
       })),
+      // Ownership of a transferred label is intentionally independent from any prior site/content.
+      unboundNames: unboundNames.map((item) => ({
+        name: item.name,
+      })),
       user: toDashboardUser(user, Number(wallet?.balance ?? 0)),
     });
   });
@@ -880,6 +890,90 @@ export function registerBusiness(app: App): void {
     if (!site) apiError(500, 'Profile site could not be created', 'SITE_CREATE_FAILED');
     await audit(c, 'name.reserve', name, { siteId: site.id });
     return c.json({ name: reservedName.name, site: toSite({ ...site, name: reservedName.name }), createdAt: Number(reservedName.created_at) }, 201);
+  });
+
+  app.post('/api/names/:name/attach', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    await fresh(c);
+    const userId = Number(user.id);
+    const name = safeName(c.req.param('name'));
+    const body = await requestBody(c);
+    // Omitting siteId asks the server to create the user's first personal site. Supplying an
+    // empty or malformed identifier is never treated as that create request.
+    const requestedSiteId = body.siteId === undefined || body.siteId === null
+      ? ''
+      : asString(body.siteId, 'siteId', 160, true);
+    const owned = await one<{ name: string; site_id: string | null }>(
+      c,
+      'SELECT name,site_id FROM dns_names WHERE name=? AND owner_id=?',
+      name,
+      userId,
+    );
+    if (!owned) apiError(404, 'You do not own this name', 'NAME_NOT_OWNED');
+    if (owned.site_id !== null) apiError(409, 'This name is already attached to a site', 'NAME_ALREADY_ATTACHED');
+
+    const attachedAt = now();
+    let siteId = requestedSiteId;
+    let createdSite = false;
+    if (siteId) {
+      const result = await run(
+        c,
+        `UPDATE dns_names SET site_id=?
+         WHERE name=? AND owner_id=? AND site_id IS NULL
+           AND EXISTS(SELECT 1 FROM sites WHERE id=? AND user_id=?)`,
+        siteId,
+        name,
+        userId,
+        siteId,
+        userId,
+      );
+      if (changes(result) !== 1) {
+        const target = await one<{ id: string; user_id: number | null }>(c, 'SELECT id,user_id FROM sites WHERE id=?', siteId);
+        if (!target) apiError(404, 'Site not found', 'SITE_NOT_FOUND');
+        if (Number(target.user_id) !== userId) apiError(403, 'You can only attach a name to your own site', 'SITE_FORBIDDEN');
+        const current = await one<{ owner_id: number; site_id: string | null }>(c, 'SELECT owner_id,site_id FROM dns_names WHERE name=?', name);
+        if (!current || Number(current.owner_id) !== userId) apiError(404, 'You do not own this name', 'NAME_NOT_OWNED');
+        if (current.site_id !== null) apiError(409, 'This name was attached by another request', 'NAME_ALREADY_ATTACHED');
+        apiError(409, 'The name could not be attached', 'NAME_ATTACH_CONFLICT');
+      }
+    } else {
+      const existing = await primarySite(c, userId);
+      if (existing) {
+        apiError(422, 'siteId is required when you already have a profile site', 'SITE_ID_REQUIRED');
+      }
+      siteId = uid();
+      const initialDraft = JSON.stringify(defaultProfile(String(user.name ?? '')));
+      let results: D1ResultLike[];
+      try {
+        results = await c.env.DB.batch([
+          c.env.DB.prepare(
+            `INSERT INTO sites(id,user_id,manager_id,draft,draft_version,published,published_version,status,lock_message,searchable,allow_contact,branding,created_at,updated_at)
+             SELECT ?,?,NULL,?,0,NULL,0,'draft','',1,1,1,?,?
+             WHERE NOT EXISTS (SELECT 1 FROM sites WHERE user_id=?)
+               AND EXISTS(SELECT 1 FROM dns_names WHERE name=? AND owner_id=? AND site_id IS NULL)`,
+          ).bind(siteId, userId, initialDraft, attachedAt, attachedAt, userId, name, userId),
+          c.env.DB.prepare(
+            `UPDATE dns_names SET site_id=?
+             WHERE name=? AND owner_id=? AND site_id IS NULL
+               AND EXISTS(SELECT 1 FROM sites WHERE id=? AND user_id=?)`,
+          ).bind(siteId, name, userId, siteId, userId),
+        ]) as D1ResultLike[];
+      } catch {
+        apiError(409, 'The profile site and name could not be created', 'NAME_ATTACH_CONFLICT');
+      }
+      if (changes(results[0]) !== 1 || changes(results[1]) !== 1) {
+        const current = await one<{ owner_id: number; site_id: string | null }>(c, 'SELECT owner_id,site_id FROM dns_names WHERE name=?', name);
+        if (!current || Number(current.owner_id) !== userId) apiError(404, 'You do not own this name', 'NAME_NOT_OWNED');
+        if (current.site_id !== null) apiError(409, 'This name was attached by another request', 'NAME_ALREADY_ATTACHED');
+        apiError(409, 'A profile site already exists or changed during attachment', 'NAME_ATTACH_CONFLICT');
+      }
+      createdSite = true;
+    }
+
+    const site = await one<SiteRow>(c, 'SELECT * FROM sites WHERE id=? AND user_id=?', siteId, userId);
+    if (!site) apiError(409, 'The attached site is no longer available', 'NAME_ATTACH_CONFLICT');
+    await audit(c, 'name.attach', name, { siteId, createdSite });
+    return c.json({ name, site: toSite({ ...site, name }), createdSite, attachedAt });
   });
 
   app.get('/api/sites/:id', async (c) => {
@@ -1067,14 +1161,18 @@ export function registerBusiness(app: App): void {
     const amount = asInteger(body.amount, 'amount', 100, 1000);
     const idempotencyKey = safeIdempotencyKey(body.idempotencyKey);
     const reference = `transfer:${userId}:${idempotencyKey}`;
+    // Resolve before checking a replay, so a reused key must describe the same recipient as
+    // well as the same amount. This also normalizes C/c recipient identifiers consistently.
+    const recipient = await resolveRecipient(c, body.recipient);
+    if (recipient.id === userId) apiError(422, 'You cannot transfer points to your own account', 'SELF_TRANSFER');
+    const idempotencyConflict = (movement: Record<string, unknown>) => Number(movement.amount) !== amount
+      || Number(movement.to_id) !== recipient.id;
     const prior = await one<Record<string, unknown>>(c, 'SELECT * FROM ledger WHERE reference=? AND from_id=?', reference, userId);
     if (prior) {
-      if (Number(prior.amount) !== amount) apiError(409, 'idempotencyKey was already used with a different transfer amount', 'IDEMPOTENCY_CONFLICT');
+      if (idempotencyConflict(prior)) apiError(409, 'idempotencyKey was already used with a different transfer amount or recipient', 'IDEMPOTENCY_CONFLICT');
       return c.json({ transfer: { id: prior.id, recipient: `C${prior.to_id}`, amount: Number(prior.amount), reference, createdAt: Number(prior.created_at) }, idempotent: true });
     }
 
-    const recipient = await resolveRecipient(c, body.recipient);
-    if (recipient.id === userId) apiError(422, 'You cannot transfer points to your own account', 'SELF_TRANSFER');
     const createdAt = now();
     const ledgerId = uid();
     try {
@@ -1092,7 +1190,7 @@ export function registerBusiness(app: App): void {
     } catch {
       const completed = await one<Record<string, unknown>>(c, 'SELECT * FROM ledger WHERE reference=? AND from_id=?', reference, userId);
       if (completed) {
-        if (Number(completed.amount) !== amount) apiError(409, 'idempotencyKey was already used with a different transfer amount', 'IDEMPOTENCY_CONFLICT');
+        if (idempotencyConflict(completed)) apiError(409, 'idempotencyKey was already used with a different transfer amount or recipient', 'IDEMPOTENCY_CONFLICT');
         return c.json({ transfer: { id: completed.id, recipient: `C${completed.to_id}`, amount: Number(completed.amount), reference, createdAt: Number(completed.created_at) }, idempotent: true });
       }
       apiError(409, 'Transfer could not be completed. Check your available balance.', 'TRANSFER_FAILED');
@@ -1315,15 +1413,23 @@ export function registerBusiness(app: App): void {
     if (pending) apiError(409, 'A transfer for this name is already in progress', 'TRANSFER_PENDING');
     const id = uid();
     const createdAt = now();
-    await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO transfers(id,name,from_id,to_id,status,created_at) VALUES(?,?,?,?,\'pending\',?)').bind(id, name, userId, recipient.id, createdAt),
-      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-        uid(), recipient.id, 'طلب نقل اسم مميز', `تمت دعوتك لقبول نقل الاسم ${name}. لا ينقل ذلك الموقع أو المحتوى.`, createdAt,
-      ),
-      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-        uid(), userId, 'تم إرسال طلب نقل الاسم', `ينتظر الاسم ${name} قبول المستفيد ثم قرار الإدارة.`, createdAt,
-      ),
-    ]);
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO transfers(id,name,from_id,to_id,status,created_at) VALUES(?,?,?,?,\'pending\',?)').bind(id, name, userId, recipient.id, createdAt),
+        c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
+          uid(), recipient.id, 'طلب نقل اسم مميز', `تمت دعوتك لقبول نقل الاسم ${name}. لا ينقل ذلك الموقع أو المحتوى.`, createdAt,
+        ),
+        c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
+          uid(), userId, 'تم إرسال طلب نقل الاسم', `ينتظر الاسم ${name} قبول المستفيد ثم قرار الإدارة.`, createdAt,
+        ),
+      ]);
+    } catch {
+      // The partial unique index is the concurrency authority; the preliminary read above is
+      // only a friendly fast-path and must not be relied on for correctness.
+      const active = await one<{ id: string }>(c, "SELECT id FROM transfers WHERE name=? AND status IN ('pending','accepted')", name);
+      if (active) apiError(409, 'A transfer for this name is already in progress', 'TRANSFER_PENDING');
+      apiError(409, 'The transfer request could not be created', 'TRANSFER_CONFLICT');
+    }
     await audit(c, 'name.transfer.request', name, { transferId: id, to: recipient.id, siteId: owned.site_id });
     return c.json({ transfer: { id, name, recipient: `C${recipient.id}`, status: 'pending', createdAt } }, 201);
   });

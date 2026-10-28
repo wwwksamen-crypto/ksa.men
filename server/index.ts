@@ -14,7 +14,7 @@ import { registerPublic, publishedForHost, personalGate } from './public';
 
 const app = new Hono<Bindings>();
 const escape = (text: string) => text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!));
-const staticPath = (path: string) => path.startsWith('/assets/') || ['/favicon.ico', '/sw.js', '/manifest.webmanifest', '/offline.html', '/gate.js'].includes(path);
+const staticPath = (path: string) => path.startsWith('/assets/') || ['/favicon.ico', '/sw.js', '/manifest.webmanifest', '/offline.html', '/gate.js', '/bootstrap.js'].includes(path);
 function security(c: any, isStatic = false) {
   c.header('X-Content-Type-Options', 'nosniff');
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -126,7 +126,13 @@ app.get('*', async c => {
 app.onError((error, c) => {
   security(c);
   if (error instanceof ZodError) return c.json({ error: error.issues.map(issue => issue.message).join('،') }, 400);
-  if (error instanceof HTTPException) return c.json({ error: error.message || 'تعذر تنفيذ الطلب' }, error.status);
+  if (error instanceof HTTPException) {
+    const response = error.getResponse();
+    if (response.headers.get('Content-Type')?.includes('application/json')) {
+      return c.newResponse(response.body, error.status, Object.fromEntries(response.headers));
+    }
+    return c.json({ error: error.message || 'تعذر تنفيذ الطلب' }, error.status);
+  }
   if (error instanceof SyntaxError) return c.json({ error: 'صيغة البيانات غير صحيحة' }, 400);
   console.error('KSA request failed', error.name);
   return c.json({ error: 'تعذر إتمام العملية بأمان، حاول مجددًا' }, 500);

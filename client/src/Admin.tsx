@@ -282,6 +282,17 @@ function isApprovedPayment(item: JsonRecord): boolean {
   return text(field(item, 'status', 'decision'), '').toLowerCase() === 'approved';
 }
 
+function isPendingReview(item: JsonRecord): boolean {
+  const decisionStatus = field(item, 'decision_status', 'decisionStatus');
+  return text(decisionStatus ?? field(item, 'status', 'decision'), '').toLowerCase() === 'pending';
+}
+
+function knownBoolean(value: unknown): boolean | undefined {
+  if (value === true || value === 1 || value === '1' || value === 'true') return true;
+  if (value === false || value === 0 || value === '0' || value === 'false') return false;
+  return undefined;
+}
+
 export default function Admin() {
   const { user, lang, t, refresh, notify } = useApp();
   const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
@@ -551,7 +562,13 @@ export default function Admin() {
 
   const decideReview = (review: JsonRecord, decision: 'approve' | 'reject') => {
     const id = idOf(review);
-    if (!id) return;
+    const reviewerId = text(user?.id, '');
+    const submitterId = text(field(review, 'user_id', 'userId'), '');
+    if (!id || !isPendingReview(review)) return;
+    if (reviewerId && reviewerId === submitterId) {
+      setError(tr('يلزم مراجع مستقل لقرار لقطة مقدمة من حسابك.', 'An independent reviewer is required for a snapshot submitted by your account.'));
+      return;
+    }
     const reason = reviewReasons[id] ?? '';
     if (decision === 'reject' && !reason.trim()) {
       setError(tr('سبب الرفض مطلوب لحماية مسار المراجعة.', 'A rejection reason is required for the review trail.'));
@@ -713,19 +730,36 @@ export default function Admin() {
 
   const renderReviews = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('راجع التغييرات قبل وبعد، وافتح معاينة الموقع عند الحاجة، ثم اتخذ قراراً واضحاً.', 'Review the changes before and after, open the site preview when needed, then make a clear decision.')}</p></div></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('تحقق من مقدم اللقطة وإصداراتها، ثم قارن النشر الحالي باللقطة المرسلة وافتح المعاينة المحمية قبل القرار.', 'Verify the submitter and versions, compare the current publication with the submitted snapshot, and open the protected preview before deciding.')}</p></div></section>
       {reviews.length ? reviews.map((review) => {
         const id = idOf(review);
         const expanded = selectedReview && idOf(selectedReview) === id;
+        const pending = isPendingReview(review);
+        const memberId = text(field(review, 'user_id', 'userId'), '');
+        const reviewerId = text(user?.id, '');
+        const selfSubmitted = Boolean(memberId && reviewerId && memberId === reviewerId);
+        const baseVersion = field(review, 'baseVersion', 'base_version');
+        const currentPublishedVersion = field(review, 'currentPublishedVersion', 'current_published_version', 'publishedVersion', 'published_version');
+        const stale = knownBoolean(field(review, 'isStale', 'is_stale'));
+        const reviewBusy = busy === `review-${id}-approve` || busy === `review-${id}-reject`;
         const preview = text(field(review, 'preview_url', 'snapshot_url'), id ? `/api/admin/reviews/${encodeURIComponent(id)}/preview` : '');
         return <article className="card admin-review" key={id || text(field(review, 'submitted_at'))}>
           <div className="row admin-review-top"><div><h2>{text(field(review, 'site_name', 'name', 'title'))}</h2><p className="muted">{tr('المقدم', 'Submitted by')}: {text(field(review, 'submitter_name', 'user_name', 'email'))} · {asDate(field(review, 'submitted_at', 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(review, 'status'))}`}>{text(field(review, 'status', 'decision'), tr('قيد المراجعة', 'In review'))}</span></div>
-          <SnapshotDiff review={review} tr={tr} />
+          <dl className="admin-review-provenance" aria-label={tr('مصدر اللقطة وحالتها', 'Snapshot provenance and state')}>
+            <div><dt>{tr('العضو', 'Member')}</dt><dd>{memberId ? <bdi dir="ltr">C{memberId}</bdi> : tr('غير متاح', 'Unavailable')}</dd></div>
+            <div><dt>{tr('الاسم', 'Name')}</dt><dd>{text(field(review, 'submitter_name', 'user_name', 'name', 'email'), tr('غير متاح', 'Unavailable'))}</dd></div>
+            <div><dt>{tr('وقت الإرسال', 'Submitted')}</dt><dd>{asDate(field(review, 'submitted_at', 'created_at'), lang)}</dd></div>
+            <div><dt>{tr('إصدار الأساس', 'Base version')}</dt><dd><bdi dir="ltr">{text(baseVersion, tr('غير متاح', 'Unavailable'))}</bdi></dd></div>
+            <div><dt>{tr('إصدار النشر الحالي', 'Current published version')}</dt><dd><bdi dir="ltr">{text(currentPublishedVersion, tr('غير متاح', 'Unavailable'))}</bdi></dd></div>
+            <div><dt>{tr('حالة الأساس', 'Base state')}</dt><dd><span className={`admin-status ${stale === true ? 'danger' : stale === false ? 'success' : 'neutral'}`}>{stale === true ? tr('قديمة — تغيّر النشر', 'Stale — publication changed') : stale === false ? tr('مطابقة للنشر الحالي', 'Matches current publication') : tr('غير متاح', 'Unavailable')}</span></dd></div>
+          </dl>
+          <section className="admin-review-comparison" aria-label={tr('مقارنة اللقطة', 'Snapshot comparison')}><div className="admin-review-comparison-heading"><strong>{tr('مقارنة فعلية للّقطة', 'Actual snapshot comparison')}</strong><span className="muted">{tr('النشر الحالي مقابل اللقطة المرسلة غير القابلة للتغيير.', 'Current publication versus the immutable submitted snapshot.')}</span></div><SnapshotDiff review={review} tr={tr} /></section>
           <div className="admin-actions">
-            <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء القرار', 'Hide decision controls') : tr('فتح القرار', 'Open decision controls')}</button>
-            {preview && <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('فتح معاينة الموقع', 'Open site preview')}</a>}
+            <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء التفاصيل', 'Hide review details') : pending ? tr('فتح منطقة القرار', 'Open decision area') : tr('عرض تفاصيل القرار', 'View decision details')}</button>
+            {preview && <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('فتح معاينة اللقطة المحمية', 'Open protected snapshot preview')}</a>}
           </div>
-          {expanded && <div className="admin-review-detail stack"><div className="admin-key-values">{Object.entries(review).filter(([key]) => !['diff', 'changes', 'delta', 'snapshot'].includes(key)).map(([key, value]) => <div key={key}><span>{prettyKey(key)}</span><strong>{typeof value === 'object' ? '…' : text(value)}</strong></div>)}</div><label className="field"><span>{tr('سبب الرفض أو ملاحظة القرار', 'Rejection reason or decision note')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={busy === `review-${id}-approve`} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر ذري', 'Approve & publish atomically')}</button><button className="button button-danger" type="button" disabled={busy === `review-${id}-reject`} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div></div>}
+          {selfSubmitted && <div className="admin-review-guard" role="note"><strong>{tr('يلزم مراجعة مستقلة', 'Independent review required')}</strong><span>{tr('هذه اللقطة مقدمة من حسابك؛ لا يمكنك اعتمادها أو رفضها.', 'This snapshot was submitted by your account, so you cannot approve or reject it.')}</span></div>}
+          {expanded && <div className="admin-review-detail stack">{pending ? <><label className="field"><span>{tr('سبب الرفض أو ملاحظة القرار', 'Rejection reason or decision note')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر ذري', 'Approve & publish atomically')}</button><button className="button button-danger" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div></> : <p className="admin-finality">{tr('لا تظهر أزرار القرار إلا عندما يعيد الخادم حالة «قيد المراجعة».', 'Decision controls are available only while the server returns a pending review.')}</p>}</div>}
         </article>;
       }) : <Empty title={tr('لا توجد لقطات قيد المراجعة.', 'No snapshots are awaiting review.')} />}
     </div>
@@ -938,17 +972,20 @@ function ProxySitePanel(props: {
 
 function SnapshotDiff({ review, tr }: { review: JsonRecord; tr: (ar: string, en: string) => string }) {
   const diff = record(field(review, 'diff', 'changes', 'delta'));
-  const before = field(diff, 'before', 'old', 'previous');
-  const after = field(diff, 'after', 'new', 'current');
+  const stale = knownBoolean(field(review, 'isStale', 'is_stale'));
+  const currentPublication = field(diff, 'before', 'old', 'previous');
+  const submittedSnapshot = field(review, 'snapshot') ?? field(diff, 'after', 'new', 'current');
   const rawChanges = field(diff, 'changes') ?? field(review, 'changes');
   const changes = Array.isArray(rawChanges) ? rawChanges.map(record).filter((item): item is JsonRecord => Boolean(item)) : [];
-  if (!changes.length) return <div className="admin-diff-grid"><DiffCell label={tr('قبل', 'Before')} value={before} /><DiffCell label={tr('بعد', 'After')} value={after} changed /></div>;
-  return <div className="admin-change-list">{changes.map((change, index) => <article className="admin-change" key={`${text(change.field, 'field')}-${index}`}><header><strong>{text(change.field, tr('حقل متغير', 'Changed field'))}</strong></header><div className="admin-diff-grid"><DiffCell label={tr('قبل', 'Before')} value={field(change, 'before', 'old')} /><DiffCell label={tr('بعد', 'After')} value={field(change, 'after', 'new')} changed /></div></article>)}</div>;
+  if (stale === true) return <div className="admin-review-comparison-unavailable"><strong>{tr('لا تتوفر مقارنة آمنة للّقطة', 'A safe snapshot comparison is unavailable')}</strong><span>{tr('تغيّر النشر منذ إصدار الأساس؛ اعتمد على الإصدارات ومعاينة اللقطة المحمية بدلاً من مقارنة قبل/بعد غير موثوقة.', 'Publication changed since the base version; use the versions and protected snapshot preview instead of an unreliable before/after comparison.')}</span></div>;
+  if (!changes.length) return <div className="admin-diff-grid"><DiffCell tr={tr} label={tr('النشر الحالي', 'Current publication')} value={currentPublication} /><DiffCell tr={tr} label={tr('اللقطة المرسلة', 'Submitted snapshot')} value={submittedSnapshot} changed /></div>;
+  return <div className="admin-change-list">{changes.map((change, index) => <article className="admin-change" key={`${text(change.field, 'field')}-${index}`}><header><strong>{text(change.field, tr('حقل متغير', 'Changed field'))}</strong></header><div className="admin-diff-grid"><DiffCell tr={tr} label={tr('النشر الحالي', 'Current publication')} value={field(change, 'before', 'old')} /><DiffCell tr={tr} label={tr('اللقطة المرسلة', 'Submitted snapshot')} value={field(change, 'after', 'new')} changed /></div></article>)}</div>;
 }
 
-function DiffCell({ label, value, changed = false }: { label: string; value: unknown; changed?: boolean }) {
+function DiffCell({ tr, label, value, changed = false }: { tr: (ar: string, en: string) => string; label: string; value: unknown; changed?: boolean }) {
   const image = changedImage(value);
-  return <div><span className={`admin-diff-label ${changed ? 'new' : ''}`}>{label}</span>{image ? <img className="admin-diff-image" src={image} alt={label} /> : <pre>{displayJson(value)}</pre>}</div>;
+  const unavailable = value === null || value === undefined;
+  return <div><span className={`admin-diff-label ${changed ? 'new' : ''}`}>{label}</span>{unavailable ? <p className="admin-diff-unavailable">{tr('لم يُعد الخادم قيمة لهذه الجهة من المقارنة.', 'The server did not return a value for this side of the comparison.')}</p> : image ? <img className="admin-diff-image" src={image} alt={label} /> : <pre>{displayJson(value)}</pre>}</div>;
 }
 
 function SeasonPanel(props: {

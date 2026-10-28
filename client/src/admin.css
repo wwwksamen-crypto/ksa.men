@@ -356,17 +356,33 @@
 .admin-console .admin-check input { width: auto; min-height: 0; margin: 3px 0 0; accent-color: var(--admin-green); }
 
 /* Reviews, payments, and service controls */
-.admin-console .admin-review { padding: 17px; }
+.admin-console .admin-review { display: grid; gap: 14px; padding: 17px; }
 .admin-console .admin-review-top { align-items: flex-start; }
 .admin-console .admin-review-top p,
 .admin-console .admin-payment p,
 .admin-console .admin-service p,
 .admin-console .admin-transfer p { margin: 4px 0 0; }
+.admin-console .admin-review-provenance { display: grid; gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--admin-border); border-radius: 12px; background: var(--admin-border); }
+.admin-console .admin-review-provenance > div { display: grid; min-width: 0; gap: 4px; padding: 10px; background: color-mix(in srgb, var(--admin-surface) 94%, var(--admin-bg)); }
+.admin-console .admin-review-provenance dt { color: var(--admin-muted); font-size: .69rem; font-weight: 700; }
+.admin-console .admin-review-provenance dd { min-width: 0; margin: 0; color: var(--admin-text); font-size: .84rem; font-weight: 700; overflow-wrap: anywhere; }
+.admin-console .admin-review-provenance .admin-status { vertical-align: middle; }
+.admin-console .admin-review-comparison { display: grid; gap: 10px; }
+.admin-console .admin-review-comparison-heading { display: grid; gap: 2px; }
+.admin-console .admin-review-comparison-heading strong { color: var(--admin-text); font-size: .92rem; }
+.admin-console .admin-review-comparison-heading span { font-size: .8rem; line-height: 1.55; }
+.admin-console .admin-review-comparison-unavailable { display: grid; gap: 3px; margin: 0; padding: 11px; border: 1px solid color-mix(in srgb, var(--admin-gold) 42%, var(--admin-border)); border-radius: 12px; color: var(--admin-gold); background: color-mix(in srgb, var(--admin-gold) 8%, var(--admin-surface)); }
+.admin-console .admin-review-comparison-unavailable strong { color: var(--admin-gold); font-size: .86rem; }
+.admin-console .admin-review-comparison-unavailable span { color: var(--admin-muted); font-size: .8rem; line-height: 1.55; }
+.admin-console .admin-review-guard { display: grid; gap: 3px; padding: 11px; border: 1px solid color-mix(in srgb, var(--admin-gold) 52%, var(--admin-border)); border-radius: 12px; color: var(--admin-gold); background: color-mix(in srgb, var(--admin-gold) 9%, var(--admin-surface)); }
+.admin-console .admin-review-guard strong { color: var(--admin-gold); font-size: .88rem; }
+.admin-console .admin-review-guard span { color: var(--admin-muted); font-size: .8rem; line-height: 1.55; }
 .admin-console .admin-diff-grid { display: grid; gap: 10px; margin: 14px 0; }
 .admin-console .admin-diff-grid > div { min-width: 0; overflow: hidden; border: 1px solid var(--admin-border); border-radius: 12px; background: color-mix(in srgb, var(--admin-bg) 38%, var(--admin-surface)); }
 .admin-console .admin-diff-label { display: block; padding: 7px 10px; color: color-mix(in srgb, var(--admin-danger) 90%, var(--admin-text)); background: color-mix(in srgb, var(--admin-danger) 12%, transparent); font-size: .76rem; font-weight: 800; }
 .admin-console .admin-diff-label.new { color: var(--admin-accent); background: color-mix(in srgb, var(--admin-green) 28%, transparent); }
 .admin-console .admin-diff-grid pre { max-height: 260px; margin: 0; overflow: auto; padding: 11px; color: var(--admin-text); font: .75rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.admin-console .admin-diff-unavailable { min-height: 72px; margin: 0; padding: 11px; color: var(--admin-muted); font-size: .8rem; line-height: 1.55; }
 .admin-console .admin-review-detail { padding-top: 13px; margin-top: 12px; border-top: 1px solid var(--admin-border); }
 .admin-console .admin-payment-grid,
 .admin-console .admin-service-grid { display: grid; gap: 13px; }
@@ -446,7 +462,8 @@
   .admin-console .admin-content-fields,
   .admin-console .admin-user-context,
   .admin-console .admin-detail-forms,
-  .admin-console .admin-diff-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-console .admin-diff-grid,
+  .admin-console .admin-review-provenance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-console .admin-inline-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-console .admin-inline-form .button { grid-column: 1 / -1; }
   .admin-console .admin-payment-grid,

@@ -6,6 +6,15 @@ import './style.css';
 import Sanad from './Sanad';
 const Personal=lazy(()=>import('./Personal'));
 const Dashboard=lazy(()=>import('./Dashboard'));const Admin=lazy(()=>import('./Admin'));const Exports=lazy(()=>import('./Exports'));const QRTools=lazy(()=>import('./Exports').then(m=>({default:m.QRTools})));
+const isStaffRole=(role:string|undefined)=>['owner','manager','moderator'].includes(role||'');
+const authDestination=(role:string)=>isStaffRole(role)?'/admin':'/dashboard';
+const numericCode=(value:string)=>value.replace(/[٠-٩۰-۹]/g,character=>String(character.charCodeAt(0)-(character.charCodeAt(0)>=0x6F0?0x6F0:0x660))).replace(/\D/g,'');
+class AppErrorBoundary extends React.Component<React.PropsWithChildren,{failed:boolean}> {
+ state={failed:false};
+ static getDerivedStateFromError(){return {failed:true};}
+ componentDidCatch(error:Error){console.warn('View rendering failed',error.name);}
+ render(){return this.state.failed?<main className="page connection-state card"><h1>لنستعد اتصالنا</h1><p>تعذر عرض هذه الصفحة. حسابك وبياناتك محفوظة.</p><button className="button primary" onClick={()=>location.reload()}>إعادة المحاولة</button><a href="/auth" className="text-link">دخول الحساب</a></main>:this.props.children;}
+}
 const features=[{icon:Globe,ar:'اسم يعبّر عنك',en:'An address of your own',desc:'عنوان مستقل على ksa.men، يجمع هويتك المهنية في مكان واحد.',eng:'Your own ksa.men address, with your professional identity in one place.'},{icon:BriefcaseBusiness,ar:'مسيرتك، بصورة أجمل',en:'Your career, beautifully presented',desc:'موقع شخصي وسيرة ATS وبطاقات تعريف من بياناتك نفسها.',eng:'A personal website, ATS resume and identity cards from the same profile.'},{icon:ScanLine,ar:'حضورك ينتقل معك',en:'Your presence travels with you',desc:'QR وبطاقة اتصال ورابط تعارف ذكي، للمشاركة بثقة.',eng:'QR, contact cards and smart introductions for confident sharing.'},{icon:Wallet,ar:'قيمة تصنعها مشاركتك',en:'Participation that brings value',desc:'نقاط الوسط للمكافآت والإهداء وأيام الخدمات، دون قيمة نقدية.',eng:'Mid Points for rewards, gifts and service days, never cash.'},{icon:ShieldCheck,ar:'خصوصيتك تحت سيطرتك',en:'Privacy in your hands',desc:'أنت تختار بياناتك العامة. وتبقى التعديلات للمراجعة قبل النشر.',eng:'You choose what is public. Changes are reviewed before publication.'},{icon:Sparkles,ar:'تطوير مستمر لهويتك',en:'A stronger digital identity',desc:'إرشادات اكتمال الملف ورادار المعلومات المهنية ومؤشرات الجودة.',eng:'Completion guidance, professional information radar and quality insights.'}];
 function App(){
  const [lang,setLang]=useState<'ar'|'en'>((localStorage.getItem('ksa-lang') as 'ar'|'en')||'ar');
@@ -22,8 +31,8 @@ function App(){
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('ksa-theme',theme);},[theme]);
  useEffect(()=>{if(season)document.documentElement.dataset.season=season;else delete document.documentElement.dataset.season;},[season]);
  useEffect(()=>{
-  Promise.all([api('/api/platform').then(setPlatform),refresh()]).catch(e=>setError(e.message)).finally(()=>setLoading(false));
-  if(!sub&&'serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js').then(r=>{if(r.waiting)setUpdate(r.waiting);r.addEventListener('updatefound',()=>{const w=r.installing;w?.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)setUpdate(w);});});}).catch(()=>{});}
+  if(sub)setLoading(false);else Promise.all([api('/api/platform').then(setPlatform),refresh()]).catch(e=>setError(e.message)).finally(()=>setLoading(false));
+  if(!sub&&'serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(r=>{if(r.waiting)setUpdate(r.waiting);r.addEventListener('updatefound',()=>{const w=r.installing;w?.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)setUpdate(w);});});}).catch(()=>{});}
   const handler=(e:any)=>{e.preventDefault();setInstall(e);};window.addEventListener('beforeinstallprompt',handler);
   return()=>window.removeEventListener('beforeinstallprompt',handler);
  },[]);
@@ -38,7 +47,7 @@ function App(){
  else if(platform&&!platform.access&&!(platform.lock.mode==='home'&&path!=='/')&&!['/auth','/privacy','/terms'].includes(path))page=<Gate platform={platform} onSuccess={()=>location.reload()}/>;
  else if(path==='/auth')page=<Auth/>;
  else if(path==='/dashboard')page=user?<Dashboard/>:<Auth/>;
- else if(path==='/admin')page=user&&user.role!=='user'?<Admin/>:<Auth/>;
+ else if(path==='/admin')page=user&&isStaffRole(user.role)?<Admin/>:<Auth/>;
  else if(path.startsWith('/export/'))page=user?<Exports/>:<Auth/>;
  else if(path==='/search')page=<SearchPage/>;
  else if(path==='/qr')page=<div className="page"><PageTitle title={t('شارك حضورك بلمسة','One scan. Your whole story.')} subtitle={t('QR وبطاقة اتصال. هدية من المنصة، دون تسجيل.','QR and contact cards. A gift from us. No account needed.')}/><QRTools/></div>;
@@ -57,7 +66,7 @@ function App(){
    <a className="brand" href={prefix+'/'} aria-label="KSA.MEN"><img src="/assets/icon-192.png?rev=design20261028" alt=""/><span>KSA<span className="brand-dot">.</span>MEN</span></a>
    <nav id="main-nav" aria-label={t('التنقل الرئيسي','Main navigation')} className={menu?'nav open':'nav'}>
     <a href={prefix+'/search'}>{t('اكتشف الهويات','Discover')}</a><a href={prefix+'/features'}>{t('المزايا','Features')}</a><a href={prefix+'/about'}>{t('قصتنا','Our story')}</a>
-    {user&&user.role!=='user'&&<a href={prefix+'/admin'}>{t('الإدارة','Admin')}</a>}
+    {user&&isStaffRole(user.role)&&<a href={prefix+'/admin'}>{t('الإدارة','Admin')}</a>}
     {!sub&&<button className="nav-sanad" type="button" onClick={()=>{setMenu(false);window.dispatchEvent(new Event("ksa:sanad-open"));}}><MessageCircle size={17}/>{t("معك سند","Ask Sanad")}</button>}
     <a href={prefix+(user?'/dashboard':'/auth')} className="nav-main">{user?t('مساحتي','My space'):t('الدخول','Sign in')}<UserRound size={16}/></a>
     {user&&<button className="nav-logout" type="button" onClick={logout}>{t("تسجيل الخروج","Sign out")}</button>}
@@ -115,7 +124,7 @@ function Auth(){
    const normalizedEmail=email.trim().toLowerCase();
    if(quick){
     const d:any=await api('/api/auth/quick',{method:'POST',body:JSON.stringify({email:normalizedEmail,pin})});
-    setCSRF(d.csrf);await refresh();location.href=d.user.role==='owner'?'/admin':'/dashboard';return;
+    setCSRF(d.csrf);await refresh();location.href=authDestination(d.user.role);return;
    }
    if(!challenge){
     const body={email:normalizedEmail,purpose:mode,...(mode==='register'?{name:name.trim(),whatsapp:phone.trim(),consent:agree,referral:new URLSearchParams(location.search).get('ref')||undefined}:{})};
@@ -123,7 +132,7 @@ function Auth(){
     setEmail(normalizedEmail);setChallenge(d.challenge);notify(d.message);
    }else{
     const d:any=await api('/api/auth/verify',{method:'POST',body:JSON.stringify({challenge,code,...(mode==='register'&&pin?{pin}:{})})});
-    setCSRF(d.csrf);await refresh();location.href=d.user.role==='owner'?'/admin':'/dashboard';
+    setCSRF(d.csrf);await refresh();location.href=authDestination(d.user.role);
    }
   }catch(e:any){setErr(e.message||t('تعذر الدخول، حاول مجددًا','Sign-in failed. Please try again.'));}
   finally{setBusy(false);}
@@ -139,7 +148,7 @@ function Auth(){
   <section className="auth-card card">
    <div className="auth-card-top"><span className="eyebrow">{t('مساحتك الخاصة','YOUR OWN SPACE')}</span><ShieldCheck size={21}/></div>
    <h2>{quick?t('الدخول السريع','Email & PIN sign-in'):challenge?t('تحقق من بريدك','Check your email'):mode==='register'?t('أنشئ موقعك','Create your site'):mode==='recover'?t('استرجاع الحساب','Recover your account'):t('عودًا مرحبًا','Welcome back')}</h2>
-   <p className="muted">{challenge?<>{t('أرسلنا رمزًا إلى','A code was sent to')} <bdi dir="ltr">{email}</bdi></>:quick?t('بريد الحساب ورمزك الشخصي، على جهاز موثوق فقط.','Your account email and PIN, on a trusted device only.'):t('التحقق من البريد يحمي حسابك وبياناتك.','Email verification protects your account and data.')}</p>
+   <p className="muted">{challenge?<>{mode==='register'?t('أرسلنا رمزًا إلى','A code was sent to'):t('إن كان بريدك مسجلاً، ستصلك رسالة التحقق:','If your email is registered, check for your code:')} <bdi dir="ltr">{email}</bdi></>:quick?t('بريد الحساب ورمزك الشخصي، على جهاز موثوق فقط.','Your account email and PIN, on a trusted device only.'):t('التحقق من البريد يحمي حسابك وبياناتك.','Email verification protects your account and data.')}</p>
    {!challenge&&mode!=='register'&&<div className="auth-methods" role="group" aria-label={t('طريقة الدخول','Sign-in method')}><button type="button" aria-pressed={!quick} className={!quick?'selected':''} onClick={()=>changeMethod('login',false)}><Mail size={16}/>{t('رمز البريد','Email code')}</button><button type="button" aria-pressed={quick} className={quick?'selected':''} onClick={()=>changeMethod('login',true)}><LockKeyhole size={16}/><bdi>PIN</bdi></button></div>}
    <form onSubmit={submit} className="stack">
     {!challenge&&<label className="field">{t('البريد الإلكتروني','Email')}<input required type="email" name="email" autoComplete={quick?'username':'email'} value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" dir="ltr" autoCapitalize="none" spellCheck={false}/></label>}
@@ -148,8 +157,8 @@ function Auth(){
      <label className="field">{t('رقم واتساب','WhatsApp')}<input required name="whatsapp" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} autoComplete="tel" dir="ltr" placeholder="05xxxxxxxx"/></label>
      <label className="check-label"><input type="checkbox" required checked={agree} onChange={e=>setAgree(e.target.checked)}/><span>{t('أوافق على','I agree to the')} <a href="/privacy" target="_blank">{t('سياسة الخصوصية','privacy policy')}</a> {t('و','and')} <a href="/terms" target="_blank">{t('سياسة الاستخدام','terms')}</a>، {t('وأقر بصحة بياناتي.','and confirm my data is accurate.')}</span></label>
     </>}
-    {challenge&&<label className="field">{t('رمز التحقق — ٦ أرقام','Verification code — 6 digits')}<input className="otp" name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} dir="ltr"/></label>}
-    {(quick||(challenge&&mode==='register'))&&<label className="field">{quick?'PIN':t('اختر PIN من ٦ أرقام للجهاز الموثوق','Choose a 6-digit PIN for your trusted device')}<input required name="pin" inputMode="numeric" type={showPin?'text':'password'} autoComplete={quick?'current-password':'new-password'} pattern="[0-9]{6}" maxLength={6} value={pin} onChange={e=>setPin(e.target.value.replace(/\D/g,''))} dir="ltr"/><button className="text-link" type="button" aria-pressed={showPin} onClick={()=>setShowPin(!showPin)}>{showPin?t('إخفاء PIN','Hide PIN'):t('إظهار PIN','Show PIN')}</button></label>}
+    {challenge&&<label className="field">{t('رمز التحقق — ٦ أرقام','Verification code — 6 digits')}<input className="otp" name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e=>setCode(numericCode(e.target.value))} dir="ltr"/></label>}
+    {(quick||(challenge&&mode==='register'))&&<label className="field">{quick?'PIN':t('اختر PIN من ٦ أرقام للجهاز الموثوق','Choose a 6-digit PIN for your trusted device')}<input required name="pin" inputMode="numeric" type={showPin?'text':'password'} autoComplete={quick?'current-password':'new-password'} pattern="[0-9]{6}" maxLength={6} value={pin} onChange={e=>setPin(numericCode(e.target.value))} dir="ltr"/><button className="text-link" type="button" aria-pressed={showPin} onClick={()=>setShowPin(!showPin)}>{showPin?t('إخفاء PIN','Hide PIN'):t('إظهار PIN','Show PIN')}</button></label>}
     {err&&<p className="error" role="alert">{err}</p>}
     <Button disabled={busy} className="primary">{busy?t('لحظة من فضلك…','One moment…'):challenge?t('تحقق وادخل','Verify & sign in'):quick?t('دخول','Sign in'):t('أرسل رمز التحقق','Send verification code')}<ArrowUpLeft size={18}/></Button>
    </form>
@@ -169,4 +178,4 @@ function Radar(){const{t,notify}=useApp();const[data,setData]=useState<any>(null
 function Contact(){const{user,t,notify,lang}=useApp();const contactCopy=useManagedContent('contact');const[contact,setContact]=useState<any>(null);useEffect(()=>{api('/api/platform').then(d=>setContact(d.contact)).catch(()=>{});},[]);const recipient=new URLSearchParams(location.search).get('recipient');if(!recipient)return <div className="page"><PageTitle title={contactCopy?.['title_'+lang]||t('يسعدنا أن نسمعك','We would love to hear from you')} subtitle={contactCopy?.['body_'+lang]||t('كل رحلة تبدأ بتواصل صادق. نحن هنا لمساعدتك.','Every journey begins with an honest conversation. We are here to help.')}/><section className="card contact-card">{contact?.email&&<a className="button secondary" href={'mailto:'+contact.email}><Mail size={20}/>{contact.email}</a>}{contact?.whatsapp&&<a className="button primary" href={'https://wa.me/'+contact.whatsapp.replace(/\D/g,'')} target="_blank" rel="noreferrer"><Phone size={20}/>{t('تواصل عبر واتساب','Contact us on WhatsApp')}</a>}</section></div>;if(!user)return <Auth/>;return <div className="page"><div className="card"><MessageCircle size={30}/><h1>{t('طلب تواصل مهني','Professional contact request')}</h1><p>{t('لن تبدأ المحادثة قبل موافقة المستفيد.','The conversation starts only after the recipient accepts.')}</p><Button className="primary" onClick={async()=>{try{await api('/api/contact/request',{method:'POST',body:JSON.stringify({recipient})});notify(t('تم إرسال الطلب','Request sent'));location.href='/dashboard?tab=messages';}catch(e:any){notify(e.message);}}}>{t('إرسال طلب التواصل','Send request')}</Button></div></div>;}
 function Quick(){const{t}=useApp();const[data,setData]=useState<any>(null),[err,setErr]=useState('');useEffect(()=>{api('/api/public/quick/'+location.pathname.split('/').pop()).then(setData).catch(e=>setErr(e.message));},[]);return <div className="page"><div className="card quick-card">{err?<p>{err}</p>:<><span className="eyebrow">{data?.mode==='business'?t('هوية تجارية','BUSINESS IDENTITY'):data?.mode==='professional'?t('هوية مهنية','PROFESSIONAL IDENTITY'):t('تعارف سريع','A QUICK INTRODUCTION')}</span><h1>{data?.profile?.name}</h1><p>{data?.profile?.title}</p>{data?.profile?.email&&<a href={'mailto:'+data.profile.email} className="button secondary"><Mail size={16}/>{data.profile.email}</a>}{data?.profile?.whatsapp&&<a href={'https://wa.me/'+data.profile.whatsapp.replace(/\D/g,'')} className="button primary">WhatsApp</a>}{data?.profile?.url&&<a href={data.profile.url} className="button secondary">{t('الموقع','Website')}</a>}</>}</div></div>;}
 
-createRoot(document.getElementById('root')!).render(<App/>);
+createRoot(document.getElementById('root')!).render(<AppErrorBoundary><App/></AppErrorBoundary>);

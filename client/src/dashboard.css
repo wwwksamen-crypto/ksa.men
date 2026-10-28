@@ -485,6 +485,50 @@
 .dashboard-empty-inline { display: flex; align-items: center; gap: 7px; margin: 10px 0; color: var(--dash-muted); font-size: .88rem; }
 .dashboard-error { margin: 8px 0; color: var(--dash-danger) !important; font-size: .85rem; }
 
+/* The first member action is intentionally compact: reserve a private name, then enter the editor. */
+.dashboard-workspace.is-initial-reservation { grid-template-columns: minmax(0, 1fr); }
+.dashboard-name-reservation {
+  width: min(100%, 660px);
+  min-height: 0;
+  display: grid;
+  gap: 15px;
+  padding: clamp(20px, 4vw, 30px);
+  background: linear-gradient(125deg, color-mix(in srgb, var(--dash-green) 17%, var(--dash-surface)), var(--dash-surface) 66%);
+}
+.dashboard-name-reservation header h2 { margin: 0; font-size: clamp(1.35rem, 2.8vw, 1.8rem); }
+.dashboard-name-reservation header .muted { margin: 6px 0 0; max-width: 540px; font-size: .92rem; }
+.dashboard-name-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; }
+.dashboard-name-field .field { min-width: 0; border-start-end-radius: 0; border-end-end-radius: 0; }
+.dashboard-name-field > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid var(--dash-border);
+  border-inline-start: 0;
+  border-radius: 0 12px 12px 0;
+  background: color-mix(in srgb, var(--dash-surface-2) 70%, var(--dash-surface));
+  color: var(--dash-accent);
+  font-weight: 800;
+  white-space: nowrap;
+}
+.dashboard-name-advisory { display: flex; align-items: flex-start; gap: 8px; min-height: 25px; margin: 0; color: var(--dash-muted); font-size: .86rem; line-height: 1.55; }
+.dashboard-name-advisory svg { flex: 0 0 auto; margin-top: 2px; color: var(--dash-gold); }
+.dashboard-name-advisory.is-available { color: var(--dash-accent); }
+.dashboard-name-advisory.is-available svg { color: var(--dash-accent); }
+.dashboard-name-advisory.is-unavailable { color: var(--dash-danger); }
+.dashboard-name-advisory.is-unavailable svg { color: var(--dash-danger); }
+.dashboard-name-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; color: var(--dash-muted); font-size: .8rem; }
+.dashboard-name-suggestions button { padding: 5px 8px; border: 1px solid var(--dash-border); border-radius: 999px; background: color-mix(in srgb, var(--dash-green) 9%, transparent); color: var(--dash-accent); font-size: .78rem; }
+.dashboard-name-suggestions button:hover { border-color: var(--dash-accent); }
+.dashboard-name-reservation > .button { justify-self: start; }
+
+.dashboard-unbound-names { display: grid; gap: 13px; }
+.dashboard-unbound-names > .muted { margin: -4px 0 0; font-size: .88rem; }
+.dashboard-unbound-names > label { max-width: 560px; }
+.dashboard-unbound-name-list { display: grid; gap: 7px; }
+.dashboard-unbound-name-list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 10px; border-block-start: 1px solid var(--dash-border); }
+.dashboard-unbound-name-list strong { overflow-wrap: anywhere; color: var(--dash-accent); }
+
 .dashboard-wallet-hero {
   min-height: 178px;
   display: flex;
@@ -747,6 +791,11 @@
   .dashboard-review-rail,
   .dashboard-entitlement,
   .dashboard-referral { align-items: stretch; flex-direction: column; }
+  .dashboard-name-reservation { padding: 19px; }
+  .dashboard-name-reservation > .button { width: 100%; }
+  .dashboard-name-suggestions { align-items: flex-start; flex-direction: column; }
+  .dashboard-unbound-name-list > div { align-items: stretch; flex-direction: column; }
+  .dashboard-unbound-name-list > div .button { width: 100%; }
   .dashboard-site-row { align-items: flex-start; justify-content: space-between; width: 100%; }
   .dashboard-site-row select { width: 44%; min-width: 0; }
   .dashboard-editor-actions { width: 100%; }

@@ -108,6 +108,7 @@ type Site = {
 
 type DashboardData = {
   sites?: Site[];
+  unboundNames?: UnboundName[];
   reviews?: Record<string, unknown>[];
   wallet?: { balance?: number; [key: string]: unknown };
   ledger?: Record<string, unknown>[];
@@ -122,6 +123,15 @@ type DashboardData = {
   handovers?: Record<string, unknown>[];
   [key: string]: unknown;
 };
+
+type UnboundName = {
+  name: string;
+  [key: string]: unknown;
+};
+type NameAvailability = { name: string; valid: boolean; available: boolean; reason?: string | null; suggestions?: string[] };
+type NameReservation = { name: string; site: Site; createdAt: number };
+type PaymentInstructionsResult = { available?: boolean; instructions?: unknown; reason?: unknown };
+type WalletOperation = 'transfer' | 'redeem';
 
 type Service = {
   key: string;
@@ -261,6 +271,31 @@ function formatDate(value?: number, locale = 'ar-SA') {
 function createIdempotencyKey() {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `dash-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
+const NAME_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+function validNameLabel(value: string) { return NAME_LABEL_RE.test(value); }
+function publicSiteUrl(value: unknown) {
+  const label = asText(value).trim().toLowerCase();
+  return validNameLabel(label) ? `https://${label}.ksa.men` : '';
+}
+function walletAttemptStorageKey(operation: WalletOperation) { return `ksa-men:wallet-idempotency:${operation}`; }
+function walletIdempotencyKey(operation: WalletOperation, signature: string) {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(walletAttemptStorageKey(operation)) || 'null') as { key?: unknown; signature?: unknown } | null;
+    if (typeof stored?.key === 'string' && stored.signature === signature) return stored.key;
+  } catch { /* A private-browser storage failure only affects retry persistence, not the request. */ }
+  const key = createIdempotencyKey();
+  try { window.localStorage.setItem(walletAttemptStorageKey(operation), JSON.stringify({ key, signature })); } catch { /* The current in-flight request still carries its key. */ }
+  return key;
+}
+function clearWalletIdempotencyKey(operation: WalletOperation, key: string) {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(walletAttemptStorageKey(operation)) || 'null') as { key?: unknown } | null;
+    if (stored?.key === key) window.localStorage.removeItem(walletAttemptStorageKey(operation));
+  } catch { /* Storage is optional after a definitive response. */ }
+}
+function ambiguousNetworkFailure(error: unknown) {
+  return error instanceof TypeError || (error instanceof Error && /(?:failed to fetch|network(?:error)?|load failed)/i.test(error.message));
+}
 function routeParams() {
   const query = new URLSearchParams(window.location.search);
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
@@ -343,7 +378,7 @@ export default function Dashboard() {
   const [selectedConversation, setSelectedConversation] = useState<ConversationDetail | null>(null);
   const [messageBody, setMessageBody] = useState('');
   const [messageRecipient, setMessageRecipient] = useState(new URLSearchParams(location.search).get('recipient')||'');
-  const [paymentInstructions, setPaymentInstructions] = useState<unknown>(null);
+  const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructionsResult | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [quickLink, setQuickLink] = useState<QuickLink | null>(null);
   const [transferForm, setTransferForm] = useState({ recipient: new URLSearchParams(location.search).get('recipient')||'', amount: '' });
@@ -364,6 +399,14 @@ export default function Dashboard() {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState('');
   const [pinConfirm, setPinConfirm] = useState('');
+  const [nameCandidate, setNameCandidate] = useState('');
+  const [nameAvailability, setNameAvailability] = useState<NameAvailability | null>(null);
+  const [checkingName, setCheckingName] = useState(false);
+  const [reservingName, setReservingName] = useState(false);
+  const [walletOperation, setWalletOperation] = useState<WalletOperation | ''>('');
+  const [receiptError, setReceiptError] = useState('');
+  const [attachingName, setAttachingName] = useState('');
+  const [attachTargetId, setAttachTargetId] = useState('');
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
     try { return window.localStorage.getItem(notificationSoundStorageKey) === 'on'; } catch { return false; }
   });
@@ -378,9 +421,37 @@ export default function Dashboard() {
   const notificationAudioRef = useRef<AudioContext | null>(null);
   const seenNotificationIdsRef = useRef<Set<string> | null>(null);
   const dashboardInteractiveRef = useRef<HTMLDivElement | null>(null);
+  const nameCheckSequenceRef = useRef(0);
 
   const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
   const locale = lang === 'ar' ? 'ar-SA' : 'en-US';
+  const normalizedNameCandidate = nameCandidate.trim().toLowerCase();
+  const localNameCandidateValid = validNameLabel(normalizedNameCandidate);
+
+  useEffect(() => {
+    const candidate = normalizedNameCandidate;
+    const sequence = ++nameCheckSequenceRef.current;
+    if (!candidate) {
+      setCheckingName(false);
+      setNameAvailability(null);
+      return;
+    }
+    if (!validNameLabel(candidate)) {
+      setCheckingName(false);
+      setNameAvailability({ name: candidate, valid: false, available: false, reason: tr('استخدم 1–63 حرفاً صغيراً أو رقماً، مع شرطات داخلية فقط. الشرطات المتتالية مسموحة.', 'Use 1–63 lowercase letters or numbers with internal hyphens only. Consecutive hyphens are allowed.') });
+      return;
+    }
+    setCheckingName(true);
+    const timer = window.setTimeout(() => {
+      void api<NameAvailability>(`/api/names/check?name=${encodeURIComponent(candidate)}`)
+        .then((result) => { if (nameCheckSequenceRef.current === sequence) setNameAvailability(result); })
+        .catch((error) => {
+          if (nameCheckSequenceRef.current === sequence) setNameAvailability({ name: candidate, valid: false, available: false, reason: errorMessage(error) });
+        })
+        .finally(() => { if (nameCheckSequenceRef.current === sequence) setCheckingName(false); });
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [normalizedNameCandidate, tr]);
 
   const playNotificationChime = useCallback(() => {
     const context = notificationAudioRef.current;
@@ -547,6 +618,26 @@ export default function Dashboard() {
     }
   }, [notify]);
 
+  const reserveInitialName = async () => {
+    if (!localNameCandidateValid || nameAvailability?.name !== normalizedNameCandidate || !nameAvailability.available || reservingName) return;
+    setReservingName(true);
+    try {
+      const result = await api<NameReservation>('/api/names/reserve', { method: 'POST', body: JSON.stringify({ name: normalizedNameCandidate }) });
+      setActiveTab('editor');
+      setNameAvailability({ name: result.name, valid: true, available: false, reason: null });
+      await openSite(result.site);
+      await loadDashboard();
+      notify(tr('تم حجز الاسم وإنشاء مسودتك. الخطوة 2: ابدأ بتحرير هويتك.', 'Name reserved and your draft was created. Step 2: start editing your identity.'));
+    } catch (error) {
+      const message = errorMessage(error);
+      if ((error as { status?: unknown }).status === 409 || /(?:registered|conflict|reserved|taken)/i.test(message)) {
+        setNameAvailability({ name: normalizedNameCandidate, valid: true, available: false, reason: tr('تغيّر توفر الاسم أثناء الحجز. نحدّث مسودتك الآن إن تم إنشاؤها.', 'Name availability changed while reserving. Refreshing your draft if it was created.') });
+        await loadDashboard();
+      }
+      notify(message);
+    } finally { setReservingName(false); }
+  };
+
   useEffect(() => { void loadDashboard(); void loadServices(); }, [loadDashboard, loadServices]);
   useEffect(() => { if (activeTab === 'messages') void loadMessages(); }, [activeTab, loadMessages]);
   useEffect(() => {
@@ -690,7 +781,12 @@ export default function Dashboard() {
   const uploadImage = async (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, onUploaded: (upload: UploadResult) => void) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (!file || !activeSite) return;
+    if (!file) return;
+    if (!activeSite && purpose !== 'receipt') {
+      notify(tr('احجز أو اختر موقعاً قبل رفع ملفات الهوية.', 'Reserve or choose a site before uploading identity files.'));
+      return;
+    }
+    if (purpose === 'receipt') setReceiptError('');
     setUploading(purpose);
     try {
       const compressed = purpose === 'receipt' ? file : await compressImage(file, purpose === 'cover' ? 2600 : 1800);
@@ -698,39 +794,59 @@ export default function Dashboard() {
       const body = new FormData();
       body.append('file', compressed);
       body.append('purpose', purpose);
-      body.append('siteId', activeSite.id);
+      if (activeSite) body.append('siteId', activeSite.id);
       const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
       if (!result?.id || !result?.url) throw new Error(tr('لم يعُد الخادم بمعرّف وارتباط للملف.', 'The server did not return a file ID and URL.'));
       onUploaded(result);
-      notify(tr('تم ضغط الصورة ورفعها بصيغة WebP.', 'Image compressed and uploaded as WebP.'));
-    } catch (error) { notify(errorMessage(error)); }
+      notify(purpose === 'receipt' ? tr('تم رفع الإيصال الخاص بأمان.', 'Private receipt uploaded securely.') : tr('تم ضغط الصورة ورفعها بصيغة WebP.', 'Image compressed and uploaded as WebP.'));
+    } catch (error) {
+      const message = errorMessage(error);
+      if (purpose === 'receipt') setReceiptError(message);
+      notify(message);
+    }
     finally { setUploading(''); }
   };
 
   const doTransfer = async () => {
+    if (walletOperation) return;
     const amount = Number(transferForm.amount);
     if (!transferForm.recipient.trim() || !Number.isInteger(amount) || amount < 100 || amount > 1000) {
       notify(tr('أدخل مستفيداً ومبلغاً صحيحاً بين 100 و1,000 نقطة.', 'Enter a recipient and an integer amount from 100 to 1,000 points.'));
       return;
     }
     if (!window.confirm(tr(`سيُحوّل ${amount.toLocaleString(locale)} نقطة إلى ${transferForm.recipient.trim()} بلا رسوم. لا يمكن التراجع بعد نجاح الخادم.`, `${amount.toLocaleString(locale)} points will transfer to ${transferForm.recipient.trim()} with no fee. It cannot be undone after the server succeeds.`))) return;
+    const signature = JSON.stringify({ recipient: transferForm.recipient.trim().toLowerCase(), amount });
+    const idempotencyKey = walletIdempotencyKey('transfer', signature);
+    setWalletOperation('transfer');
     try {
-      await api('/api/wallet/transfer', { method: 'POST', body: JSON.stringify({ recipient: transferForm.recipient.trim(), amount, idempotencyKey: createIdempotencyKey() }) });
+      await api('/api/wallet/transfer', { method: 'POST', body: JSON.stringify({ recipient: transferForm.recipient.trim(), amount, idempotencyKey }) });
+      clearWalletIdempotencyKey('transfer', idempotencyKey);
       setTransferForm({ recipient: '', amount: '' });
       await loadDashboard();
       notify(tr('تمت معالجة التحويل وإشعار الطرفين.', 'Transfer processed and both parties notified.'));
-    } catch (error) { notify(errorMessage(error)); }
+    } catch (error) {
+      if (ambiguousNetworkFailure(error)) notify(tr('قد يكون التحويل ما زال قيد المعالجة. أعد المحاولة بنفس البيانات فقط؛ سيُعاد استخدام مفتاح الأمان نفسه.', 'The transfer may still be processing. Retry only with the same details; the same safety key will be reused.'));
+      else { clearWalletIdempotencyKey('transfer', idempotencyKey); notify(errorMessage(error)); }
+    } finally { setWalletOperation(''); }
   };
 
   const redeem = async () => {
+    if (walletOperation) return;
     const days = Number(redeemDays);
     if (!Number.isInteger(days) || days < 1) { notify(tr('أدخل عدداً صحيحاً من الأيام.', 'Enter a whole number of days.')); return; }
     if (!window.confirm(tr(`سيُخصم ${days * 100} نقطة مقابل ${days} يوم استحقاق.`, `${days * 100} points will be redeemed for ${days} entitlement day(s).`))) return;
+    const signature = JSON.stringify({ days });
+    const idempotencyKey = walletIdempotencyKey('redeem', signature);
+    setWalletOperation('redeem');
     try {
-      await api('/api/wallet/redeem', { method: 'POST', body: JSON.stringify({ days, idempotencyKey: createIdempotencyKey() }) });
+      await api('/api/wallet/redeem', { method: 'POST', body: JSON.stringify({ days, idempotencyKey }) });
+      clearWalletIdempotencyKey('redeem', idempotencyKey);
       await loadDashboard();
       notify(tr('تمت إضافة أيام الاستحقاق ذرّياً.', 'Entitlement days were added atomically.'));
-    } catch (error) { notify(errorMessage(error)); }
+    } catch (error) {
+      if (ambiguousNetworkFailure(error)) notify(tr('قد يكون الاستبدال ما زال قيد المعالجة. أعد المحاولة بنفس عدد الأيام فقط؛ سيُعاد استخدام مفتاح الأمان نفسه.', 'The redemption may still be processing. Retry only with the same number of days; the same safety key will be reused.'));
+      else { clearWalletIdempotencyKey('redeem', idempotencyKey); notify(errorMessage(error)); }
+    } finally { setWalletOperation(''); }
   };
 
   const copyReferral = async () => {
@@ -825,7 +941,13 @@ export default function Dashboard() {
       if (!response.ok) throw new Error(asText(payload.error) || asText(payload.message) || tr('تعذر فتح الجلسة.', 'Could not open the session.'));
       const detail = payload.conversation ?? payload as ConversationDetail;
       const messages = payload.conversation ? payload.messages : (detail as ConversationDetail).messages;
-      setSelectedConversation({ ...normalizeConversation(detail), messages: asArray<Message>(messages).map(normalizeMessage) });
+      const opened = normalizeConversation(detail);
+      const listed = normalizeConversation(conversation);
+      setSelectedConversation({
+        ...opened,
+        other_user: { id: opened.other_user?.id ?? listed.other_user?.id, name: opened.other_user?.name || listed.other_user?.name },
+        messages: asArray<Message>(messages).map(normalizeMessage),
+      });
     } catch (error) { notify(errorMessage(error)); }
   };
 
@@ -869,11 +991,15 @@ export default function Dashboard() {
 
   const getInstructions = async () => {
     setPaymentLoading(true);
-    try { const result = await api<unknown>('/api/payments/instructions'); setPaymentInstructions(result); }
+    try { const result = await api<PaymentInstructionsResult>('/api/payments/instructions'); setPaymentInstructions(result); }
     catch (error) { notify(errorMessage(error)); }
     finally { setPaymentLoading(false); }
   };
   const submitPayment = async () => {
+    if (paymentInstructions?.available !== true) {
+      notify(asText(paymentInstructions?.reason) || tr('لا تتوفر تعليمات بنكية نشطة لإرسال الطلب.', 'Active bank instructions are not available for submitting this request.'));
+      return;
+    }
     const amount = Number(paymentForm.amount); const days = Number(paymentForm.days);
     if (!paymentForm.receiptId || !Number.isFinite(amount) || amount <= 0 || !Number.isInteger(days) || days <= 0) { notify(tr('أدخل المبلغ والأيام وارفع الإيصال قبل الإرسال.', 'Enter amount and days, then upload the receipt before submitting.')); return; }
     try {
@@ -928,6 +1054,19 @@ export default function Dashboard() {
     catch (error) { notify(errorMessage(error)); }
   };
 
+  const attachUnboundName = async (name: string, siteId: string | null) => {
+    if (attachingName) return;
+    setAttachingName(name);
+    try {
+      const result = await api<{ site?: Site }>(`/api/names/${encodeURIComponent(name)}/attach`, { method: 'POST', body: JSON.stringify({ siteId }) });
+      setActiveTab('editor');
+      if (result.site) await openSite(result.site);
+      await loadDashboard();
+      notify(tr('تم ربط الاسم بمسودتك.', 'The name is now attached to your draft.'));
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setAttachingName(''); }
+  };
+
   const markNotificationRead = async (notification: Notification) => {
     if (notification.read_at) return;
     try { await api(`/api/notifications/${encodeURIComponent(notification.id)}/read`, { method: 'POST', body: JSON.stringify({}) }); setDashboard((current) => current ? { ...current, notifications: asArray<Notification>(current.notifications).map((item) => item.id === notification.id ? { ...item, read_at: Math.floor(Date.now() / 1000) } : item) } : current); }
@@ -945,6 +1084,15 @@ export default function Dashboard() {
   const conversations = asArray<Conversation>(messagesData?.conversations);
   const requests = asArray<Record<string, unknown>>(messagesData?.requests);
   const existingQuickLinks = asArray<QuickLink>(dashboard?.quickLinks);
+  const unboundNames = asArray<UnboundName>(dashboard?.unboundNames).filter((item) => validNameLabel(asText(item.name)));
+  const attachSites = asArray<Site>(dashboard?.sites);
+  const attachmentSiteId = attachTargetId || activeSite?.id || attachSites[0]?.id || null;
+  const activeSiteUrl = publicSiteUrl(activeSite?.name);
+  const bankIntakeAvailable = paymentInstructions?.available === true;
+  const bankIntakeReason = asText(paymentInstructions?.reason) || (paymentInstructions === null
+    ? tr('اعرض التعليمات الرسمية أولاً قبل إرسال الطلب.', 'Show the official instructions before submitting a request.')
+    : tr('بوابة الحوالة غير نشطة حالياً، لذلك لا يمكن إرسال الطلب.', 'Bank-transfer intake is not active, so this request cannot be submitted.'));
+  const initialReservationFlow = !activeSite && activeTab === 'editor' && unboundNames.length === 0;
   const profileCompletion = useMemo(() => {
     const signals = [draft.name, draft.title, draft.bio, draft.city, draft.photo, draft.experience.length, draft.skills.length, draft.languages.length, draft.socials.length, draft.workImages.length];
     return Math.round((signals.filter(Boolean).length / signals.length) * 100);
@@ -978,21 +1126,21 @@ export default function Dashboard() {
             <h1>{tr('هويتك المهنية', 'Your professional identity')}</h1>
             <p className="muted">{tr('حرر موقعك وخدماتك من مكان واحد.', 'Edit your site and services from one place.')}</p>
           </div>
-          <div className="dashboard-hero__actions">
-            <button className="dashboard-site-switch" onClick={() => activeSite && window.open(`https://${String(activeSite.name || '').replace(/^https?:\/\//, '')}`, '_blank', 'noopener')} disabled={!activeSite?.name}>
-              <Globe2 size={16} /><span dir="ltr"><bdi>{activeSite?.name || tr('لا يوجد اسم محجوز', 'No reserved name')}</bdi></span><ExternalLink size={14} />
+          {!initialReservationFlow && <div className="dashboard-hero__actions">
+            <button className="dashboard-site-switch" onClick={() => activeSiteUrl && window.open(activeSiteUrl, '_blank', 'noopener')} disabled={!activeSiteUrl}>
+              <Globe2 size={16} /><span dir="ltr"><bdi>{activeSiteUrl ? activeSiteUrl.replace(/^https:\/\//, '') : tr('لا يوجد اسم محجوز', 'No reserved name')}</bdi></span><ExternalLink size={14} />
             </button>
             <div className={`dashboard-save-state is-${saveState}`} aria-live="polite"><span />{tr(...statusText[saveState])}</div>
-          </div>
+          </div>}
         </header>
 
-        <div className="dashboard-workspace">
-          <aside className="dashboard-sidebar">
+        <div className={`dashboard-workspace${initialReservationFlow ? ' is-initial-reservation' : ''}`}>
+          {!initialReservationFlow && <aside className="dashboard-sidebar">
             <p className="dashboard-sidebar__label">{tr('لوحة التحكم', 'Console')}</p>
             <nav className="dashboard-tabs" aria-label={tr('أقسام لوحة التحكم', 'Dashboard sections')}>
               {tabs.map(({ key, ar, en, icon: Icon }) => <button key={key} className={activeTab === key ? 'is-active' : ''} aria-current={activeTab === key ? 'page' : undefined} onClick={() => changeTab(key)}><Icon size={17} /><span>{tr(ar, en)}</span></button>)}
             </nav>
-          </aside>
+          </aside>}
 
           <section className="dashboard-content">
 
@@ -1004,6 +1152,16 @@ export default function Dashboard() {
       </section>}
 
       {activeTab === 'editor' && <section className="dashboard-editor">
+        {!activeSite ? <InitialNameReservation
+          candidate={nameCandidate}
+          availability={nameAvailability?.name === normalizedNameCandidate ? nameAvailability : null}
+          checking={checkingName}
+          reserving={reservingName}
+          locallyValid={localNameCandidateValid}
+          onChange={(value) => setNameCandidate(value.toLowerCase())}
+          onReserve={reserveInitialName}
+          tr={tr}
+        /> : <>
         <div className="dashboard-editor-top card">
           <div className="dashboard-site-row">
             <div>
@@ -1020,7 +1178,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {!activeSite ? <EmptyState icon={PanelTop} title={tr('لا يوجد موقع يمكن تحريره بعد', 'No site available to edit yet')} body={tr('احجز اسماً مميزاً لإنشاء مسودة موقعك الأول.', 'Reserve a distinctive name to create your first site draft.')} /> : <>
           <div className="dashboard-editor-layout">
             <aside className="dashboard-editor-navigation" aria-label={tr('أقسام محرر الهوية', 'Identity editor sections')}>
               {editorGroups.map((group) => <section className={`dashboard-editor-group ${group.steps.includes(editorSection) ? 'is-active' : ''}`} key={group.key}>
@@ -1061,7 +1218,7 @@ export default function Dashboard() {
         </>}
       </section>}
 
-      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} redeemDays={redeemDays} setRedeemDays={setRedeemDays} onTransfer={doTransfer} onRedeem={redeem} onCopyReferral={copyReferral} locale={locale} tr={tr} />}
+      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} redeemDays={redeemDays} setRedeemDays={setRedeemDays} onTransfer={doTransfer} onRedeem={redeem} onCopyReferral={copyReferral} busyOperation={walletOperation} locale={locale} tr={tr} />}
 
       {activeTab === 'services' && <section className="dashboard-services stack">
         <section className="dashboard-quality-grid dashboard-quality-grid--three">
@@ -1101,7 +1258,7 @@ export default function Dashboard() {
 
       {activeTab === 'subscription' && <section className="dashboard-subscription stack">
         <section className="card dashboard-entitlement"><div><p className="dashboard-kicker"><CreditCard size={15}/>{tr('الاستحقاق', 'Entitlement')}</p><h2>{tr('التجربة والاشتراك', 'Trial and subscription')}</h2><p className="muted">{tr('يبقى موقعك الأساسي وبياناته وQR متاحين بعد انتهاء التجربة ما لم تعلّقه الإدارة. الخدمات الإضافية تتبع الاستحقاق الفعلي.', 'Your core site, data, and QR remain available after trial expiration unless administration suspends it. Additional services follow actual entitlement.')}</p></div><dl><div><dt>{tr('نهاية التجربة', 'Trial end')}</dt><dd>{formatDate(Number(user?.trial_until), locale)}</dd></div><div><dt>{tr('نهاية الاستحقاق', 'Entitlement end')}</dt><dd>{formatDate(Number(user?.entitlement_until), locale)}</dd></div></dl></section>
-        <section className="card"><div className="dashboard-section-heading"><div><ReceiptText size={18}/><h2>{tr('طلب اشتراك عبر الحوالة', 'Bank-transfer subscription request')}</h2></div><button className="button button--quiet" onClick={() => void getInstructions()} disabled={paymentLoading}>{paymentLoading ? <RefreshCw className="spin" size={16}/> : <Eye size={16}/>}{tr('عرض التعليمات الرسمية', 'Show official instructions')}</button></div>{paymentInstructions === null ? <p className="muted">{tr('لم تُحمّل تعليمات بنكية رسمية بعد. لا يمكننا اختلاق بيانات تحويل أو الادعاء باستقبال دفعة قبل إعدادها من الإدارة.', 'Official bank instructions have not been loaded. We cannot invent bank details or claim to accept payment before administration configures them.')}</p> : <PaymentInstructions value={paymentInstructions} tr={tr} />}<div className="dashboard-payment-form"><label><span>{tr('المبلغ المتفق عليه (SAR)', 'Agreed amount (SAR)')}</span><input className="field" type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={(event) => setPaymentForm({ ...paymentForm, amount: event.target.value })}/></label><label><span>{tr('أيام الاستحقاق', 'Entitlement days')}</span><input className="field" type="number" min="1" step="1" value={paymentForm.days} onChange={(event) => setPaymentForm({ ...paymentForm, days: event.target.value })}/></label><label className="dashboard-payment-note"><span>{tr('ملاحظة اختيارية', 'Optional note')}</span><input className="field" value={paymentForm.notes} onChange={(event) => setPaymentForm({ ...paymentForm, notes: event.target.value })}/></label><UploadControl label={paymentForm.receiptId ? tr('تم رفع الإيصال', 'Receipt uploaded') : tr('رفع إيصال خاص', 'Upload private receipt')} purpose="receipt" uploading={uploading} tr={tr} onChange={(event) => void uploadImage(event, 'receipt', (upload) => setPaymentForm({ ...paymentForm, receiptId: upload.id, receiptUrl: upload.url }))} /><button className="button" disabled={paymentInstructions === null} onClick={() => void submitPayment()}><Send size={17}/>{tr('إرسال الطلب للمراجعة', 'Submit for review')}</button></div></section>
+        <section className="card"><div className="dashboard-section-heading"><div><ReceiptText size={18}/><h2>{tr('طلب اشتراك عبر الحوالة', 'Bank-transfer subscription request')}</h2></div><button className="button button--quiet" onClick={() => void getInstructions()} disabled={paymentLoading}>{paymentLoading ? <RefreshCw className="spin" size={16}/> : <Eye size={16}/>}{tr('عرض التعليمات الرسمية', 'Show official instructions')}</button></div>{paymentInstructions === null ? <p className="muted">{tr('لم تُحمّل تعليمات بنكية رسمية بعد. لا يمكننا اختلاق بيانات تحويل أو الادعاء باستقبال دفعة قبل إعدادها من الإدارة.', 'Official bank instructions have not been loaded. We cannot invent bank details or claim to accept payment before administration configures them.')}</p> : <PaymentInstructions value={paymentInstructions} tr={tr} />}{!bankIntakeAvailable && <p className="dashboard-error" role="status">{bankIntakeReason}</p>}{receiptError && <p className="dashboard-error" role="status">{receiptError}</p>}<div className="dashboard-payment-form"><label><span>{tr('المبلغ المتفق عليه (SAR)', 'Agreed amount (SAR)')}</span><input className="field" type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={(event) => setPaymentForm({ ...paymentForm, amount: event.target.value })}/></label><label><span>{tr('أيام الاستحقاق', 'Entitlement days')}</span><input className="field" type="number" min="1" step="1" value={paymentForm.days} onChange={(event) => setPaymentForm({ ...paymentForm, days: event.target.value })}/></label><label className="dashboard-payment-note"><span>{tr('ملاحظة اختيارية', 'Optional note')}</span><input className="field" value={paymentForm.notes} onChange={(event) => setPaymentForm({ ...paymentForm, notes: event.target.value })}/></label><UploadControl label={paymentForm.receiptId ? tr('تم رفع الإيصال', 'Receipt uploaded') : tr('رفع إيصال خاص', 'Upload private receipt')} purpose="receipt" uploading={uploading} tr={tr} onChange={(event) => void uploadImage(event, 'receipt', (upload) => setPaymentForm({ ...paymentForm, receiptId: upload.id, receiptUrl: upload.url }))} /><button className="button" disabled={!bankIntakeAvailable} title={!bankIntakeAvailable ? bankIntakeReason : undefined} onClick={() => void submitPayment()}><Send size={17}/>{tr('إرسال الطلب للمراجعة', 'Submit for review')}</button></div></section>
         {asArray<Record<string, unknown>>(dashboard?.payments).length > 0 && <section className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('طلباتك السابقة', 'Your previous requests')}</h2></div></div>{asArray<Record<string, unknown>>(dashboard?.payments).map((payment, index) => <div className="dashboard-history-row" key={String(payment.id ?? index)}><span>{String(payment.status ?? 'requested')}</span><p>{Number(payment.amount ?? 0).toLocaleString(locale)} SAR · {String(payment.days ?? '')} {tr('يوم', 'day(s)')}</p><time>{formatDate(Number(payment.created_at), locale)}</time></div>)}</section>}
       </section>}
 
@@ -1109,6 +1266,7 @@ export default function Dashboard() {
         <section className="card dashboard-notification-sound"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('صوت التنبيهات', 'Notification sound')}</h2></div></div><p className="muted">{tr('خيار محلي لهذا المتصفح، متوقف افتراضياً. يتطلب التفعيل تفاعلك لتهيئة الصوت؛ لا يُرسل هذا التفضيل إلى الخادم.', 'A local preference for this browser, off by default. Enabling requires your interaction to initialize audio; this preference is not sent to the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={notificationSoundEnabled} onChange={(event) => void setNotificationSound(event.target.checked)}/>{tr('تشغيل نغمة للتنبيهات الجديدة فقط', 'Play a chime only for newly observed notifications')}</label></section>
         <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
         <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
+        {unboundNames.length > 0 && <section className="card dashboard-unbound-names"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('ربط اسم منقول', 'Attach transferred name')}</h2></div></div><p className="muted">{tr('الاسم المنقول ملك لك لكنه غير مرتبط بمسودة. اختر مسودة قائمة أو أنشئ الأولى منه.', 'This transferred name belongs to you but is not attached to a draft. Choose an existing draft or create the first one from it.')}</p>{attachSites.length > 0 && <label><span>{tr('المسودة المستهدفة', 'Target draft')}</span><select className="field" value={attachmentSiteId || ''} onChange={(event) => setAttachTargetId(event.target.value)}>{attachSites.map((site) => <option key={site.id} value={site.id}>{site.name ? `${site.name}.ksa.men` : site.id}</option>)}</select></label>}<div className="dashboard-unbound-name-list">{unboundNames.map((item) => <div key={item.name}><strong dir="ltr"><bdi>{item.name}.ksa.men</bdi></strong><button className="button button--quiet" disabled={Boolean(attachingName)} onClick={() => void attachUnboundName(item.name, attachmentSiteId)}>{attachingName === item.name ? <RefreshCw className="spin" size={16}/> : <Link2 size={16}/>} {attachmentSiteId ? tr('ربط بالمسودة', 'Attach to draft') : tr('إنشاء مسودة وربط الاسم', 'Create draft & attach')}</button></div>)}</div></section>}
         <section className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('نقل الاسم المميز', 'Distinctive name transfer')}</h2></div></div><p className="muted">{tr('يُنقل الاسم فقط؛ لا تنتقل المسودة أو المحتوى أو الصور أو روابط QR تلقائياً، وقد تتأثر الروابط القديمة.', 'Only the name transfers. Draft, content, images, and QR links do not transfer automatically, and old links may be affected.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الاسم المملوك', 'Owned name')}</span><input className="field" value={nameTransfer.name} onChange={(event) => setNameTransfer({ ...nameTransfer, name: event.target.value })}/></label><label><span>{tr('المستفيد (C# أو اسم)', 'Recipient (C# or name)')}</span><input className="field" value={nameTransfer.recipient} onChange={(event) => setNameTransfer({ ...nameTransfer, recipient: event.target.value })}/></label></div><label className="dashboard-check"><input type="checkbox" checked={nameTransfer.confirmed} onChange={(event) => setNameTransfer({ ...nameTransfer, confirmed: event.target.checked })}/>{tr('أفهم أثر النقل وفصل الاسم عن بيانات الموقع.', 'I understand the transfer consequences and separation from site data.')}</label><button className="button" disabled={!nameTransfer.confirmed} onClick={() => void beginNameTransfer()}><ArrowLeftRight size={16}/>{tr('إنشاء طلب نقل', 'Create transfer request')}</button>{pendingTransfers.length > 0 && <div className="dashboard-pending-list">{pendingTransfers.map((transfer, index) => <div key={String(transfer.id ?? index)}><span>{String(transfer.name ?? tr('اسم مميز', 'Distinctive name'))}</span><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(transfer.id))}>{tr('قبول النقل', 'Accept transfer')}</button></div>)}</div>}</section>
         {handovers.length > 0 && <section className="card"><div className="dashboard-section-heading"><div><UsersRound size={18}/><h2>{tr('تسليمات بانتظار قبولك', 'Handovers awaiting your acceptance')}</h2></div></div>{handovers.map((handover, index) => <div className="dashboard-history-row" key={String(handover.id ?? index)}><p>{String(handover.site_id ?? '')}</p><time>{formatDate(Number(handover.created_at), locale)}</time><button className="button button--quiet" onClick={() => void acceptHandover(String(handover.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}</section>}
         <section className="card dashboard-danger"><div className="dashboard-section-heading"><div><Trash2 size={18}/><h2>{tr('طلب حذف الحساب والبيانات', 'Request account and data deletion')}</h2></div></div><p>{tr('لا يحذف هذا الزر بياناتك فوراً. يرسل طلباً موثقاً للمراجعة والمعالجة وفق السياسة.', 'This does not immediately erase your data. It submits a documented request for review and handling under policy.')}</p><textarea className="field" rows={3} value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} placeholder={tr('سبب اختياري لطلب الحذف', 'Optional deletion reason')}/><label className="dashboard-check"><input type="checkbox" checked={deletionConfirmed} onChange={(event) => setDeletionConfirmed(event.target.checked)}/>{tr('أفهم أن الطلب يحتاج مراجعة ولا يعني الحذف الفوري.', 'I understand the request needs review and does not mean immediate deletion.')}</label><button className="button button--danger" disabled={!deletionConfirmed} onClick={() => void requestDeletion()}><Trash2 size={16}/>{tr('إرسال طلب الحذف', 'Submit deletion request')}</button></section>
@@ -1120,6 +1278,24 @@ export default function Dashboard() {
       {previewOpen && <PreviewModal draft={draft} site={activeSite} tr={tr} submitting={submittingReview} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
     </main>
   );
+}
+
+function InitialNameReservation({ candidate, availability, checking, reserving, locallyValid, onChange, onReserve, tr }: { candidate: string; availability: NameAvailability | null; checking: boolean; reserving: boolean; locallyValid: boolean; onChange: (value: string) => void; onReserve: () => void; tr: (ar: string, en: string) => string }) {
+  const advisory = !candidate.trim()
+    ? tr('اسمك سيكون عنوانك الخاص. تحقّق من توفره قبل الإنشاء.', 'Your name becomes your private address. Check availability before creating.')
+    : checking
+      ? tr('جارٍ التحقق من توفر الاسم…', 'Checking live availability…')
+      : availability?.available
+        ? tr('الاسم متاح ويمكن حجزه الآن.', 'This name is available to reserve now.')
+        : availability?.reason || tr('أدخل اسماً صالحاً للمتابعة.', 'Enter a valid name to continue.');
+  const stateClass = availability?.available ? 'is-available' : candidate.trim() && !checking ? 'is-unavailable' : '';
+  return <section className="dashboard-name-reservation card" aria-labelledby="initial-name-title">
+    <header><p className="dashboard-kicker"><BadgeCheck size={15}/>{tr('الخطوة 1 من 2', 'Step 1 of 2')}</p><h2 id="initial-name-title">{tr('اختر اسمك الخاص', 'Choose your private name')}</h2><p className="muted">{tr('ستنشئ المسودة التالية بعد حجز الاسم فقط.', 'Your editable draft is created only after this name is reserved.')}</p></header>
+    <label><span>{tr('النطاق الفرعي الخاص', 'Private subdomain')}</span><div className="dashboard-name-field" dir="ltr"><input className={`field ${candidate.trim() && !locallyValid ? 'is-invalid' : ''}`} value={candidate} onChange={(event) => onChange(event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="text" placeholder="your-name" aria-describedby="initial-name-advisory" disabled={reserving}/><span>.ksa.men</span></div></label>
+    <p id="initial-name-advisory" className={`dashboard-name-advisory ${stateClass}`} role="status" aria-live="polite">{checking || reserving ? <RefreshCw className="spin" size={16}/> : availability?.available ? <Check size={16}/> : <CircleHelp size={16}/>}<span>{reserving ? tr('جارٍ الحجز وإنشاء المسودة…', 'Reserving name and creating draft…') : advisory}</span></p>
+    {availability?.suggestions && availability.suggestions.length > 0 && <div className="dashboard-name-suggestions"><span>{tr('بدائل متاحة للتحقق:', 'Alternatives to check:')}</span>{availability.suggestions.slice(0, 3).map((suggestion) => <button type="button" key={suggestion} onClick={() => onChange(suggestion)}><bdi dir="ltr">{suggestion}.ksa.men</bdi></button>)}</div>}
+    <button className="button" disabled={!locallyValid || !availability?.available || checking || reserving} onClick={onReserve}>{reserving ? <RefreshCw className="spin" size={17}/> : <Plus size={17}/>} {tr('حجز وإنشاء المسودة', 'Reserve & create')}</button>
+  </section>;
 }
 
 function EmptyState({ icon: Icon, title, body }: { icon: typeof PanelTop; title: string; body: string }) { return <section className="dashboard-empty card"><Icon size={28}/><h2>{title}</h2><p className="muted">{body}</p></section>; }
@@ -1167,10 +1343,12 @@ function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar:
 function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept={purpose === 'receipt' ? 'application/pdf,image/png,image/jpeg,image/webp' : 'image/png,image/jpeg,image/webp'} onChange={onChange} disabled={Boolean(uploading)}/></label>; }
 function MidPointMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="MIDPOINT"><Gift size={compact ? 13 : 16}/><span>MIDPOINT</span></span>; }
 function MidPointAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><MidPointMark compact/></span>; }
-function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; locale: string; tr: (ar: string, en: string) => string }) {
+function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, busyOperation, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; locale: string; tr: (ar: string, en: string) => string }) {
   const amount = Number(transferForm.amount);
   const days = Number(redeemDays);
-  return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('نقاط الوسط', 'Mid Points')}</p><h2><MidPointAmount value={balance} locale={locale}/></h2><p>{tr('نقاط غير نقدية؛ لا تُسحب أو تُستبدل بالنقد.', 'Non-cash points; they cannot be withdrawn or exchanged for cash.')}</p></div><div className="dashboard-wallet-mark"><MidPointMark/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('تحويل نقاط', 'Transfer points')}</h2></div></div><p className="muted">{tr('من 100 إلى 1,000 MIDPOINT للعملية، بلا رسوم أو حدّ لعدد العمليات. لا يمكن الإرسال إلى حسابك نفسه أو فوق رصيدك.', '100 to 1,000 MIDPOINT per transfer, no fee and no count limit. You cannot send to yourself or above your balance.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} placeholder="100–1,000"/><MidPointMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><MidPointAmount value={amount} locale={locale}/></span>}<button className="button" onClick={onTransfer}><Send size={16}/>{tr('تحويل', 'Transfer')}</button></div></article><article className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('استبدال الاستحقاق', 'Redeem entitlement')}</h2></div></div><p className="muted">{tr('كل 100 MIDPOINT تضيف يوماً كاملاً إلى استحقاق الخدمات. تُطبّق العملية ذرّياً لدى الخادم.', 'Every 100 MIDPOINT adds a full entitlement day. The server applies this atomically.')}</p><div className="dashboard-inline-form"><input className="field" type="number" min="1" step="1" value={redeemDays} onChange={(event) => setRedeemDays(event.target.value)} aria-label={tr('عدد الأيام', 'Number of days')}/>{Number.isInteger(days) && days > 0 && <span className="dashboard-point-preview"><MidPointAmount value={days * 100} locale={locale}/><small>{tr('مقابل', 'for')} {days} {tr('يوم', 'day(s)')}</small></span>}<button className="button" onClick={onRedeem}><Gift size={16}/><MidPointMark compact/>{tr('استبدال', 'Redeem')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('تُضاف', 'A')} <MidPointAmount value={1000} locale={locale}/> {tr('مرة واحدة فقط عند أول اشتراك مدفوع مؤهل ومعتمد للشخص المُحال، وليس عند التسجيل.', 'is added once only when the referred person’s first eligible paid subscription is approved, not at registration.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('دفتر الحركات', 'Ledger')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><MidPointAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed ledger entries to show yet.')} />}</section></section>;
+  const transferBusy = busyOperation === 'transfer';
+  const redeemBusy = busyOperation === 'redeem';
+  return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('نقاط الوسط', 'Mid Points')}</p><h2><MidPointAmount value={balance} locale={locale}/></h2><p>{tr('نقاط غير نقدية؛ لا تُسحب أو تُستبدل بالنقد.', 'Non-cash points; they cannot be withdrawn or exchanged for cash.')}</p></div><div className="dashboard-wallet-mark"><MidPointMark/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('تحويل نقاط', 'Transfer points')}</h2></div></div><p className="muted">{tr('من 100 إلى 1,000 MIDPOINT للعملية، بلا رسوم أو حدّ لعدد العمليات. لا يمكن الإرسال إلى حسابك نفسه أو فوق رصيدك.', '100 to 1,000 MIDPOINT per transfer, no fee and no count limit. You cannot send to yourself or above your balance.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} disabled={Boolean(busyOperation)} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} disabled={Boolean(busyOperation)} placeholder="100–1,000"/><MidPointMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><MidPointAmount value={amount} locale={locale}/></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={transferBusy} onClick={onTransfer}>{transferBusy ? <RefreshCw className="spin" size={16}/> : <Send size={16}/>} {transferBusy ? tr('جارٍ التحويل', 'Transferring') : tr('تحويل', 'Transfer')}</button></div></article><article className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('استبدال الاستحقاق', 'Redeem entitlement')}</h2></div></div><p className="muted">{tr('كل 100 MIDPOINT تضيف يوماً كاملاً إلى استحقاق الخدمات. تُطبّق العملية ذرّياً لدى الخادم.', 'Every 100 MIDPOINT adds a full entitlement day. The server applies this atomically.')}</p><div className="dashboard-inline-form"><input className="field" type="number" min="1" step="1" value={redeemDays} onChange={(event) => setRedeemDays(event.target.value)} disabled={Boolean(busyOperation)} aria-label={tr('عدد الأيام', 'Number of days')}/>{Number.isInteger(days) && days > 0 && <span className="dashboard-point-preview"><MidPointAmount value={days * 100} locale={locale}/><small>{tr('مقابل', 'for')} {days} {tr('يوم', 'day(s)')}</small></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={redeemBusy} onClick={onRedeem}>{redeemBusy ? <RefreshCw className="spin" size={16}/> : <Gift size={16}/>}<MidPointMark compact/>{redeemBusy ? tr('جارٍ الاستبدال', 'Redeeming') : tr('استبدال', 'Redeem')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('تُضاف', 'A')} <MidPointAmount value={1000} locale={locale}/> {tr('مرة واحدة فقط عند أول اشتراك مدفوع مؤهل ومعتمد للشخص المُحال، وليس عند التسجيل.', 'is added once only when the referred person’s first eligible paid subscription is approved, not at registration.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('دفتر الحركات', 'Ledger')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><MidPointAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed ledger entries to show yet.')} />}</section></section>;
 }
 function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { mode: QuickMode; setMode: (value: QuickMode) => void; fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) {
   const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] };
@@ -1230,7 +1408,15 @@ function TranslationEditor({ target, translation, onChange, tr }: { target: Tran
   ];
   return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
-function PaymentInstructions({ value, tr }: { value: unknown; tr: (ar: string, en: string) => string }) { const hasValues = value && (typeof value === 'string' ? value.trim().length > 0 : typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0); if (!hasValues) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>; if (typeof value === 'string') return <pre className="dashboard-bank-details">{value}</pre>; const raw = value as Record<string, unknown>; const details = raw.instructions ?? raw.bank ?? raw; return <dl className="dashboard-bank-details">{typeof details === 'object' && details ? Object.entries(details as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{typeof item === 'string' || typeof item === 'number' ? item : JSON.stringify(item)}</dd></div>) : <div><dd>{String(details)}</dd></div>}</dl>; }
+function PaymentInstructions({ value, tr }: { value: PaymentInstructionsResult; tr: (ar: string, en: string) => string }) {
+  if (value.available !== true) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{asText(value.reason) || tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>;
+  if (typeof value.instructions === 'string' && value.instructions.trim()) return <pre className="dashboard-bank-details">{value.instructions}</pre>;
+  const details = value.instructions && typeof value.instructions === 'object' && !Array.isArray(value.instructions) ? value.instructions as Record<string, unknown> : {};
+  const fields = Object.entries(details).filter(([, item]) => typeof item === 'string' || typeof item === 'number');
+  if (!fields.length) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية مكتملة لإرسال الطلب.', 'No complete official bank details are available for this request.')}</div>;
+  return <dl className="dashboard-bank-details">{fields.map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{String(item)}</dd></div>)}</dl>;
+}
+
 function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
