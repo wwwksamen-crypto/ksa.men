@@ -552,6 +552,62 @@ function KindButton({ kind, active, onClick, children }: { kind: ExportKind; act
   return <button type="button" className={`exports-kind${active ? ' is-active' : ''}`} onClick={() => onClick(kind)} aria-pressed={active}>{children}</button>;
 }
 
+type DigitalCardArtworkProps = {
+  cardRef?: React.Ref<HTMLDivElement>;
+  avatar: string;
+  profileQr: string;
+  identity: string;
+  details: ReturnType<typeof smartCardDetails> | null;
+  publicUrl: string;
+  lang: Language;
+  mode: SmartCardMode;
+};
+
+function DigitalCardArtwork({ cardRef, avatar, profileQr, identity, details, publicUrl, lang, mode }: DigitalCardArtworkProps) {
+  return <div ref={cardRef} className="export-digital-card" data-mode={mode} dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className="export-digital-card__mesh"/>
+    <span className="export-digital-card__brand">KSA.MEN</span>
+    <div className="export-digital-card__portrait"><img src={avatar} alt=""/></div>
+    {profileQr && <img className="export-digital-card__qr" src={profileQr} alt=""/>}
+    <div className="export-digital-card__content">
+      <p>{details?.kicker}</p>
+      <h2>{identity}</h2>
+      {details?.title && <strong>{details.title}</strong>}
+      <small>{details?.detail}</small>
+    </div>
+    <div className="export-digital-card__foot"><bdi dir="ltr">{details?.destination || publicUrl}</bdi></div>
+  </div>;
+}
+
+type SocialCardArtworkProps = {
+  cardRef?: React.Ref<HTMLDivElement>;
+  avatar: string;
+  profileQr: string;
+  identity: string;
+  title: string;
+  bio: string;
+  publicUrl: string;
+  lang: Language;
+  shareLabel: string;
+};
+
+function SocialCardArtwork({ cardRef, avatar, profileQr, identity, title, bio, publicUrl, lang, shareLabel }: SocialCardArtworkProps) {
+  return <div ref={cardRef} className="export-social-card" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <div className="export-social-card__arc export-social-card__arc--one"/>
+    <div className="export-social-card__arc export-social-card__arc--two"/>
+    <p className="export-social-card__brand">KSA.MEN</p>
+    <div className="export-social-card__portrait"><img src={avatar} alt=""/></div>
+    {profileQr && <img className="export-social-card__qr" src={profileQr} alt=""/>}
+    <div className="export-social-card__content">
+      <span>{shareLabel}</span>
+      <h2>{identity}</h2>
+      <strong>{title}</strong>
+      <p>{bio.slice(0, 210)}</p>
+    </div>
+    <div className="export-social-card__foot"><bdi dir="ltr">{publicUrl}</bdi></div>
+  </div>;
+}
+
 export default function Exports() {
   const { lang: appLang, t, notify } = useApp();
   const [kind, setKind] = useState<ExportKind>(currentRouteKind);
@@ -589,6 +645,16 @@ export default function Exports() {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, [appLang]);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('ksa:sanad-context', {
+      detail: {
+        section: kind === 'qr' ? 'qr' : 'editor',
+        step: `export-${kind}`,
+        saveStatus: loading ? 'loading' : 'saved',
+        reviewStatus: error ? 'attention' : 'ready',
+      },
+    }));
+  }, [error, kind, loading]);
 
   const verified = Boolean(data && (exportLang === 'ar' || data.translated));
   const profile = verified && data ? data.profile : null;
@@ -772,6 +838,26 @@ export default function Exports() {
           </div>
         </section>}
 
+        {(kind === 'card' || kind === 'badge' || kind === 'social') && <section className="exports-preview-panel card">
+          <div className="exports-preview-panel__copy">
+            <p className="exports-kicker"><Sparkles size={15}/>{t('معاينة مباشرة', 'Live preview')}</p>
+            <h2>{kind === 'social' ? t('بطاقة مشاركة متوازنة', 'A balanced social card') : kind === 'badge' ? t('هوية المؤتمر للطباعة', 'Conference identity for print') : t('بطاقتك الرقمية', 'Your digital card')}</h2>
+            <p>{t('هذه المعاينة تستخدم الحقول العامة نفسها التي ستظهر في ملف PNG أو الشارة المطبوعة.', 'This preview uses the same public fields that will appear in the PNG or printed badge.')}</p>
+            <span className="exports-preview-panel__note"><Check size={15}/>{t('المعلومات المخفية لا تظهر في أي نسخة.', 'Hidden information is excluded from every version.')}</span>
+          </div>
+          <div className={`exports-preview-frame${kind === 'social' ? ' exports-preview-frame--social' : ''}`}>
+            {kind === 'social'
+              ? <SocialCardArtwork avatar={avatar} profileQr={profileQr} identity={identity} title={field(profile, 'title')} bio={field(profile, 'bio')} publicUrl={publicUrl} lang={exportLang} shareLabel={t('ظهور رقمي يليق بك', 'A digital presence worthy of you')}/>
+              : <DigitalCardArtwork avatar={avatar} profileQr={profileQr} identity={identity} details={cardDetails} publicUrl={publicUrl} lang={exportLang} mode={cardMode}/>
+            }
+          </div>
+        </section>}
+
+        {kind === 'qr' && <section className="exports-qr-preview card">
+          <div><p className="exports-kicker"><QrCode size={15}/>{t('معاينة قابلة للمسح', 'Scannable preview')}</p><h2>{t('رمز ملفك العام', 'Your public profile code')}</h2><p>{t('نُبقي هامش المسح والصورة المركزية ضمن حجم آمن للقراءة عند الطباعة.', 'The quiet zone and center mark stay within a scan-safe size for print.')}</p><bdi dir="ltr">{publicUrl}</bdi></div>
+          <div className="exports-qr-preview__code">{profileQr ? <img src={profileQr} alt={t('رمز QR للملف العام', 'QR code for the public profile')}/> : <LoaderCircle className="exports-spin" size={28}/>}</div>
+        </section>}
+
         <section className="exports-card-actions card">
           <div><p className="exports-kicker"><IdCard size={15}/>{t('بطاقات قابلة للاستخدام', 'Ready-to-use cards')}</p><h2>{t('شارة مؤتمر وبطاقات مشاركة', 'Conference badge and share cards')}</h2><p>{t('اطبع الشارة أو نزّل بطاقات PNG رقمية واجتماعية من تصميم HTML حيّ.', 'Print the badge or download digital and social PNG cards rendered from live HTML.')}</p></div>
           <div className="exports-card-actions__buttons"><Button className="button-quiet" onClick={printBadge}><Printer size={16}/>{t('طباعة الشارة', 'Print badge')}</Button><Button className="button-quiet" onClick={() => void imageFromCard('badge')} disabled={Boolean(busy)}><ImageDown size={16}/>{t('PNG رقمي', 'Digital PNG')}</Button><Button className="button-quiet" onClick={() => void imageFromCard('social')} disabled={Boolean(busy)}><ImageDown size={16}/>{t('PNG مشاركة', 'Social PNG')}</Button></div>
@@ -786,12 +872,8 @@ export default function Exports() {
         <div className="export-print-sheet__bottom"><span>{publicUrl}</span><span>{t('هوية مؤتمر', 'Conference identity')}</span></div>
       </section>
       <div className="exports-capture-stage" aria-hidden="true">
-        <div ref={badgeRef} className="export-digital-card" data-mode={cardMode} dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
-          <div className="export-digital-card__mesh"/><span className="export-digital-card__brand">KSA.MEN</span><div className="export-digital-card__portrait"><img src={avatar} alt=""/></div>{profileQr && <img className="export-digital-card__qr" src={profileQr} alt=""/>}<div className="export-digital-card__content"><p>{cardDetails?.kicker}</p><h2>{identity}</h2>{cardDetails?.title && <strong>{cardDetails.title}</strong>}<small>{cardDetails?.detail}</small></div><div className="export-digital-card__foot">{cardDetails?.destination || publicUrl}</div>
-        </div>
-        <div ref={socialRef} className="export-social-card" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
-          <div className="export-social-card__arc export-social-card__arc--one"/><div className="export-social-card__arc export-social-card__arc--two"/><p className="export-social-card__brand">KSA.MEN</p><div className="export-social-card__portrait"><img src={avatar} alt=""/></div>{profileQr && <img className="export-social-card__qr" src={profileQr} alt=""/>}<div className="export-social-card__content"><span>{t('ظهور رقمي يليق بك', 'A digital presence worthy of you')}</span><h2>{identity}</h2><strong>{field(profile, 'title')}</strong><p>{field(profile, 'bio').slice(0, 210)}</p></div><div className="export-social-card__foot">{publicUrl}</div>
-        </div>
+        <DigitalCardArtwork cardRef={badgeRef} avatar={avatar} profileQr={profileQr} identity={identity} details={cardDetails} publicUrl={publicUrl} lang={exportLang} mode={cardMode}/>
+        <SocialCardArtwork cardRef={socialRef} avatar={avatar} profileQr={profileQr} identity={identity} title={field(profile, 'title')} bio={field(profile, 'bio')} publicUrl={publicUrl} lang={exportLang} shareLabel={t('ظهور رقمي يليق بك', 'A digital presence worthy of you')}/>
       </div>
     </>}
   </div>;
@@ -804,6 +886,11 @@ export function QRTools() {
   const [form, setForm] = useState({ name: '', title: '', organization: '', email: '', phone: '', website: '' });
   const [preview, setPreview] = useState('');
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('ksa:sanad-context', {
+      detail: { section: 'qr', step: mode, saveStatus: 'saved', reviewStatus: preview ? 'ready' : 'draft' },
+    }));
+  }, [mode, preview]);
   const content = mode === 'url'
     ? url.trim()
     : profileVCard({ name: form.name, title: form.title, email: form.email, phone: form.phone }, form.organization, form.website.trim());

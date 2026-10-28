@@ -1,0 +1,504 @@
+.sanad-dock,
+.sanad-inline-slot {
+  --sanad-shadow: color-mix(in srgb, var(--bg) 42%, transparent);
+  --sanad-soft: color-mix(in srgb, var(--surface-2) 72%, transparent);
+  --sanad-accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+  --sanad-danger-soft: color-mix(in srgb, var(--danger) 14%, transparent);
+  box-sizing: border-box;
+  position: sticky;
+  z-index: 80;
+  bottom: clamp(12px, 2vw, 24px);
+  inline-size: min(var(--content, 1240px), calc(100% - (var(--gutter, 18px) * 2)));
+  min-block-size: 76px;
+  margin-block: 18px 12px;
+  margin-inline: auto;
+}
+
+.sanad-dock *,
+.sanad-inline-slot * {
+  box-sizing: border-box;
+}
+
+.sanad-dock-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: 0 12px 28px var(--sanad-shadow);
+  backdrop-filter: blur(12px);
+}
+
+.sanad-launch,
+.sanad-dock-hide,
+.sanad-inline-guide,
+.sanad-control,
+.sanad-icon-control,
+.sanad-close-text {
+  font: inherit;
+}
+
+.sanad-launch,
+.sanad-inline-guide {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-block-size: 58px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 12px;
+  color: var(--text);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.sanad-launch:hover,
+.sanad-inline-guide:hover {
+  background: var(--sanad-soft);
+}
+
+.sanad-launch-copy,
+.sanad-inline-guide > span:nth-child(2) {
+  display: grid;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.sanad-launch-copy strong,
+.sanad-inline-guide strong {
+  color: var(--text);
+  font-size: 0.94rem;
+  font-weight: 800;
+}
+
+.sanad-launch-copy span,
+.sanad-inline-guide > span:nth-child(2) > span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.sanad-dock-hide {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sanad-dock-hide:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.sanad-sprite {
+  display: block;
+  flex: 0 0 auto;
+  aspect-ratio: 1;
+  inline-size: clamp(94px, 15vw, 164px);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background-color: var(--surface-2);
+  background-image: url('/assets/sanad/sprites.webp');
+  background-position: 0 0;
+  background-repeat: no-repeat;
+  background-size: 200% 200%;
+  box-shadow: inset 0 0 0 5px var(--sanad-accent-soft);
+}
+
+.sanad-sprite--dock {
+  inline-size: 42px;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
+.sanad-sprite--neutral {
+  background-position: 0 0;
+}
+
+.sanad-sprite--speaking {
+  background-position: 100% 0;
+}
+
+.sanad-sprite--large {
+  background-position: 0 100%;
+}
+
+.sanad-sprite--blink {
+  background-position: 100% 100%;
+}
+
+.sanad-sprite--motion {
+  transition: none; /* Discrete mouth sprites must never slide between grid cells. */
+}
+
+.sanad-inline-slot {
+  min-block-size: 64px;
+}
+
+.sanad-inline-guide {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  inline-size: 100%;
+  min-block-size: 64px;
+  padding: 9px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.sanad-inline-action {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.sanad-dialog {
+  inline-size: min(720px, calc(100vw - 32px));
+  max-block-size: min(760px, calc(100vh - 32px));
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  color: var(--text);
+  background: var(--surface);
+  box-shadow: 0 24px 60px var(--sanad-shadow);
+}
+
+.sanad-dialog::backdrop {
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.sanad-dialog-layout {
+  display: grid;
+  grid-template-columns: minmax(172px, 0.58fr) minmax(0, 1fr);
+}
+
+.sanad-dialog-header {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 16px;
+  border-block-end: 1px solid var(--border);
+}
+
+.sanad-kicker,
+.sanad-label {
+  display: block;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.sanad-dialog-header h2 {
+  margin: 3px 0 0;
+  color: var(--text);
+  font-size: clamp(1.25rem, 2.4vw, 1.6rem);
+  line-height: 1.35;
+}
+
+.sanad-icon-control {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  inline-size: 44px;
+  block-size: 44px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sanad-icon-control:hover,
+.sanad-icon-control:focus-visible {
+  border-color: var(--accent);
+  background: var(--sanad-accent-soft);
+}
+
+.sanad-portrait-panel {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 13px;
+  min-block-size: 360px;
+  padding: 28px 20px;
+  border-inline-end: 1px solid var(--border);
+  background: linear-gradient(145deg, var(--surface-2), var(--surface));
+}
+
+.sanad-listening-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.79rem;
+}
+
+.sanad-content {
+  min-inline-size: 0;
+  padding: 24px;
+}
+
+.sanad-copy-block,
+.sanad-transcript {
+  padding-block-end: 18px;
+}
+
+.sanad-copy-block + .sanad-transcript {
+  padding-block-start: 17px;
+  border-block-start: 1px solid var(--border);
+}
+
+.sanad-copy-block p,
+.sanad-transcript p {
+  margin: 7px 0 0;
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.sanad-missing-copy {
+  color: var(--muted) !important;
+  font-size: 0.86rem !important;
+}
+
+.sanad-state-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted) !important;
+  font-size: 0.8rem !important;
+}
+
+.sanad-state-copy span {
+  color: var(--muted);
+}
+
+.sanad-state-copy bdi {
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.sanad-transcript {
+  border-radius: 12px;
+}
+
+.sanad-transcript small {
+  display: block;
+  margin-block-start: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.sanad-player-error {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  color: var(--danger);
+  background: var(--sanad-danger-soft);
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+
+.sanad-player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block: 4px 18px;
+}
+
+.sanad-control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-block-size: 44px;
+  padding-inline: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  background: transparent;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sanad-control:hover:not(:disabled),
+.sanad-control:focus-visible:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--sanad-accent-soft);
+}
+
+.sanad-control:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sanad-control--primary {
+  border-color: var(--green);
+  color: var(--text);
+  background: linear-gradient(135deg, var(--green), var(--accent));
+}
+
+.sanad-control--primary:hover,
+.sanad-control--primary:focus-visible {
+  border-color: var(--accent);
+  background: linear-gradient(135deg, var(--green), var(--accent));
+}
+
+.sanad-control--quiet {
+  color: var(--muted);
+}
+
+.sanad-dialog-footer {
+  display: grid;
+  gap: 12px;
+  padding-block-start: 16px;
+  border-block-start: 1px solid var(--border);
+}
+
+.sanad-close-text {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 7px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sanad-dialog-footer > span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.55;
+}
+
+.sanad-dock button:focus-visible,
+.sanad-inline-slot button:focus-visible,
+.sanad-dialog button:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+
+@media (min-width: 960px) {
+  .sanad-dock,
+  .sanad-inline-slot {
+    inline-size: min(620px, calc(100% - (var(--gutter, 18px) * 2)));
+    margin-inline: calc(var(--gutter, 18px) + max(0px, (100% - var(--content, 1240px)) / 2)) auto;
+  }
+}
+
+@media (min-width: 1200px) {
+  .sanad-dock,
+  .sanad-inline-slot {
+    inline-size: min(650px, calc(100% - (var(--gutter, 18px) * 2)));
+  }
+}
+
+@media (max-width: 640px) {
+  .sanad-dock,
+  .sanad-inline-slot {
+    position: relative;
+    bottom: auto;
+    inline-size: min(100%, calc(100% - 24px));
+    min-block-size: 0;
+    margin-block: 14px;
+  }
+
+  .sanad-dock-inner {
+    grid-template-columns: minmax(0, 1fr) auto;
+    border-radius: 16px;
+  }
+
+  .sanad-dock-hide span {
+    display: none;
+  }
+
+  .sanad-dialog {
+    inset-block: auto 0;
+    inline-size: 100vw;
+    max-block-size: min(86vh, 760px);
+    margin: 0;
+    border-inline: 0;
+    border-block-end: 0;
+    border-radius: 22px 22px 0 0;
+  }
+
+  .sanad-dialog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sanad-dialog-header {
+    padding: 18px 18px 14px;
+  }
+
+  .sanad-portrait-panel {
+    grid-template-columns: auto minmax(0, 1fr);
+    min-block-size: 0;
+    justify-content: start;
+    padding: 14px 18px;
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border);
+  }
+
+  .sanad-portrait-panel .sanad-sprite {
+    inline-size: 76px;
+  }
+
+  .sanad-content {
+    padding: 18px;
+  }
+
+  .sanad-control {
+    flex: 1 1 calc(50% - 4px);
+  }
+
+  .sanad-control--primary {
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sanad-dock,
+  .sanad-inline-slot,
+  .sanad-dock *,
+  .sanad-inline-slot *,
+  .sanad-dialog,
+  .sanad-dialog * {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -199,6 +199,16 @@ const editorSections = [
 
 type EditorSection = (typeof editorSections)[number][0];
 
+const editorGroups: Array<{ key: string; ar: string; en: string; steps: EditorSection[] }> = [
+  { key: 'identity', ar: 'الهوية', en: 'Identity', steps: ['identity', 'bio', 'contact'] },
+  { key: 'journey', ar: 'المسيرة', en: 'Journey', steps: ['experience', 'education', 'training', 'timeline'] },
+  { key: 'expertise', ar: 'الخبرات', en: 'Expertise', steps: ['skills', 'memberships', 'languages', 'hobbies', 'achievements'] },
+  { key: 'showcase', ar: 'العرض', en: 'Showcase', steps: ['skillImages', 'workImages', 'youtube', 'socials', 'buttons'] },
+  { key: 'control', ar: 'التحكم', en: 'Control', steps: ['privacy'] },
+];
+
+const editorSectionMap = Object.fromEntries(editorSections.map(([key, ar, en]) => [key, { ar, en }])) as Record<EditorSection, { ar: string; en: string }>;
+
 const notificationSoundStorageKey = 'ksa-men:dashboard-notification-sound';
 type AudioContextConstructor = new () => AudioContext;
 const blankItem = (): ResumeItem => ({ title: '', organization: '', start: '', end: '', description: '' });
@@ -367,6 +377,7 @@ export default function Dashboard() {
   const notificationSoundRef = useRef(notificationSoundEnabled);
   const notificationAudioRef = useRef<AudioContext | null>(null);
   const seenNotificationIdsRef = useRef<Set<string> | null>(null);
+  const dashboardInteractiveRef = useRef<HTMLDivElement | null>(null);
 
   const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
   const locale = lang === 'ar' ? 'ar-SA' : 'en-US';
@@ -425,6 +436,31 @@ export default function Dashboard() {
 
   useEffect(() => { notificationSoundRef.current = notificationSoundEnabled; }, [notificationSoundEnabled]);
   useEffect(() => () => { void notificationAudioRef.current?.close(); }, []);
+  useEffect(() => {
+    const requiredMissing = activeTab === 'editor'
+      ? [
+          ...(draft.name.trim() ? [] : [tr('الاسم', 'Name')]),
+          ...(draft.title.trim() ? [] : [tr('المسمى المهني', 'Professional title')]),
+        ]
+      : [];
+    window.dispatchEvent(new CustomEvent('ksa:sanad-context', {
+      detail: {
+        section: activeTab,
+        step: activeTab === 'editor' ? editorSection : '',
+        requiredMissing,
+        saveStatus: saveState,
+        reviewStatus: activeSite?.status || 'draft',
+      },
+    }));
+  }, [activeSite?.status, activeTab, draft.name, draft.title, editorSection, saveState, tr]);
+  useEffect(() => {
+    const interactive = dashboardInteractiveRef.current;
+    if (!interactive || !previewOpen) return;
+    interactive.setAttribute('inert', '');
+    return () => {
+      interactive.removeAttribute('inert');
+    };
+  }, [previewOpen]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -935,23 +971,30 @@ export default function Dashboard() {
 
   return (
     <main className="dashboard" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-      <header className="dashboard-hero card">
-        <div className="dashboard-hero__copy">
-          <p className="dashboard-kicker"><BadgeCheck size={15} /> {tr('مساحتك الرقمية الخاصة', 'Your private digital space')}</p>
-          <h1 className="page-title">{tr(`مرحباً ${user?.name || ''}`, `Welcome ${user?.name || ''}`)}</h1>
-          <p className="muted">{tr('أدر هويتك المهنية وخدماتك من مساحة واحدة آمنة.', 'Manage your professional identity and services in one secure space.')}</p>
-        </div>
-        <div className="dashboard-hero__actions">
-          <button className="dashboard-site-switch" onClick={() => activeSite && window.open(`https://${String(activeSite.name || '').replace(/^https?:\/\//, '')}`, '_blank', 'noopener')} disabled={!activeSite?.name}>
-            <Globe2 size={17} /><span>{activeSite?.name || tr('لا يوجد اسم محجوز', 'No reserved name')}</span><ExternalLink size={14} />
-          </button>
-          <div className={`dashboard-save-state is-${saveState}`}><span />{tr(...statusText[saveState])}</div>
-        </div>
-      </header>
+      <div className="dashboard-shell" ref={dashboardInteractiveRef}>
+        <header className="dashboard-hero card">
+          <div className="dashboard-hero__copy">
+            <p className="dashboard-kicker"><BadgeCheck size={15} /> {tr('مساحة العمل', 'Workspace')}</p>
+            <h1>{tr('هويتك المهنية', 'Your professional identity')}</h1>
+            <p className="muted">{tr('حرر موقعك وخدماتك من مكان واحد.', 'Edit your site and services from one place.')}</p>
+          </div>
+          <div className="dashboard-hero__actions">
+            <button className="dashboard-site-switch" onClick={() => activeSite && window.open(`https://${String(activeSite.name || '').replace(/^https?:\/\//, '')}`, '_blank', 'noopener')} disabled={!activeSite?.name}>
+              <Globe2 size={16} /><span dir="ltr"><bdi>{activeSite?.name || tr('لا يوجد اسم محجوز', 'No reserved name')}</bdi></span><ExternalLink size={14} />
+            </button>
+            <div className={`dashboard-save-state is-${saveState}`} aria-live="polite"><span />{tr(...statusText[saveState])}</div>
+          </div>
+        </header>
 
-      <nav className="dashboard-tabs" aria-label={tr('أقسام لوحة التحكم', 'Dashboard sections')}>
-        {tabs.map(({ key, ar, en, icon: Icon }) => <button key={key} className={activeTab === key ? 'is-active' : ''} onClick={() => changeTab(key)}><Icon size={17} />{tr(ar, en)}</button>)}
-      </nav>
+        <div className="dashboard-workspace">
+          <aside className="dashboard-sidebar">
+            <p className="dashboard-sidebar__label">{tr('لوحة التحكم', 'Console')}</p>
+            <nav className="dashboard-tabs" aria-label={tr('أقسام لوحة التحكم', 'Dashboard sections')}>
+              {tabs.map(({ key, ar, en, icon: Icon }) => <button key={key} className={activeTab === key ? 'is-active' : ''} aria-current={activeTab === key ? 'page' : undefined} onClick={() => changeTab(key)}><Icon size={17} /><span>{tr(ar, en)}</span></button>)}
+            </nav>
+          </aside>
+
+          <section className="dashboard-content">
 
       {notifications.length > 0 && <section className="dashboard-notifications card" aria-label={tr('الإشعارات', 'Notifications')}>
         <div className="dashboard-section-heading"><div><Bell size={18} /><h2>{tr('التنبيهات', 'Notifications')}</h2></div><span>{notifications.filter((item) => !item.read_at).length} {tr('غير مقروء', 'unread')}</span></div>
@@ -963,44 +1006,56 @@ export default function Dashboard() {
       {activeTab === 'editor' && <section className="dashboard-editor">
         <div className="dashboard-editor-top card">
           <div className="dashboard-site-row">
-            <div><p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير مفوّض ضمن صلاحيات حسابك', 'Delegated editing within your account scope') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p><h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2></div>
+            <div>
+              <p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير مفوّض ضمن صلاحيات حسابك', 'Delegated editing within your account scope') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p>
+              <h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2>
+            </div>
             {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
               {asArray<Site>(dashboard?.sites).map((site) => <option key={site.id} value={site.id}>{site.name || site.id}</option>)}
             </select>}
           </div>
-          <div className="dashboard-editor-actions">
-            <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><Eye size={17}/>{tr('معاينة المسودة', 'Preview draft')}</button>
-            <button className="button" onClick={() => void saveDraft(false)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{tr('حفظ الآن', 'Save now')}</button>
+          <div className="dashboard-editor-actions" role="group" aria-label={tr('إجراءات المسودة', 'Draft actions')}>
+            <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><Eye size={17}/>{tr('معاينة', 'Preview')}</button>
+            <button className="button" onClick={() => void saveDraft(false)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{saveState === 'saving' ? tr('جارٍ الحفظ', 'Saving') : tr('حفظ', 'Save')}</button>
           </div>
         </div>
 
         {!activeSite ? <EmptyState icon={PanelTop} title={tr('لا يوجد موقع يمكن تحريره بعد', 'No site available to edit yet')} body={tr('احجز اسماً مميزاً لإنشاء مسودة موقعك الأول.', 'Reserve a distinctive name to create your first site draft.')} /> : <>
-          <div className="dashboard-stepper card" role="tablist" aria-label={tr('خطوات المحرر', 'Editor steps')}>
-            {editorSections.map(([key, ar, en], index) => <button key={key} role="tab" aria-selected={editorSection === key} className={editorSection === key ? 'is-active' : ''} onClick={() => setEditorSection(key)}><small>{String(index + 1).padStart(2, '0')}</small><span>{tr(ar, en)}</span></button>)}
+          <div className="dashboard-editor-layout">
+            <aside className="dashboard-editor-navigation" aria-label={tr('أقسام محرر الهوية', 'Identity editor sections')}>
+              {editorGroups.map((group) => <section className={`dashboard-editor-group ${group.steps.includes(editorSection) ? 'is-active' : ''}`} key={group.key}>
+                <p className="dashboard-editor-group-label"><span>{tr(group.ar, group.en)}</span><small>{group.steps.filter((step) => step === editorSection).length ? tr('قيد التحرير', 'Editing') : `${group.steps.length} ${tr('خطوات', 'steps')}`}</small></p>
+                <div className="dashboard-editor-substeps">
+                  {group.steps.map((step) => <button type="button" key={step} className={editorSection === step ? 'is-active' : ''} aria-current={editorSection === step ? 'step' : undefined} onClick={() => setEditorSection(step)}>
+                    <span>{tr(editorSectionMap[step].ar, editorSectionMap[step].en)}</span><ChevronLeft size={15}/>
+                  </button>)}
+                </div>
+              </section>)}
+            </aside>
+            <article className="dashboard-edit-card card">
+              {editorSection === 'identity' && <IdentitySection draft={draft} tr={tr} uploading={uploading} onChange={changeDraft} onUpload={uploadImage} />}
+              {editorSection === 'bio' && <TextSection label={tr('النبذة التعريفية', 'Professional biography')} hint={tr('اكتب تعريفاً واضحاً ومهماً لجمهور موقعك.', 'Write a clear, meaningful introduction for your site audience.')} value={draft.bio} multiline onChange={(bio) => changeDraft({ bio })} />}
+              {editorSection === 'contact' && <ContactSection draft={draft} tr={tr} onChange={changeDraft} />}
+              {editorSection === 'experience' && <StructuredList title={tr('الخبرات العملية', 'Work experience')} value={draft.experience} onChange={(experience) => changeDraft({ experience })} tr={tr} />}
+              {editorSection === 'education' && <StructuredList title={tr('المؤهلات التعليمية', 'Education')} value={draft.education} onChange={(education) => changeDraft({ education })} tr={tr} />}
+              {editorSection === 'training' && <StructuredList title={tr('البرامج التدريبية والتطويرية', 'Training and development')} value={draft.training} onChange={(training) => changeDraft({ training })} tr={tr} />}
+              {editorSection === 'skills' && <StringList title={tr('المهارات', 'Skills')} hint={tr('أضف كل مهارة في عنصر مستقل.', 'Add each skill as a separate item.')} value={draft.skills} onChange={(skills) => changeDraft({ skills })} tr={tr} />}
+              {editorSection === 'memberships' && <StringList title={tr('العضويات المهنية', 'Professional memberships')} value={draft.memberships} onChange={(memberships) => changeDraft({ memberships })} tr={tr} />}
+              {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} />}
+              {editorSection === 'hobbies' && <StringList title={tr('الهوايات', 'Hobbies')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} />}
+              {editorSection === 'achievements' && <StringList title={tr('الإنجازات', 'Achievements')} value={draft.achievements} onChange={(achievements) => changeDraft({ achievements })} tr={tr} />}
+              {editorSection === 'timeline' && <StructuredList title={tr('سجل الإنجازات الزمني', 'Achievement timeline')} value={draft.timeline} onChange={(timeline) => changeDraft({ timeline })} tr={tr} timeline />}
+              {editorSection === 'skillImages' && <MediaSection title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('حتى 3 صور. تتحول الصور إلى WebP قبل الرفع.', 'Up to 3 images. Images are converted to WebP before upload.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
+              {editorSection === 'workImages' && <MediaSection title={tr('نماذج الأعمال', 'Work samples')} hint={tr('حتى 4 صور. اختر أعمالاً تمثل خبرتك فعلاً.', 'Up to 4 images. Choose work that genuinely represents your experience.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
+              {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
+              {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
+              {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
+              {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
+            </article>
           </div>
-          <article className="dashboard-edit-card card">
-            {editorSection === 'identity' && <IdentitySection draft={draft} tr={tr} uploading={uploading} onChange={changeDraft} onUpload={uploadImage} />}
-            {editorSection === 'bio' && <TextSection label={tr('النبذة التعريفية', 'Professional biography')} hint={tr('اكتب تعريفاً واضحاً ومهماً لجمهور موقعك.', 'Write a clear, meaningful introduction for your site audience.')} value={draft.bio} multiline onChange={(bio) => changeDraft({ bio })} />}
-            {editorSection === 'contact' && <ContactSection draft={draft} tr={tr} onChange={changeDraft} />}
-            {editorSection === 'experience' && <StructuredList title={tr('الخبرات العملية', 'Work experience')} value={draft.experience} onChange={(experience) => changeDraft({ experience })} tr={tr} />}
-            {editorSection === 'education' && <StructuredList title={tr('المؤهلات التعليمية', 'Education')} value={draft.education} onChange={(education) => changeDraft({ education })} tr={tr} />}
-            {editorSection === 'training' && <StructuredList title={tr('البرامج التدريبية والتطويرية', 'Training and development')} value={draft.training} onChange={(training) => changeDraft({ training })} tr={tr} />}
-            {editorSection === 'skills' && <StringList title={tr('المهارات', 'Skills')} hint={tr('أضف كل مهارة في عنصر مستقل.', 'Add each skill as a separate item.')} value={draft.skills} onChange={(skills) => changeDraft({ skills })} tr={tr} />}
-            {editorSection === 'memberships' && <StringList title={tr('العضويات المهنية', 'Professional memberships')} value={draft.memberships} onChange={(memberships) => changeDraft({ memberships })} tr={tr} />}
-            {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} />}
-            {editorSection === 'hobbies' && <StringList title={tr('الهوايات', 'Hobbies')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} />}
-            {editorSection === 'achievements' && <StringList title={tr('الإنجازات', 'Achievements')} value={draft.achievements} onChange={(achievements) => changeDraft({ achievements })} tr={tr} />}
-            {editorSection === 'timeline' && <StructuredList title={tr('سجل الإنجازات الزمني', 'Achievement timeline')} value={draft.timeline} onChange={(timeline) => changeDraft({ timeline })} tr={tr} timeline />}
-            {editorSection === 'skillImages' && <MediaSection title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('حتى 3 صور. تتحول الصور إلى WebP قبل الرفع.', 'Up to 3 images. Images are converted to WebP before upload.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
-            {editorSection === 'workImages' && <MediaSection title={tr('نماذج الأعمال', 'Work samples')} hint={tr('حتى 4 صور. اختر أعمالاً تمثل خبرتك فعلاً.', 'Up to 4 images. Choose work that genuinely represents your experience.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
-            {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
-            {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
-            {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
-            {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
-          </article>
           <section className="dashboard-review-rail card">
-            <div><FileCheck2 size={19}/><div><h3>{tr('المراجعة والنشر', 'Review and publication')}</h3><p className="muted">{tr('الحفظ لا يرسل للمراجعة. الإرسال ينشئ لقطة ثابتة، ولا ينشر أي تعديل دون اعتماد.', 'Saving never submits a review. Submission creates a fixed snapshot; no change publishes without approval.')}</p></div></div>
-            <div className="dashboard-review-rail__actions"><span className="dashboard-status">{activeSite.status || tr('مسودة', 'Draft')}</span><button className="button button--quiet" onClick={() => setPreviewOpen(true)}><Eye size={16}/>{tr('راجع قبل الإرسال', 'Review before submitting')}</button></div>
+            <div><FileCheck2 size={19}/><div><h3>{tr('المراجعة والنشر', 'Review and publication')}</h3><p className="muted">{tr('الحفظ منفصل عن الإرسال. أنشئ لقطة مراجعة قبل أن يصبح أي تعديل منشوراً.', 'Saving is separate from submission. Create a review snapshot before any edit can be published.')}</p></div></div>
+            <div className="dashboard-review-rail__actions"><span className="dashboard-status">{activeSite.status || tr('مسودة', 'Draft')}</span><button className="button button--quiet" onClick={() => setPreviewOpen(true)}><Eye size={16}/>{tr('مراجعة وإرسال', 'Review & submit')}</button></div>
           </section>
           {reviews.length > 0 && <section className="dashboard-review-history card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('سجل المراجعات', 'Review history')}</h2></div></div>{reviews.slice(0, 5).map((review, index) => <div key={String(review.id ?? index)} className="dashboard-history-row"><span>{String(review.status ?? 'pending')}</span><p>{String(review.reason || tr('بانتظار قرار المراجع.', 'Awaiting reviewer decision.'))}</p><time>{formatDate(Number(review.created_at), locale)}</time></div>)}</section>}
         </>}
@@ -1059,6 +1114,9 @@ export default function Dashboard() {
         <section className="card dashboard-danger"><div className="dashboard-section-heading"><div><Trash2 size={18}/><h2>{tr('طلب حذف الحساب والبيانات', 'Request account and data deletion')}</h2></div></div><p>{tr('لا يحذف هذا الزر بياناتك فوراً. يرسل طلباً موثقاً للمراجعة والمعالجة وفق السياسة.', 'This does not immediately erase your data. It submits a documented request for review and handling under policy.')}</p><textarea className="field" rows={3} value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} placeholder={tr('سبب اختياري لطلب الحذف', 'Optional deletion reason')}/><label className="dashboard-check"><input type="checkbox" checked={deletionConfirmed} onChange={(event) => setDeletionConfirmed(event.target.checked)}/>{tr('أفهم أن الطلب يحتاج مراجعة ولا يعني الحذف الفوري.', 'I understand the request needs review and does not mean immediate deletion.')}</label><button className="button button--danger" disabled={!deletionConfirmed} onClick={() => void requestDeletion()}><Trash2 size={16}/>{tr('إرسال طلب الحذف', 'Submit deletion request')}</button></section>
       </section>}
 
+          </section>
+        </div>
+      </div>
       {previewOpen && <PreviewModal draft={draft} site={activeSite} tr={tr} submitting={submittingReview} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
     </main>
   );
@@ -1072,7 +1130,23 @@ function TextSection({ label, hint, value, multiline = false, onChange }: { labe
 }
 
 function IdentitySection({ draft, tr, uploading, onChange, onUpload }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void }) {
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى والصور', 'Name, title, and images')}</h2><p className="muted">{tr('الصورة الشخصية والغلاف جزء من الهوية، ويُحفظان بعد ضغطهما بصيغة WebP.', 'Profile photo and cover are part of your identity and saved as WebP after compression.')}</p></div></header><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo', (upload) => onChange({ photo: upload.url }))}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover', (upload) => onChange({ cover: upload.url }))}/></div><div className="dashboard-settings-grid"><label><span>{tr('الاسم', 'Name')}</span><input className="field" value={draft.name} onChange={(event) => onChange({ name: event.target.value })}/></label><label><span>{tr('المسمى المهني', 'Professional title')}</span><input className="field" value={draft.title} onChange={(event) => onChange({ title: event.target.value })}/></label></div></>;
+  return <>
+    <header className="dashboard-edit-heading">
+      <div>
+        <p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p>
+        <h2>{tr('الاسم والمسمى', 'Name and title')}</h2>
+        <p className="muted">{tr('ابدأ ببيانات الهوية المطلوبة، ثم أضف الصورة والغلاف عندما تكون جاهزاً.', 'Start with the required identity details, then add a photo and cover when ready.')}</p>
+      </div>
+    </header>
+    <div className="dashboard-settings-grid">
+      <label><span>{tr('الاسم', 'Name')}</span><input className="field" autoComplete="name" value={draft.name} onChange={(event) => onChange({ name: event.target.value })}/></label>
+      <label><span>{tr('المسمى المهني', 'Professional title')}</span><input className="field" value={draft.title} onChange={(event) => onChange({ title: event.target.value })}/></label>
+    </div>
+    <div className="dashboard-media-pair">
+      <UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo', (upload) => onChange({ photo: upload.url }))}/>
+      <UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover', (upload) => onChange({ cover: upload.url }))}/>
+    </div>
+  </>;
 }
 function ContactSection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Mail size={15}/>{tr('الخطوة 3', 'Step 3')}</p><h2>{tr('بيانات التواصل والموقع', 'Contact and location')}</h2><p className="muted">{tr('يمكنك لاحقاً التحكم في ظهور كل حقل ضمن إعدادات الخصوصية.', 'You can later control visibility for each field in privacy settings.')}</p></div></header><div className="dashboard-settings-grid">{([['email', tr('البريد الإلكتروني', 'Email'), 'email'], ['phone', tr('الهاتف', 'Phone'), 'tel'], ['whatsapp', tr('واتساب', 'WhatsApp'), 'tel'], ['city', tr('المدينة', 'City'), 'text'], ['country', tr('الدولة', 'Country'), 'text']] as const).map(([key, label, type]) => <label key={key}><span>{label}</span><input className="field" type={type} value={draft[key]} onChange={(event) => onChange({ [key]: event.target.value })}/></label>)}</div></>;
 }
@@ -1157,4 +1231,49 @@ function TranslationEditor({ target, translation, onChange, tr }: { target: Tran
   return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
 function PaymentInstructions({ value, tr }: { value: unknown; tr: (ar: string, en: string) => string }) { const hasValues = value && (typeof value === 'string' ? value.trim().length > 0 : typeof value === 'object' && Object.keys(value as Record<string, unknown>).length > 0); if (!hasValues) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>; if (typeof value === 'string') return <pre className="dashboard-bank-details">{value}</pre>; const raw = value as Record<string, unknown>; const details = raw.instructions ?? raw.bank ?? raw; return <dl className="dashboard-bank-details">{typeof details === 'object' && details ? Object.entries(details as Record<string, unknown>).map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{typeof item === 'string' || typeof item === 'number' ? item : JSON.stringify(item)}</dd></div>) : <div><dd>{String(details)}</dd></div>}</dl>; }
-function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) { return <div className="dashboard-modal-backdrop" role="presentation" onMouseDown={onClose}><section className="dashboard-preview-modal" role="dialog" aria-modal="true" aria-label={tr('معاينة المسودة', 'Draft preview')} onMouseDown={(event) => event.stopPropagation()}><header><div><p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة محلية للمسودة', 'Local draft preview')}</p><h2>{draft.name || tr('اسمك', 'Your name')}</h2></div><button className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button></header>{draft.cover && <img className="dashboard-preview-cover" src={draft.cover} alt=""/>}<div className="dashboard-preview-body">{draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}<p className="dashboard-preview-title">{draft.title}</p>{draft.bio && <p>{draft.bio}</p>}<div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill) => <span key={skill}>{skill}</span>)}</div>{site && <small>{site.name}</small>}</div><footer><p className="muted">{tr('هذه معاينة للمسودة فقط. إرسالها ينشئ لقطة مراجعة مستقلة ولا ينشرها.', 'This previews only your draft. Submitting creates an independent review snapshot and does not publish it.')}</p><div><button className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button><button className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('إرسال للمراجعة', 'Submit for review')}</button></div></footer></section></div>; }
+function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (!dialog.open) dialog.showModal();
+    const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (dialog.open) dialog.close();
+    };
+  }, []);
+
+  return <dialog
+    className="dashboard-preview-modal"
+    ref={dialogRef}
+    aria-labelledby="dashboard-preview-title"
+    onCancel={(event) => { event.preventDefault(); onClose(); }}
+    onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+  >
+    <header>
+      <div>
+        <p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة محلية للمسودة', 'Local draft preview')}</p>
+        <h2 id="dashboard-preview-title">{draft.name || tr('اسمك', 'Your name')}</h2>
+      </div>
+      <button ref={closeButtonRef} type="button" className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button>
+    </header>
+    {draft.cover && <img className="dashboard-preview-cover" src={draft.cover} alt=""/>}
+    <div className="dashboard-preview-body">
+      {draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}
+      <p className="dashboard-preview-title">{draft.title}</p>
+      {draft.bio && <p>{draft.bio}</p>}
+      <div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill) => <span key={skill}>{skill}</span>)}</div>
+      {site && <small dir="ltr"><bdi>{site.name}</bdi></small>}
+    </div>
+    <footer>
+      <p className="muted">{tr('هذه معاينة للمسودة فقط. إرسالها ينشئ لقطة مراجعة مستقلة ولا ينشرها.', 'This previews only your draft. Submitting creates an independent review snapshot and does not publish it.')}</p>
+      <div>
+        <button type="button" className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button>
+        <button type="button" className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('إرسال للمراجعة', 'Submit for review')}</button>
+      </div>
+    </footer>
+  </dialog>;
+}

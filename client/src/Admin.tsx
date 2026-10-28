@@ -1,12 +1,40 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Archive,
+  Banknote,
+  BookOpen,
+  ChevronDown,
+  ClipboardCheck,
+  FileKey2,
+  Gauge,
+  Landmark,
+  LayoutDashboard,
+  LockKeyhole,
+  RefreshCcw,
+  Settings2,
+  ShieldCheck,
+  UsersRound,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react';
 import { api, useApp } from './lib';
 import './admin.css';
 
 type AdminRole = 'owner' | 'manager' | 'moderator';
 type AdminTab = 'overview' | 'users' | 'reviews' | 'payments' | 'services' | 'names' | 'content' | 'pricing' | 'lock' | 'economics' | 'audit' | 'backup';
+type TabGroup = 'workspace' | 'operations' | 'governance';
 type JsonRecord = Record<string, unknown>;
 type MaybeRecord = JsonRecord | null | undefined;
 type UserAction = 'status' | 'role' | 'grant' | 'points' | 'service' | 'assign' | 'branding';
+
+type AdminTabDefinition = {
+  id: AdminTab;
+  ar: string;
+  en: string;
+  group: TabGroup;
+  icon: LucideIcon;
+  roles: AdminRole[];
+};
 
 type AdminData = Partial<Record<Exclude<AdminTab, 'content' | 'pricing' | 'lock' | 'backup'>, unknown>> & {
   settings?: unknown;
@@ -34,19 +62,19 @@ type BackupItem = {
   sha256?: unknown;
 };
 
-const tabs: Array<{ id: AdminTab; ar: string; en: string; roles: AdminRole[] }> = [
-  { id: 'overview', ar: 'نظرة تنفيذية', en: 'Overview', roles: ['owner', 'manager', 'moderator'] },
-  { id: 'users', ar: 'المستخدمون', en: 'Users', roles: ['owner', 'manager'] },
-  { id: 'reviews', ar: 'المراجعات', en: 'Reviews', roles: ['owner', 'manager', 'moderator'] },
-  { id: 'payments', ar: 'المدفوعات', en: 'Payments', roles: ['owner', 'manager'] },
-  { id: 'services', ar: 'الخدمات', en: 'Services', roles: ['owner', 'manager'] },
-  { id: 'names', ar: 'الأسماء', en: 'Names', roles: ['owner'] },
-  { id: 'content', ar: 'المحتوى', en: 'Content', roles: ['owner'] },
-  { id: 'pricing', ar: 'التسعير الداخلي', en: 'Internal pricing', roles: ['owner'] },
-  { id: 'lock', ar: 'قفل المنصة', en: 'Platform lock', roles: ['owner'] },
-  { id: 'economics', ar: 'الاقتصاديات', en: 'Economics', roles: ['owner'] },
-  { id: 'audit', ar: 'سجل التدقيق', en: 'Audit', roles: ['owner'] },
-  { id: 'backup', ar: 'النسخ الاحتياطي', en: 'Backup', roles: ['owner'] },
+const tabs: AdminTabDefinition[] = [
+  { id: 'overview', ar: 'نظرة تنفيذية', en: 'Overview', group: 'workspace', icon: LayoutDashboard, roles: ['owner', 'manager', 'moderator'] },
+  { id: 'reviews', ar: 'المراجعات', en: 'Reviews', group: 'workspace', icon: ClipboardCheck, roles: ['owner', 'manager', 'moderator'] },
+  { id: 'users', ar: 'المستخدمون', en: 'Users', group: 'workspace', icon: UsersRound, roles: ['owner', 'manager'] },
+  { id: 'payments', ar: 'المدفوعات', en: 'Payments', group: 'operations', icon: Banknote, roles: ['owner', 'manager'] },
+  { id: 'services', ar: 'الخدمات', en: 'Services', group: 'operations', icon: Wrench, roles: ['owner', 'manager'] },
+  { id: 'names', ar: 'الأسماء', en: 'Names', group: 'operations', icon: FileKey2, roles: ['owner'] },
+  { id: 'content', ar: 'المحتوى', en: 'Content', group: 'operations', icon: BookOpen, roles: ['owner'] },
+  { id: 'pricing', ar: 'التسعير الداخلي', en: 'Internal pricing', group: 'operations', icon: Landmark, roles: ['owner'] },
+  { id: 'lock', ar: 'قفل المنصة', en: 'Platform lock', group: 'governance', icon: LockKeyhole, roles: ['owner'] },
+  { id: 'economics', ar: 'الاقتصاديات', en: 'Economics', group: 'governance', icon: Gauge, roles: ['owner'] },
+  { id: 'audit', ar: 'سجل التدقيق', en: 'Audit', group: 'governance', icon: ShieldCheck, roles: ['owner'] },
+  { id: 'backup', ar: 'النسخ الاحتياطي', en: 'Backup', group: 'governance', icon: Archive, roles: ['owner'] },
 ];
 
 const contentSlugs = [
@@ -72,20 +100,15 @@ const lockModes = [
 
 const overviewMetrics = [
   ['total_users', 'إجمالي المستخدمين', 'Total users'],
-  ['new_registrations', 'التسجيلات الجديدة', 'New registrations'],
   ['published_sites', 'المواقع المنشورة', 'Published sites'],
-  ['pending_sites', 'المواقع المعلقة', 'Pending sites'],
   ['review_requests', 'طلبات المراجعة', 'Review requests'],
-  ['free_trials', 'التجارب المجانية', 'Free trials'],
-  ['subscriptions', 'الاشتراكات', 'Subscriptions'],
   ['payment_requests', 'طلبات الدفع', 'Payment requests'],
-  ['referrals', 'الإحالات', 'Referrals'],
-  ['treasury_points', 'نقاط الخزينة', 'Treasury points'],
-  ['transfers', 'التحويلات', 'Transfers'],
-  ['resource_usage', 'استهلاك الموارد', 'Resource usage'],
-  ['service_activity', 'نشاط الخدمات', 'Service activity'],
-  ['notifications', 'الإشعارات', 'Notifications'],
-  ['contact_requests', 'طلبات التواصل', 'Contact requests'],
+] as const;
+
+const overviewQueue = [
+  ['review_requests', 'طلبات تحتاج مراجعة', 'Review requests awaiting a decision', 'reviews'],
+  ['payment_requests', 'طلبات دفع بانتظار المعالجة', 'Payment requests awaiting handling', 'payments'],
+  ['pending_sites', 'مواقع معلقة', 'Sites still pending', 'reviews'],
 ] as const;
 
 const economicMetrics = [
@@ -147,6 +170,17 @@ function text(value: unknown, fallback = '—'): string {
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (typeof value === 'boolean') return value ? '✓' : '—';
   return fallback;
+}
+
+function groupedValue(value: unknown, lang: 'ar' | 'en', fallback = '—'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' && /^-?\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN;
+  if (Number.isFinite(numeric)) {
+    return new Intl.NumberFormat(lang === 'ar' ? 'ar-SA' : 'en-GB', {
+      maximumFractionDigits: Number.isInteger(numeric) ? 0 : 2,
+    }).format(numeric);
+  }
+  return text(value, fallback);
 }
 
 function idOf(item: MaybeRecord): string {
@@ -259,9 +293,11 @@ export default function Admin() {
 
   const [tab, setTab] = useState<AdminTab>('overview');
   const [data, setData] = useState<AdminData>({});
-  const [loading, setLoading] = useState(true);
+  const [loadingTabs, setLoadingTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
+  const [loadedTabs, setLoadedTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
+  const [tabErrors, setTabErrors] = useState<Partial<Record<AdminTab, string>>>({});
+  const [freshRequiredTabs, setFreshRequiredTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState('');
   const [selectedUser, setSelectedUser] = useState<JsonRecord | null>(null);
   const [selectedReview, setSelectedReview] = useState<JsonRecord | null>(null);
   const [paymentReasons, setPaymentReasons] = useState<Record<string, string>>({});
@@ -293,51 +329,97 @@ export default function Admin() {
   const [servicePolicies, setServicePolicies] = useState<Record<string, JsonRecord>>({});
 
   const availableTabs = useMemo(() => tabs.filter((item) => item.roles.includes(ownRole)), [ownRole]);
+  const error = tabErrors[tab] ?? '';
+  const setTabError = useCallback((target: AdminTab, message: string) => {
+    setTabErrors((current) => ({ ...current, [target]: message }));
+  }, []);
+  const setError = useCallback((message: string) => setTabError(tab, message), [setTabError, tab]);
 
-  const handleFailure = useCallback((failure: unknown, fresh = false) => {
+  const handleFailure = useCallback((failure: unknown, fresh = false, target = tab) => {
     const message = failure instanceof Error ? failure.message : String(failure);
     if (fresh && /403|fresh|reauth|verify|أعد التحقق/i.test(message)) {
-      window.location.assign('/auth?reauth=1');
+      setFreshRequiredTabs((current) => ({ ...current, [target]: true }));
+      setTabError(target, tr('يلزم تحقق حديث قبل تنفيذ هذا الإجراء. أعد التحقق ثم عد إلى هذا القسم؛ لم يتجاوز النظام حماية الخادم.', 'Fresh verification is required before this action. Reauthenticate, then return to this section; server protection was not bypassed.'));
       return;
     }
-    setError(message || tr('تعذر إكمال العملية. حاول مجدداً.', 'The operation could not be completed. Try again.'));
-  }, [tr]);
+    setTabError(target, message || tr('تعذر إكمال العملية. حاول مجدداً.', 'The operation could not be completed. Try again.'));
+  }, [setTabError, tab, tr]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    const endpoints: Array<[keyof AdminData, string]> = [
-      ['overview', '/api/admin/overview'],
-      ['reviews', '/api/admin/reviews'],
-      ...(managerOrOwner ? [['users', '/api/admin/users'] as [keyof AdminData, string], ['services', '/api/admin/services'] as [keyof AdminData, string]] : []),
-      ...(financialOperator ? [['payments', '/api/admin/payments'] as [keyof AdminData, string]] : []),
-      ...(owner ? [
-        ['settings', '/api/admin/settings'] as [keyof AdminData, string],
-        ['names', '/api/admin/names'] as [keyof AdminData, string],
-        ['transfers', '/api/admin/transfers'] as [keyof AdminData, string],
-        ['audit', '/api/admin/audit'] as [keyof AdminData, string],
-        ['economics', '/api/admin/economics'] as [keyof AdminData, string],
-      ] : []),
-    ];
-    const results = await Promise.allSettled(endpoints.map(([, path]) => api<unknown>(path)));
-    const next: AdminData = {};
-    results.forEach((item, index) => {
-      const [key] = endpoints[index];
-      if (item.status === 'fulfilled') next[key] = item.value;
-    });
-    const rejected = results.find((item): item is PromiseRejectedResult => item.status === 'rejected');
-    if (rejected) handleFailure(rejected.reason);
-    setData(next);
-    setLoading(false);
-  }, [financialOperator, handleFailure, managerOrOwner, owner]);
+  const loadTab = useCallback(async (target: AdminTab) => {
+    setLoadingTabs((current) => ({ ...current, [target]: true }));
+    setTabError(target, '');
 
-  const mutate = useCallback(async <T,>(key: string, work: () => Promise<T>, options?: { fresh?: boolean; success?: string; reload?: boolean }) => {
+    if (target === 'backup') {
+      setBackupsLoaded(false);
+      try {
+        const response = await api<unknown>('/api/admin/backups');
+        const result = record(response);
+        const list = Array.isArray(result?.backups) ? result.backups : [];
+        setNightlyBackups(list.flatMap((item) => {
+          const backup = record(item);
+          const id = text(backup?.id, '');
+          return id ? [{
+            id,
+            bytes: typeof backup?.bytes === 'number' ? backup.bytes : undefined,
+            createdAt: backup?.createdAt,
+            sha256: backup?.sha256,
+          }] : [];
+        }));
+        setBackupsLoaded(true);
+      } catch (failure) {
+        handleFailure(failure, true, target);
+      } finally {
+        setLoadedTabs((current) => ({ ...current, [target]: true }));
+        setLoadingTabs((current) => ({ ...current, [target]: false }));
+      }
+      return;
+    }
+
+    const endpoints: Array<[keyof AdminData, string]> = target === 'overview'
+      ? [['overview', '/api/admin/overview']]
+      : target === 'reviews'
+        ? [['reviews', '/api/admin/reviews']]
+        : target === 'users' && managerOrOwner
+          ? [['users', '/api/admin/users'], ['services', '/api/admin/services']]
+          : target === 'payments' && financialOperator
+            ? [['payments', '/api/admin/payments']]
+            : target === 'services' && managerOrOwner
+              ? [['services', '/api/admin/services']]
+              : target === 'names' && owner
+                ? [['names', '/api/admin/names'], ['transfers', '/api/admin/transfers']]
+                : ['content', 'pricing', 'lock'].includes(target) && owner
+                  ? [['settings', '/api/admin/settings']]
+                  : target === 'economics' && owner
+                    ? [['economics', '/api/admin/economics']]
+                    : target === 'audit' && owner
+                      ? [['audit', '/api/admin/audit']]
+                      : [];
+
+    try {
+      const results = await Promise.allSettled(endpoints.map(([, path]) => api<unknown>(path)));
+      const next: AdminData = {};
+      results.forEach((item, index) => {
+        const [key] = endpoints[index];
+        if (item.status === 'fulfilled') next[key] = item.value;
+      });
+      if (Object.keys(next).length) setData((current) => ({ ...current, ...next }));
+      const rejected = results.find((item): item is PromiseRejectedResult => item.status === 'rejected');
+      if (rejected) handleFailure(rejected.reason, false, target);
+    } finally {
+      setLoadedTabs((current) => ({ ...current, [target]: true }));
+      setLoadingTabs((current) => ({ ...current, [target]: false }));
+    }
+  }, [financialOperator, handleFailure, managerOrOwner, owner, setTabError]);
+
+  const loadBackups = useCallback(() => loadTab('backup'), [loadTab]);
+
+  const mutate = useCallback(async <T,>(key: string, work: () => Promise<T>, options?: { fresh?: boolean; success?: string; reload?: boolean; reloadTab?: AdminTab }) => {
     setBusy(key);
     setError('');
     try {
       const result = await work();
       if (options?.success) notify(options.success);
-      if (options?.reload !== false) await load();
+      if (options?.reload !== false) await loadTab(options?.reloadTab ?? tab);
       return result;
     } catch (failure) {
       handleFailure(failure, options?.fresh);
@@ -345,13 +427,28 @@ export default function Admin() {
     } finally {
       setBusy(null);
     }
-  }, [handleFailure, load, notify]);
-
-  useEffect(() => { void load(); }, [load]);
+  }, [handleFailure, loadTab, notify, setError, tab]);
 
   useEffect(() => {
     if (!availableTabs.some((item) => item.id === tab)) setTab('overview');
   }, [availableTabs, tab]);
+
+  useEffect(() => {
+    if (!loadedTabs[tab]) void loadTab(tab);
+  }, [loadTab, loadedTabs, tab]);
+
+  useEffect(() => {
+    const active = tabs.find((item) => item.id === tab);
+    window.dispatchEvent(new CustomEvent('ksa:sanad-context', {
+      detail: {
+        section: 'admin',
+        step: active?.id ?? 'overview',
+        requiredMissing: [],
+        saveStatus: busy ? 'saving' : 'idle',
+        reviewStatus: tab === 'reviews' ? 'review' : 'none',
+      },
+    }));
+  }, [busy, tab]);
 
   const users = useMemo(() => records(data.users), [data.users]);
   const reviews = useMemo(() => records(data.reviews), [data.reviews]);
@@ -443,23 +540,6 @@ export default function Admin() {
     if (tab === 'content' && owner) void loadContent(contentSlug);
   }, [contentSlug, loadContent, owner, tab]);
 
-  const loadBackups = useCallback(async () => {
-    const response = await mutate('backups-list', () => api<unknown>('/api/admin/backups'), { fresh: true, reload: false });
-    if (response === undefined) return;
-    const result = record(response);
-    const list = Array.isArray(result?.backups) ? result.backups : [];
-    setNightlyBackups(list.flatMap((item) => {
-      const backup = record(item);
-      const id = text(backup?.id, '');
-      return id ? [{ id, bytes: typeof backup?.bytes === 'number' ? backup.bytes : undefined, createdAt: backup?.createdAt, sha256: backup?.sha256 }] : [];
-    }));
-    setBackupsLoaded(true);
-  }, [mutate]);
-
-  useEffect(() => {
-    if (tab === 'backup' && owner && !backupsLoaded) void loadBackups();
-  }, [backupsLoaded, loadBackups, owner, tab]);
-
   const userAction = (action: UserAction, payload: JsonRecord, label: string, fresh = true) => {
     if (!selectedUser) return;
     const id = idOf(selectedUser);
@@ -513,29 +593,43 @@ export default function Admin() {
   const switchTab = (next: AdminTab) => {
     if (!availableTabs.some((item) => item.id === next)) return;
     setError('');
-    if (next === 'backup') setBackupsLoaded(false);
     setTab(next);
   };
 
   const renderOverview = () => (
     <div className="stack admin-stack">
-      <section className="admin-hero card">
+      <section className="admin-page-heading admin-overview-heading">
         <div>
-          <p className="admin-eyebrow">KSA.MEN / CONTROL ROOM</p>
-          <h1 className="page-title">{tr('لوحة القيادة الإدارية', 'Administrative control room')}</h1>
-          <p className="muted">{tr('المؤشرات تُقرأ من النظام الحي ضمن نطاق دورك؛ أي قيمة غير متاحة تبقى صريحة ولا تُقدّر.', 'Metrics are read from the live system within your role scope; unavailable values remain explicit and are never estimated.')}</p>
+          <p className="admin-eyebrow">KSA.MEN / {tr('التشغيل', 'OPERATIONS')}</p>
+          <h1 className="page-title">{tr('نظرة تنفيذية', 'Operational overview')}</h1>
+          <p className="muted">{tr('لقطة موجزة للبيانات التي أعادها النظام ضمن نطاق صلاحيتك. لا تُقدّر القيم غير المتاحة.', 'A concise view of system-returned data in your authorized scope. Unavailable values are never estimated.')}</p>
         </div>
-        <div className="admin-role-card">
-          <span className="muted">{tr('جلسة الإدارة', 'Administration session')}</span>
-          <strong>{text(user?.name || user?.email)}</strong>
-          <span className={`admin-status ${statusTone(user?.role)}`}>{text(user?.role)}</span>
+        <p className="admin-live-note"><span aria-hidden="true" />{tr('بيانات حية من الخادم', 'Live server data')}</p>
+      </section>
+      <section className="admin-metrics admin-metrics-primary" aria-label={tr('المؤشرات الرئيسية للمنصة', 'Primary platform metrics')}>
+        {overviewMetrics.map(([key, ar, en]) => (
+          <article className="admin-metric card" key={key}>
+            <span className="muted">{tr(ar, en)}</span>
+            <strong><bdi dir="ltr">{groupedValue(valueAt(data.overview, key), lang, tr('غير متاح', 'Unavailable'))}</bdi></strong>
+          </article>
+        ))}
+      </section>
+      <section className="card admin-pending-queue" aria-labelledby="admin-pending-queue-title">
+        <div className="admin-section-heading">
+          <div>
+            <p className="admin-eyebrow">{tr('أولوية التشغيل', 'OPERATIONAL PRIORITY')}</p>
+            <h2 id="admin-pending-queue-title">{tr('صف الانتظار', 'Pending queue')}</h2>
+          </div>
+          <span className="admin-route-note">{tr('الأعداد أدناه من ملخص النظام فقط.', 'Counts below come from the system summary only.')}</span>
         </div>
-      </section>
-      <section className="admin-role-strip" aria-label={tr('نطاق دور الإدارة', 'Administration role scope')}>
-        <RoleScope active={ownRole} tr={tr} />
-      </section>
-      <section className="admin-metrics" aria-label={tr('مؤشرات المنصة', 'Platform metrics')}>
-        {overviewMetrics.map(([key, ar, en]) => <article className="admin-metric card" key={key}><span className="muted">{tr(ar, en)}</span><strong>{text(valueAt(data.overview, key), tr('غير متاح', 'Unavailable'))}</strong></article>)}
+        <div className="admin-queue-list">
+          {overviewQueue.filter(([, , , destination]) => availableTabs.some((item) => item.id === destination)).map(([key, ar, en, destination]) => (
+            <button className="admin-queue-row" type="button" key={key} onClick={() => switchTab(destination)}>
+              <span>{tr(ar, en)}</span>
+              <strong><bdi dir="ltr">{groupedValue(valueAt(data.overview, key), lang, tr('غير متاح', 'Unavailable'))}</bdi></strong>
+            </button>
+          ))}
+        </div>
       </section>
       {managerOrOwner && <section className="admin-grid admin-grid-2">
         <div className="card stack">
@@ -745,11 +839,42 @@ export default function Admin() {
     default: contentView = renderOverview();
   }
 
+  const activeTab = availableTabs.find((item) => item.id === tab) ?? availableTabs[0];
+  const initialLoad = Boolean(loadingTabs[tab]) && !loadedTabs[tab];
+
   return <main className="admin-console" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
-    <header className="admin-topbar"><div className="admin-brand"><span className="admin-brand-glyph">K</span><div><strong>KSA.MEN</strong><span>{tr('الإدارة', 'ADMINISTRATION')}</span></div></div><div className="admin-topbar-actions"><button type="button" className="button button-quiet" onClick={() => void refresh()}>{tr('تحديث الجلسة', 'Refresh session')}</button><button type="button" className="button button-quiet" onClick={() => void load()} disabled={loading}>{loading ? tr('جار التحميل', 'Loading') : tr('تحديث البيانات', 'Refresh data')}</button></div></header>
-    <nav className="admin-tabs" aria-label={tr('تنقل الإدارة', 'Administration navigation')}>{availableTabs.map((item) => <button type="button" key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => switchTab(item.id)}>{tr(item.ar, item.en)}{item.roles.length === 1 && <small>{tr('مالك', 'OWNER')}</small>}</button>)}</nav>
-    {error && <div className="admin-alert" role="alert"><span>{error}</span><button type="button" onClick={() => setError('')} aria-label={tr('إغلاق', 'Dismiss')}>×</button></div>}
-    {loading && !Object.keys(data).length ? <div className="card admin-loading">{tr('يجري تحميل بيانات الإدارة الحية…', 'Loading live administration data…')}</div> : contentView}
+    <header className="admin-workbench-topbar">
+      <div className="admin-brand">
+        <span className="admin-brand-glyph" aria-hidden="true">K</span>
+        <div><strong>KSA.MEN</strong><span>{tr('منضدة الإدارة', 'ADMIN WORKBENCH')}</span></div>
+      </div>
+      <div className="admin-topbar-actions">
+        <span className="admin-role-badge"><ShieldCheck size={15} strokeWidth={1.7} />{roleLabel(ownRole, tr)}</span>
+        <button type="button" className="button button-quiet" onClick={() => void refresh()}>
+          <RefreshCcw size={16} strokeWidth={1.7} />{tr('تحديث الجلسة', 'Refresh session')}
+        </button>
+        <button type="button" className="button button-quiet" onClick={() => void loadTab(tab)} disabled={Boolean(loadingTabs[tab])}>
+          <RefreshCcw size={16} strokeWidth={1.7} />{loadingTabs[tab] ? tr('جار التحميل', 'Loading') : tr('تحديث القسم', 'Refresh section')}
+        </button>
+      </div>
+    </header>
+    <div className="admin-workbench">
+      <aside className="admin-sidebar">
+        <p className="admin-sidebar-label">{tr('مساحات العمل', 'WORKSPACES')}</p>
+        <AdminNavigation tabs={availableTabs} activeTab={tab} tr={tr} onSelect={switchTab} />
+      </aside>
+      <details className="admin-mobile-nav">
+        <summary>
+          <span>{activeTab ? tr(activeTab.ar, activeTab.en) : tr('الإدارة', 'Administration')}</span>
+          <ChevronDown size={18} strokeWidth={1.7} aria-hidden="true" />
+        </summary>
+        <AdminNavigation tabs={availableTabs} activeTab={tab} tr={tr} onSelect={switchTab} />
+      </details>
+      <section className="admin-workspace" aria-busy={initialLoad}>
+        {error && <div className="admin-alert" role="alert"><span>{error}</span>{freshRequiredTabs[tab] ? <a className="button button-quiet button-small" href="/auth?reauth=1">{tr('إعادة التحقق', 'Reauthenticate')}</a> : <button type="button" onClick={() => setError('')} aria-label={tr('إغلاق', 'Dismiss')}>×</button>}</div>}
+        {initialLoad ? <div className="card admin-loading">{tr('يجري تحميل بيانات هذا القسم من النظام…', 'Loading this section from the system…')}</div> : contentView}
+      </section>
+    </div>
   </main>;
 }
 
@@ -757,13 +882,40 @@ function Empty({ title }: { title: string }) {
   return <div className="admin-empty card"><span className="admin-empty-mark">—</span><p>{title}</p></div>;
 }
 
-function RoleScope({ active, tr }: { active: AdminRole; tr: (ar: string, en: string) => string }) {
-  const roles: Array<{ id: AdminRole; ar: string; en: string; descriptionAr: string; descriptionEn: string }> = [
-    { id: 'owner', ar: 'المشرف الرئيسي', en: 'Owner', descriptionAr: 'المالك: السياسات، الماليات، الأدوار، القفل والنسخ.', descriptionEn: 'Owner: policies, finance, roles, lock and backups.' },
-    { id: 'manager', ar: 'المشرف المسؤول', en: 'Responsible manager', descriptionAr: 'المدير: تشغيل نطاقه، المراجعات والمواقع بالنيابة.', descriptionEn: 'Manager: scoped operations, reviews and proxy sites.' },
-    { id: 'moderator', ar: 'المشرف العادي', en: 'Moderator', descriptionAr: 'المشرف: مراجعة تشغيلية بلا مالية أو تفويضات عليا.', descriptionEn: 'Moderator: operational reviews without finance or elevated delegation.' },
+function roleLabel(role: AdminRole, tr: (ar: string, en: string) => string): string {
+  if (role === 'owner') return tr('المالك', 'Owner');
+  if (role === 'manager') return tr('مدير مسؤول', 'Responsible manager');
+  return tr('مشرف', 'Moderator');
+}
+
+function AdminNavigation(props: {
+  tabs: AdminTabDefinition[];
+  activeTab: AdminTab;
+  tr: (ar: string, en: string) => string;
+  onSelect: (tab: AdminTab) => void;
+}) {
+  const { tabs: permittedTabs, activeTab, tr, onSelect } = props;
+  const groups: Array<{ id: TabGroup; ar: string; en: string }> = [
+    { id: 'workspace', ar: 'المتابعة', en: 'Monitor' },
+    { id: 'operations', ar: 'التشغيل', en: 'Operate' },
+    { id: 'governance', ar: 'الحوكمة', en: 'Govern' },
   ];
-  return <>{roles.map((role) => <article key={role.id} className={`admin-role-scope ${active === role.id ? 'active' : ''}`}><strong>{tr(role.ar, role.en)}</strong><span>{tr(role.descriptionAr, role.descriptionEn)}</span></article>)}</>;
+  return <nav className="admin-navigation" aria-label={tr('تنقل الإدارة', 'Administration navigation')}>
+    {groups.map((group) => {
+      const entries = permittedTabs.filter((item) => item.group === group.id);
+      if (!entries.length) return null;
+      return <div className="admin-nav-group" key={group.id}>
+        <p>{tr(group.ar, group.en)}</p>
+        {entries.map((item) => {
+          const Icon = item.icon;
+          return <button type="button" key={item.id} className={activeTab === item.id ? 'active' : ''} aria-current={activeTab === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
+            <Icon size={17} strokeWidth={1.7} aria-hidden="true" />
+            <span>{tr(item.ar, item.en)}</span>
+          </button>;
+        })}
+      </div>;
+    })}
+  </nav>;
 }
 
 function ProxySitePanel(props: {
