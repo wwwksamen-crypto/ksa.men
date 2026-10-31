@@ -871,3 +871,69 @@
 
 /* Phase 1 velvet continuity for the member workspace. */
 .dashboard .card{background-image:linear-gradient(145deg,color-mix(in srgb,var(--dash-surface) 95%,var(--dash-green)),var(--dash-surface)),repeating-linear-gradient(125deg,color-mix(in srgb,var(--dash-accent) 4%,transparent) 0 1px,transparent 1px 8px)}
+
+/* Phase 3 editor: calm, touch-friendly disclosure cards and local voice input. */
+.dashboard-edit-card { overflow: clip; }
+.dashboard-edit-card > summary {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px clamp(18px, 3vw, 28px);
+  border-bottom: 1px solid var(--dash-border);
+  color: var(--dash-text);
+  cursor: pointer;
+  font-weight: 800;
+  list-style: none;
+}
+.dashboard-edit-card > summary::-webkit-details-marker { display: none; }
+.dashboard-edit-card > summary > span { display: inline-flex; align-items: center; gap: 8px; }
+.dashboard-edit-card > summary > svg { color: var(--dash-accent); transition: transform 180ms ease; }
+.dashboard-edit-card:not([open]) > summary > svg { transform: rotate(-90deg); }
+.dashboard-edit-card__body { min-height: 360px; padding: clamp(18px, 3vw, 28px); }
+.dashboard-editor-guide {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+  margin: 0 0 18px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--dash-accent) 30%, var(--dash-border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--dash-green) 10%, var(--dash-surface));
+  color: var(--dash-accent);
+}
+.dashboard-editor-guide > svg { margin-top: 4px; }
+.dashboard-editor-guide p { margin: 0; color: var(--dash-text); font-size: .85rem; line-height: 1.65; }
+.dashboard-editor-guide button { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--dash-muted); }
+.dashboard-editor-guide button:hover { color: var(--dash-text); background: color-mix(in srgb, var(--dash-surface-2) 78%, transparent); }
+.dashboard-dictated-field { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+.dashboard-dictated-field > .field { min-width: 0; }
+.dashboard-dictated-field--textarea { align-items: start; }
+.dashboard-dictated-field--textarea .dashboard-voice-control { padding-top: 3px; }
+.dashboard-voice-control { display: inline-flex; align-items: center; gap: 6px; }
+.dashboard-voice-control small { max-width: 150px; color: var(--dash-muted); font-size: .7rem; line-height: 1.35; }
+.dashboard-icon-button.is-listening { border-color: var(--dash-accent); background: color-mix(in srgb, var(--dash-green) 24%, transparent); color: var(--dash-accent); animation: dashboard-pulse 900ms ease-in-out infinite alternate; }
+.dashboard-email-suggestion { display: flex; align-items: flex-start; gap: 8px; margin: 15px 0 0; padding: 11px 12px; border-inline-start: 2px solid var(--dash-gold); background: color-mix(in srgb, var(--dash-gold) 8%, transparent); font-size: .82rem; }
+.dashboard-email-suggestion svg { flex: 0 0 auto; margin-top: 3px; color: var(--dash-gold); }
+.dashboard-radar-editor,
+.dashboard-milestones-editor { display: grid; gap: 20px; }
+.dashboard-radar-editor__groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.dashboard-radar-editor__groups > * { min-width: 0; padding: 14px; border: 1px solid var(--dash-border); border-radius: 14px; background: color-mix(in srgb, var(--dash-surface-2) 54%, transparent); }
+.dashboard-radar-editor__groups .dashboard-edit-heading { display: block; padding-bottom: 11px; margin-bottom: 12px; }
+.dashboard-radar-editor__groups .dashboard-edit-heading .button { width: 100%; margin-top: 10px; }
+
+@media (max-width: 960px) {
+  .dashboard-tabs button { border-color: color-mix(in srgb, var(--dash-border) 84%, transparent); background: color-mix(in srgb, var(--dash-surface-2) 48%, transparent); font-weight: 800; }
+  .dashboard-tabs button.is-active { border-color: var(--dash-accent); background: linear-gradient(135deg, color-mix(in srgb, var(--dash-green) 82%, var(--dash-surface)), color-mix(in srgb, var(--dash-green) 44%, var(--dash-surface))); box-shadow: 0 8px 18px color-mix(in srgb, var(--dash-green) 20%, transparent); }
+  .dashboard-radar-editor__groups { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .dashboard-edit-card__body { min-height: 0; padding: 17px; }
+  .dashboard-edit-card > summary { padding: 13px 17px; }
+  .dashboard-editor-guide { grid-template-columns: auto minmax(0, 1fr) auto; padding: 10px; }
+  .dashboard-dictated-field--textarea { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-dictated-field--textarea .dashboard-voice-control { justify-self: end; margin-top: -48px; margin-inline-end: 6px; padding: 0; }
+  .dashboard-voice-control small { max-width: 122px; }
+}

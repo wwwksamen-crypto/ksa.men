@@ -23,7 +23,11 @@ describe('public disclosure boundary', () => {
       const text = read(file);
       for (const restrictedValue of restricted) expect(text, `${file} exposes ${restrictedValue}`).not.toContain(restrictedValue);
     }
-    expect(read('public/sw.js')).toContain('sensitivePublicDocument');
+    const worker = read('public/sw.js');
+    expect(worker).toContain('sensitivePublicDocument');
+    expect(worker).toContain("!url.pathname.startsWith('/assets/')");
+    expect(worker).toContain("url.pathname==='/export/badge'");
+    expect(worker).toContain("!url.searchParams.has('site')");
   });
 
   it('adds bilingual safe public content without transfer-account values', () => {

@@ -8,6 +8,7 @@ import {
   Bell,
   BookOpen,
   Check,
+  ChevronDown,
   ChevronLeft,
   CircleHelp,
   Clock3,
@@ -26,6 +27,8 @@ import {
   Lock,
   Mail,
   MessageCircle,
+  Mic,
+  MicOff,
   PanelTop,
   PencilLine,
   Plus,
@@ -62,6 +65,7 @@ type ResumeItem = {
 
 type Social = { label: string; url: string };
 type CustomButton = { label: string; url: string };
+type SkillRadar = { human: string[]; scientific: string[]; professional: string[] };
 type ProfileDraft = {
   name: string;
   title: string;
@@ -83,6 +87,9 @@ type ProfileDraft = {
   hobbies: string[];
   achievements: string[];
   timeline: ResumeItem[];
+  skillRadar: SkillRadar;
+  blog: string;
+  notes: string;
   skillImages: string[];
   workImages: string[];
   socials: Social[];
@@ -194,17 +201,18 @@ const editorSections = [
   ['experience', 'الخبرات', 'Experience'],
   ['education', 'التعليم', 'Education'],
   ['training', 'التدريب', 'Training'],
-  ['skills', 'المهارات', 'Skills'],
+  ['skills', 'المهارات والرادار', 'Skills and radar'],
   ['memberships', 'العضويات', 'Memberships'],
   ['languages', 'اللغات', 'Languages'],
   ['hobbies', 'الهوايات', 'Hobbies'],
-  ['achievements', 'الإنجازات', 'Achievements'],
-  ['timeline', 'السجل الزمني', 'Timeline'],
+  ['achievements', 'الإنجازات والمحطات', 'Achievements and milestones'],
   ['skillImages', 'إثبات المهارات', 'Skill evidence'],
   ['workImages', 'نماذج الأعمال', 'Work samples'],
   ['youtube', 'الفيديو التعريفي', 'Introduction video'],
   ['socials', 'الروابط الاجتماعية', 'Social links'],
   ['buttons', 'الأزرار المخصصة', 'Custom buttons'],
+  ['blog', 'المدونة', 'Journal'],
+  ['notes', 'ملاحظات خاصة', 'Private notes'],
   ['privacy', 'الخصوصية والظهور', 'Privacy and discovery'],
 ] as const;
 
@@ -212,9 +220,9 @@ type EditorSection = (typeof editorSections)[number][0];
 
 const editorGroups: Array<{ key: string; ar: string; en: string; steps: EditorSection[] }> = [
   { key: 'identity', ar: 'الهوية', en: 'Identity', steps: ['identity', 'bio', 'contact'] },
-  { key: 'journey', ar: 'المسيرة', en: 'Journey', steps: ['experience', 'education', 'training', 'timeline'] },
-  { key: 'expertise', ar: 'الخبرات', en: 'Expertise', steps: ['skills', 'memberships', 'languages', 'hobbies', 'achievements'] },
-  { key: 'showcase', ar: 'العرض', en: 'Showcase', steps: ['skillImages', 'workImages', 'youtube', 'socials', 'buttons'] },
+  { key: 'journey', ar: 'المسيرة', en: 'Journey', steps: ['experience', 'education', 'training', 'achievements'] },
+  { key: 'expertise', ar: 'الخبرات', en: 'Expertise', steps: ['skills', 'memberships', 'languages', 'hobbies'] },
+  { key: 'showcase', ar: 'العرض', en: 'Showcase', steps: ['skillImages', 'workImages', 'youtube', 'socials', 'buttons', 'blog', 'notes'] },
   { key: 'control', ar: 'التحكم', en: 'Control', steps: ['privacy'] },
 ];
 
@@ -223,10 +231,12 @@ const editorSectionMap = Object.fromEntries(editorSections.map(([key, ar, en]) =
 const notificationSoundStorageKey = 'ksa-men:dashboard-notification-sound';
 type AudioContextConstructor = new () => AudioContext;
 const blankItem = (): ResumeItem => ({ title: '', organization: '', start: '', end: '', description: '' });
+const DEFAULT_PROFILE_IMAGE = '/assets/icon-192.png';
+const DEFAULT_COVER_IMAGE = '/assets/cover-1600.webp';
 const emptyDraft = (): ProfileDraft => ({
   name: '', title: '', bio: '', email: '', phone: '', whatsapp: '', city: '', country: 'المملكة العربية السعودية',
-  photo: '', cover: '', youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
-  hobbies: [], achievements: [], timeline: [], skillImages: [], workImages: [], socials: [], buttons: [], hidden: [],
+  photo: DEFAULT_PROFILE_IMAGE, cover: DEFAULT_COVER_IMAGE, youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
+  hobbies: [], achievements: [], timeline: [], skillRadar: { human: [], scientific: [], professional: [] }, blog: '', notes: '', skillImages: [], workImages: [], socials: [], buttons: [], hidden: [],
   searchable: true, allowContact: true, redirect: '',
 });
 
@@ -257,9 +267,14 @@ function parseDraft(source: unknown): ProfileDraft {
     ...emptyDraft(),
     ...Object.fromEntries(Object.keys(emptyDraft()).map((key) => [key, raw[key] ?? (emptyDraft() as unknown as Record<string, unknown>)[key]])),
     name: asText(raw.name), title: asText(raw.title), bio: asText(raw.bio), email: asText(raw.email), phone: asText(raw.phone), whatsapp: asText(raw.whatsapp),
-    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo), cover: asText(raw.cover), youtube: asText(raw.youtube), redirect: asText(raw.redirect),
+    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo) || DEFAULT_PROFILE_IMAGE, cover: asText(raw.cover) || DEFAULT_COVER_IMAGE, youtube: asText(raw.youtube), redirect: asText(raw.redirect), blog: asText(raw.blog), notes: asText(raw.notes),
     experience: normalizeStructured(raw.experience), education: normalizeStructured(raw.education), training: normalizeStructured(raw.training), timeline: normalizeStructured(raw.timeline),
     skills: normalizeStrings(raw.skills), memberships: normalizeStrings(raw.memberships), languages: normalizeStrings(raw.languages), hobbies: normalizeStrings(raw.hobbies), achievements: normalizeStrings(raw.achievements),
+    skillRadar: {
+      human: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.human),
+      scientific: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.scientific),
+      professional: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.professional ?? raw.skills),
+    },
     skillImages: normalizeStrings(raw.skillImages).slice(0, 3), workImages: normalizeStrings(raw.workImages).slice(0, 4), hidden: normalizeStrings(raw.hidden),
     socials: normalizeLinks(raw.socials), buttons: normalizeLinks(raw.buttons).slice(0, 3), searchable: asBool(raw.searchable, true), allowContact: asBool(raw.allowContact, true),
     translations: raw.translations as ProfileDraft['translations'],
@@ -751,7 +766,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!dirtyRef.current) return;
-    const timer = window.setTimeout(() => { void saveDraft(true); }, 900);
+    const timer = window.setTimeout(() => { void saveDraft(true); }, 3_000);
     return () => window.clearTimeout(timer);
   }, [draft, saveDraft]);
   useEffect(() => () => { siteIdRef.current = null; }, []);
@@ -774,25 +789,39 @@ export default function Dashboard() {
     finally { setSubmittingReview(false); }
   };
 
-  const compressImage = async (file: File, maxSide = 2200): Promise<File> => {
-    if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) throw new Error(tr('اختر صورة PNG أو JPEG أو WebP فقط.', 'Choose a PNG, JPEG, or WebP image.'));
-    if (file.size > 15 * 1024 * 1024) throw new Error(tr('حجم الصورة يتجاوز 15 ميغابايت.', 'Image exceeds 15 MB.'));
+  const compressImage = async (file: File, initialMaxSide = 2200): Promise<File> => {
+    if (!file.type.startsWith('image/')) throw new Error(tr('اختر ملف صورة صالحاً.', 'Choose a valid image file.'));
     const source = await new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       const objectUrl = URL.createObjectURL(file);
       image.onload = () => { URL.revokeObjectURL(objectUrl); resolve(image); };
-      image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error(tr('تعذر قراءة الصورة.', 'Could not read image.'))); };
+      image.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error(tr('تعذر فتح هذه الصورة في متصفحك. اختر نسخة يمكن عرضها ثم أعد المحاولة.', 'This image could not be opened by your browser. Choose a displayable copy and try again.'))); };
       image.src = objectUrl;
     });
-    const scale = Math.min(1, maxSide / Math.max(source.naturalWidth, source.naturalHeight));
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(source.naturalWidth * scale));
-    canvas.height = Math.max(1, Math.round(source.naturalHeight * scale));
-    const context = canvas.getContext('2d');
-    if (!context) throw new Error(tr('تعذر تجهيز الصورة.', 'Could not prepare image.'));
-    context.drawImage(source, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error(tr('تعذر ضغط الصورة.', 'Could not compress image.'))), 'image/webp', 0.86));
-    return new File([blob], `${file.name.replace(/\.[^.]+$/, '') || 'image'}.webp`, { type: 'image/webp' });
+    const maxPixels = 16_000_000;
+    const originalLongest = Math.max(source.naturalWidth, source.naturalHeight);
+    const originalPixels = source.naturalWidth * source.naturalHeight;
+    const pixelScale = originalPixels > maxPixels ? Math.sqrt(maxPixels / originalPixels) : 1;
+    const baseScale = Math.min(1, initialMaxSide / originalLongest, pixelScale);
+    const attempts = [
+      { scale: baseScale, quality: .88 },
+      { scale: Math.min(baseScale, .82), quality: .82 },
+      { scale: Math.min(baseScale, .68), quality: .76 },
+    ];
+    let best: Blob | null = null;
+    for (const attempt of attempts) {
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(source.naturalWidth * attempt.scale));
+      canvas.height = Math.max(1, Math.round(source.naturalHeight * attempt.scale));
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error(tr('تعذر تجهيز الصورة.', 'Could not prepare the image.'));
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error(tr('تعذر تحويل الصورة.', 'Could not convert the image.'))), 'image/webp', attempt.quality));
+      best = blob;
+      if (blob.size <= 3_500_000) break;
+    }
+    if (!best) throw new Error(tr('تعذر تحويل الصورة.', 'Could not convert the image.'));
+    return new File([best], `${file.name.replace(/\.[^.]+$/, '') || 'image'}.webp`, { type: 'image/webp' });
   };
 
   const uploadImage = async (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, onUploaded: (upload: UploadResult) => void) => {
@@ -806,8 +835,10 @@ export default function Dashboard() {
     if (purpose === 'receipt') setReceiptError('');
     setUploading(purpose);
     try {
-      const compressed = purpose === 'receipt' ? file : await compressImage(file, purpose === 'cover' ? 2600 : 1800);
-      if (purpose === 'receipt' && !/^application\/pdf$/i.test(file.type) && !/^image\/(png|jpeg|webp)$/i.test(file.type)) throw new Error(tr('ارفع إيصال PDF أو صورة صالحة.', 'Upload a PDF receipt or valid image.'));
+      if (purpose === 'receipt' && !/^application\/pdf$/i.test(file.type) && !file.type.startsWith('image/')) throw new Error(tr('ارفع إيصال PDF أو صورة صالحة.', 'Upload a PDF receipt or valid image.'));
+      const compressed = purpose === 'receipt' && /^application\/pdf$/i.test(file.type)
+        ? file
+        : await compressImage(file, purpose === 'cover' ? 2600 : 1800);
       const body = new FormData();
       body.append('file', compressed);
       body.append('purpose', purpose);
@@ -815,7 +846,7 @@ export default function Dashboard() {
       const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
       if (!result?.id || !result?.url) throw new Error(tr('لم يعُد الخادم بمعرّف وارتباط للملف.', 'The server did not return a file ID and URL.'));
       onUploaded(result);
-      notify(purpose === 'receipt' ? tr('تم رفع الإيصال الخاص بأمان.', 'Private receipt uploaded securely.') : tr('تم ضغط الصورة ورفعها بصيغة WebP.', 'Image compressed and uploaded as WebP.'));
+      notify(purpose === 'receipt' ? tr('تم رفع الإيصال الخاص بأمان.', 'Private receipt uploaded securely.') : tr('تم تجهيز الصورة ورفعها بصيغة WebP.', 'Your image was prepared and uploaded as WebP.'));
     } catch (error) {
       const message = errorMessage(error);
       if (purpose === 'receipt') setReceiptError(message);
@@ -1220,26 +1251,31 @@ export default function Dashboard() {
                 </div>
               </section>)}
             </aside>
-            <article className="dashboard-edit-card card">
-              {editorSection === 'identity' && <IdentitySection draft={draft} tr={tr} uploading={uploading} onChange={changeDraft} onUpload={uploadImage} />}
-              {editorSection === 'bio' && <TextSection label={tr('النبذة التعريفية', 'Professional biography')} hint={tr('اكتب تعريفاً واضحاً ومهماً لجمهور موقعك.', 'Write a clear, meaningful introduction for your site audience.')} value={draft.bio} multiline onChange={(bio) => changeDraft({ bio })} />}
-              {editorSection === 'contact' && <ContactSection draft={draft} tr={tr} onChange={changeDraft} />}
-              {editorSection === 'experience' && <StructuredList title={tr('الخبرات العملية', 'Work experience')} value={draft.experience} onChange={(experience) => changeDraft({ experience })} tr={tr} />}
-              {editorSection === 'education' && <StructuredList title={tr('المؤهلات التعليمية', 'Education')} value={draft.education} onChange={(education) => changeDraft({ education })} tr={tr} />}
-              {editorSection === 'training' && <StructuredList title={tr('البرامج التدريبية والتطويرية', 'Training and development')} value={draft.training} onChange={(training) => changeDraft({ training })} tr={tr} />}
-              {editorSection === 'skills' && <StringList title={tr('المهارات', 'Skills')} hint={tr('أضف كل مهارة في عنصر مستقل.', 'Add each skill as a separate item.')} value={draft.skills} onChange={(skills) => changeDraft({ skills })} tr={tr} />}
-              {editorSection === 'memberships' && <StringList title={tr('العضويات المهنية', 'Professional memberships')} value={draft.memberships} onChange={(memberships) => changeDraft({ memberships })} tr={tr} />}
-              {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} />}
-              {editorSection === 'hobbies' && <StringList title={tr('الهوايات', 'Hobbies')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} />}
-              {editorSection === 'achievements' && <StringList title={tr('الإنجازات', 'Achievements')} value={draft.achievements} onChange={(achievements) => changeDraft({ achievements })} tr={tr} />}
-              {editorSection === 'timeline' && <StructuredList title={tr('سجل الإنجازات الزمني', 'Achievement timeline')} value={draft.timeline} onChange={(timeline) => changeDraft({ timeline })} tr={tr} timeline />}
-              {editorSection === 'skillImages' && <MediaSection title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('حتى 3 صور. تتحول الصور إلى WebP قبل الرفع.', 'Up to 3 images. Images are converted to WebP before upload.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
-              {editorSection === 'workImages' && <MediaSection title={tr('نماذج الأعمال', 'Work samples')} hint={tr('حتى 4 صور. اختر أعمالاً تمثل خبرتك فعلاً.', 'Up to 4 images. Choose work that genuinely represents your experience.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
-              {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
-              {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
-              {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
-              {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
-            </article>
+            <details className="dashboard-edit-card card" open>
+              <summary><span><PencilLine size={16}/>{tr(editorSectionMap[editorSection].ar, editorSectionMap[editorSection].en)}</span><ChevronDown size={18}/></summary>
+              <div className="dashboard-edit-card__body">
+                <EditorGuide section={editorSection} tr={tr}/>
+                {editorSection === 'identity' && <IdentitySection draft={draft} tr={tr} uploading={uploading} onChange={changeDraft} onUpload={uploadImage} lang={lang}/>}
+                {editorSection === 'bio' && <TextSection label={tr('النبذة التعريفية', 'Professional biography')} hint={tr('اكتب تعريفاً واضحاً ومهماً لجمهور موقعك.', 'Write a clear, meaningful introduction for your site audience.')} value={draft.bio} multiline onChange={(bio) => changeDraft({ bio })} lang={lang}/>}
+                {editorSection === 'contact' && <ContactSection draft={draft} tr={tr} onChange={changeDraft} lang={lang} siteName={activeSite?.name}/>}
+                {editorSection === 'experience' && <StructuredList title={tr('الخبرات العملية', 'Work experience')} value={draft.experience} onChange={(experience) => changeDraft({ experience })} tr={tr} lang={lang}/>}
+                {editorSection === 'education' && <StructuredList title={tr('المؤهلات التعليمية', 'Education')} value={draft.education} onChange={(education) => changeDraft({ education })} tr={tr} lang={lang}/>}
+                {editorSection === 'training' && <StructuredList title={tr('البرامج التدريبية والتطويرية', 'Training and development')} value={draft.training} onChange={(training) => changeDraft({ training })} tr={tr} lang={lang}/>}
+                {editorSection === 'skills' && <SkillRadarSection draft={draft} onChange={changeDraft} tr={tr} lang={lang}/>}
+                {editorSection === 'memberships' && <StringList title={tr('العضويات المهنية', 'Professional memberships')} value={draft.memberships} onChange={(memberships) => changeDraft({ memberships })} tr={tr} lang={lang}/>}
+                {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} lang={lang}/>}
+                {editorSection === 'hobbies' && <StringList title={tr('الاهتمامات والهوايات', 'Interests')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} lang={lang}/>}
+                {editorSection === 'achievements' && <MilestonesSection draft={draft} onChange={changeDraft} tr={tr} lang={lang}/>}
+                {editorSection === 'skillImages' && <MediaSection title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('يمكنك اختيار أي صورة يعرضها متصفحك؛ تجهز بصيغة WebP قبل الرفع.', 'Choose any image your browser can display; it is prepared as WebP before upload.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
+                {editorSection === 'workImages' && <MediaSection title={tr('نماذج الأعمال', 'Work samples')} hint={tr('يمكنك اختيار أي صورة يعرضها متصفحك؛ تجهز بصيغة WebP قبل الرفع.', 'Choose any image your browser can display; it is prepared as WebP before upload.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
+                {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
+                {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
+                {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
+                {editorSection === 'blog' && <TextSection label={tr('المدونة الشخصية', 'Personal journal')} hint={tr('اكتب فقرة أو مقالة مختصرة تريد ظهورها في موقعك.', 'Write a short thought or article you want to appear on your site.')} value={draft.blog} multiline onChange={(blog) => changeDraft({ blog })} lang={lang}/>}
+                {editorSection === 'notes' && <TextSection label={tr('ملاحظات خاصة', 'Private notes')} hint={tr('ملاحظاتك هنا تبقى داخل المسودة ولا تظهر في موقعك المنشور.', 'These notes stay inside your draft and never appear on your published site.')} value={draft.notes} multiline onChange={(notes) => changeDraft({ notes })} lang={lang}/>}
+                {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
+              </div>
+            </details>
           </div>
           <section className="dashboard-review-rail card">
             <div><FileCheck2 size={19}/><div><h3>{tr('المراجعة والنشر', 'Review and publication')}</h3><p className="muted">{tr('الحفظ منفصل عن الإرسال. أنشئ لقطة مراجعة قبل أن يصبح أي تعديل منشوراً.', 'Saving is separate from submission. Create a review snapshot before any edit can be published.')}</p></div></div>
@@ -1332,37 +1368,109 @@ function InitialNameReservation({ candidate, availability, checking, reserving, 
 function EmptyState({ icon: Icon, title, body }: { icon: typeof PanelTop; title: string; body: string }) { return <section className="dashboard-empty card"><Icon size={28}/><h2>{title}</h2><p className="muted">{body}</p></section>; }
 function EmptyInline({ text }: { text: string }) { return <p className="dashboard-empty-inline"><CircleHelp size={17}/>{text}</p>; }
 
-function TextSection({ label, hint, value, multiline = false, onChange }: { label: string; hint: string; value: string; multiline?: boolean; onChange: (value: string) => void }) {
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><PencilLine size={15}/>{label}</p><h2>{label}</h2><p className="muted">{hint}</p></div></header>{multiline ? <textarea className="field dashboard-textarea" rows={10} value={value} onChange={(event) => onChange(event.target.value)}/> : <input className="field" value={value} onChange={(event) => onChange(event.target.value)}/>}</>;
+type SpeechRecognitionResultEvent = { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }> };
+type BrowserSpeechRecognition = {
+  lang: string; continuous: boolean; interimResults: boolean;
+  start: () => void; stop: () => void;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+};
+type BrowserSpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
+
+function speechRecognitionConstructor() {
+  const browser = window as Window & { SpeechRecognition?: BrowserSpeechRecognitionConstructor; webkitSpeechRecognition?: BrowserSpeechRecognitionConstructor };
+  return browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
 }
 
-function IdentitySection({ draft, tr, uploading, onChange, onUpload }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void }) {
-  return <>
-    <header className="dashboard-edit-heading">
-      <div>
-        <p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p>
-        <h2>{tr('الاسم والمسمى', 'Name and title')}</h2>
-        <p className="muted">{tr('ابدأ ببيانات الهوية المطلوبة، ثم أضف الصورة والغلاف عندما تكون جاهزاً.', 'Start with the required identity details, then add a photo and cover when ready.')}</p>
-      </div>
-    </header>
-    <div className="dashboard-settings-grid">
-      <label><span>{tr('الاسم', 'Name')}</span><input className="field" autoComplete="name" value={draft.name} onChange={(event) => onChange({ name: event.target.value })}/></label>
-      <label><span>{tr('المسمى المهني', 'Professional title')}</span><input className="field" value={draft.title} onChange={(event) => onChange({ title: event.target.value })}/></label>
-    </div>
-    <div className="dashboard-media-pair">
-      <UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo', (upload) => onChange({ photo: upload.url }))}/>
-      <UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover', (upload) => onChange({ cover: upload.url }))}/>
-    </div>
-  </>;
+function VoiceButton({ value, onAppend, lang, tr }: { value: string; onAppend: (next: string) => void; lang: 'ar' | 'en'; tr: (ar: string, en: string) => string }) {
+  const [listening, setListening] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  useEffect(() => () => recognitionRef.current?.stop(), []);
+  const toggle = () => {
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const Constructor = speechRecognitionConstructor();
+    if (!Constructor) { setUnavailable(true); return; }
+    const recognition = new Constructor();
+    recognitionRef.current = recognition;
+    recognition.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onresult = (event) => {
+      const spoken = Array.from(event.results).slice(event.resultIndex).map((result) => result[0]?.transcript || '').join(' ').trim();
+      if (spoken) onAppend(`${value}${value && !/\s$/.test(value) ? ' ' : ''}${spoken}`);
+    };
+    recognition.onerror = () => setUnavailable(true);
+    recognition.onend = () => { setListening(false); recognitionRef.current = null; };
+    try { recognition.start(); setListening(true); } catch { setUnavailable(true); }
+  };
+  const label = listening ? tr('إيقاف الإملاء', 'Stop dictation') : tr('إملاء صوتي', 'Voice dictation');
+  return <span className="dashboard-voice-control">
+    <button type="button" className={`dashboard-icon-button${listening ? ' is-listening' : ''}`} onClick={toggle} aria-label={label} aria-pressed={listening} title={label}>
+      {listening ? <MicOff size={16}/> : <Mic size={16}/>}
+    </button>
+    {unavailable && <small>{tr('الإملاء غير متاح في هذا المتصفح.', 'Dictation is unavailable in this browser.')}</small>}
+  </span>;
 }
-function ContactSection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Mail size={15}/>{tr('الخطوة 3', 'Step 3')}</p><h2>{tr('بيانات التواصل والموقع', 'Contact and location')}</h2><p className="muted">{tr('يمكنك لاحقاً التحكم في ظهور كل حقل ضمن إعدادات الخصوصية.', 'You can later control visibility for each field in privacy settings.')}</p></div></header><div className="dashboard-settings-grid">{([['email', tr('البريد الإلكتروني', 'Email'), 'email'], ['phone', tr('الهاتف', 'Phone'), 'tel'], ['whatsapp', tr('واتساب', 'WhatsApp'), 'tel'], ['city', tr('المدينة', 'City'), 'text'], ['country', tr('الدولة', 'Country'), 'text']] as const).map(([key, label, type]) => <label key={key}><span>{label}</span><input className="field" type={type} value={draft[key]} onChange={(event) => onChange({ [key]: event.target.value })}/></label>)}</div></>;
+
+function DictatedInput({ value, onChange, lang, tr, ...props }: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> & { value: string; onChange: (value: string) => void; lang: 'ar' | 'en'; tr: (ar: string, en: string) => string }) {
+  return <div className="dashboard-dictated-field"><input className="field" {...props} value={value} onChange={(event) => onChange(event.target.value)}/><VoiceButton value={value} onAppend={onChange} lang={lang} tr={tr}/></div>;
 }
-function StructuredList({ title, value, onChange, tr, timeline = false }: { title: string; value: ResumeItem[]; onChange: (value: ResumeItem[]) => void; tr: (ar: string, en: string) => string; timeline?: boolean }) {
+function DictatedTextarea({ value, onChange, lang, tr, rows = 5, className = '', ...props }: Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'> & { value: string; onChange: (value: string) => void; lang: 'ar' | 'en'; tr: (ar: string, en: string) => string; rows?: number; className?: string }) {
+  return <div className="dashboard-dictated-field dashboard-dictated-field--textarea"><textarea className={`field ${className}`} {...props} rows={rows} value={value} onChange={(event) => onChange(event.target.value)}/><VoiceButton value={value} onAppend={onChange} lang={lang} tr={tr}/></div>;
+}
+
+function EditorGuide({ section, tr }: { section: EditorSection; tr: (ar: string, en: string) => string }) {
+  const key = `ksa-men:editor-guide:${section}`;
+  const [visible, setVisible] = useState(() => { try { return window.localStorage.getItem(key) !== 'dismissed'; } catch { return true; } });
+  if (!visible) return null;
+  const copy: Record<EditorSection, [string, string]> = {
+    identity: ['ابدأ بالاسم والمسمى، ثم اختر صورة أو اترك الهوية البصرية الافتراضية.', 'Start with your name and title, then choose a photo or keep the default identity.'],
+    bio: ['اجعل النبذة صادقة ومباشرة. يمكنك الإملاء الصوتي عند الحاجة.', 'Keep your introduction honest and direct. Use voice dictation when helpful.'],
+    contact: ['اختر فقط وسائل التواصل التي تريد إتاحتها للزوار.', 'Choose only the contact channels you want visitors to see.'],
+    experience: ['رتّب الخبرات من الأحدث إلى الأقدم وأضف ما يمكنك تأكيده.', 'Order experience from newest to oldest and add only what you can confirm.'],
+    education: ['أضف المؤهلات التي تمثل مسيرتك المهنية فعلاً.', 'Add the qualifications that genuinely represent your journey.'],
+    training: ['اجمع البرامج والدورات التي تضيف قيمة لقصتك المهنية.', 'Collect programs and courses that add value to your professional story.'],
+    skills: ['صنّف مهاراتك لتظهر صورتك الإنسانية والعلمية والمهنية بوضوح.', 'Classify skills to show your human, scientific and professional strengths clearly.'],
+    memberships: ['أضف العضويات التي تريد ظهورها في ملفك.', 'Add memberships you want to appear on your profile.'],
+    languages: ['أضف اللغات التي تستخدمها مهنياً.', 'Add the languages you use professionally.'],
+    hobbies: ['شارك الاهتمامات التي تضيف بعداً صادقاً لهويتك.', 'Share interests that add an authentic dimension to your identity.'],
+    achievements: ['اجمع الإنجازات والمحطات في مكان واحد، ثم رتّبها زمنياً.', 'Keep achievements and milestones together, then order the milestones over time.'],
+    skillImages: ['اختر صورة من جهازك، وسنجهزها تلقائياً للعرض السريع.', 'Choose an image from your device and we will prepare it for fast display.'],
+    workImages: ['اختر أمثلة تعبّر عن عملك، لا عن بيانات خاصة بالآخرين.', 'Choose examples that represent your work, not other people’s private data.'],
+    youtube: ['أضف رابطاً تعريفياً اختيارياً من YouTube.', 'Add an optional introduction link from YouTube.'],
+    socials: ['استخدم روابطك المهنية الموثوقة.', 'Use your trusted professional links.'],
+    buttons: ['أضف وجهات واضحة للزائر وبحد أقصى ثلاثة أزرار.', 'Add clear visitor destinations, up to three buttons.'],
+    blog: ['يمكنك نشر فكرة أو كتابة قصيرة ضمن موقعك الشخصي.', 'You can publish a thought or a short piece on your personal site.'],
+    notes: ['هذه الملاحظات خاصة بمسودتك ولا تعرض للزائر.', 'These notes remain private to your draft and are never shown to visitors.'],
+    privacy: ['راجع ما تود إظهاره قبل إرسال أي نسخة للمراجعة.', 'Review what you want to show before sending a version for review.'],
+  };
+  return <aside className="dashboard-editor-guide"><CircleHelp size={17}/><p>{tr(...copy[section])}</p><button type="button" onClick={() => { try { window.localStorage.setItem(key, 'dismissed'); } catch {} setVisible(false); }} aria-label={tr('إغلاق الإرشاد', 'Dismiss guidance')}><X size={16}/></button></aside>;
+}
+
+function TextSection({ label, hint, value, multiline = false, onChange, lang }: { label: string; hint: string; value: string; multiline?: boolean; onChange: (value: string) => void; lang: 'ar' | 'en' }) {
+  const { t } = useApp();
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><PencilLine size={15}/>{label}</p><h2>{label}</h2><p className="muted">{hint}</p></div></header>{multiline ? <DictatedTextarea className="dashboard-textarea" rows={10} value={value} onChange={onChange} lang={lang} tr={t}/> : <DictatedInput value={value} onChange={onChange} lang={lang} tr={t}/>}</>;
+}
+
+function IdentitySection({ draft, tr, uploading, onChange, onUpload, lang }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void; lang: 'ar' | 'en' }) {
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى', 'Name and title')}</h2><p className="muted">{tr('ابدأ ببيانات الهوية المطلوبة، ثم أضف الصورة والغلاف عندما تكون جاهزاً.', 'Start with the required identity details, then add a photo and cover when ready.')}</p></div></header><div className="dashboard-settings-grid"><label><span>{tr('الاسم', 'Name')}</span><DictatedInput autoComplete="name" value={draft.name} onChange={(name) => onChange({ name })} lang={lang} tr={tr}/></label><label><span>{tr('المسمى المهني', 'Professional title')}</span><DictatedInput value={draft.title} onChange={(title) => onChange({ title })} lang={lang} tr={tr}/></label></div><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo', (upload) => onChange({ photo: upload.url }))}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover', (upload) => onChange({ cover: upload.url }))}/></div></>;
+}
+function ContactSection({ draft, tr, onChange, lang, siteName }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void; lang: 'ar' | 'en'; siteName?: string }) { const suggestion = siteName ? `${siteName}@ksa.men` : 'name@ksa.men'; return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Mail size={15}/>{tr('الخطوة 3', 'Step 3')}</p><h2>{tr('بيانات التواصل والموقع', 'Contact and location')}</h2><p className="muted">{tr('يمكنك لاحقاً التحكم في ظهور كل حقل ضمن إعدادات الخصوصية.', 'You can later control visibility for each field in privacy settings.')}</p></div></header><div className="dashboard-settings-grid">{([['email', tr('البريد الإلكتروني', 'Email'), 'email'], ['phone', tr('الهاتف', 'Phone'), 'tel'], ['whatsapp', tr('واتساب', 'WhatsApp'), 'tel'], ['city', tr('المدينة', 'City'), 'text'], ['country', tr('الدولة', 'Country'), 'text']] as const).map(([key, label, type]) => <label key={key}><span>{label}</span><DictatedInput type={type} value={draft[key]} onChange={(value) => onChange({ [key]: value })} lang={lang} tr={tr}/></label>)}</div><p className="dashboard-email-suggestion"><Mail size={15}/>{tr(`صيغة مقترحة لهويتك البريدية: ${suggestion}. هذا اقتراح فقط؛ لا تنشئ المنصة صندوق بريد أو وصولاً إليه.`, `A suggested professional format is ${suggestion}. This is only a format suggestion; the platform does not create or access a mailbox.`)}</p></>;
+}
+function StructuredList({ title, value, onChange, tr, timeline = false, lang }: { title: string; value: ResumeItem[]; onChange: (value: ResumeItem[]) => void; tr: (ar: string, en: string) => string; timeline?: boolean; lang: 'ar' | 'en' }) {
   const update = (index: number, key: keyof ResumeItem, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item));
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><BookOpen size={15}/>{timeline ? tr('خط زمني', 'Timeline') : tr('قائمة منظمة', 'Structured list')}</p><h2>{title}</h2><p className="muted">{tr('أضف المعلومات التي يمكنك تأكيدها فقط. يمكنك ترك تاريخ النهاية فارغاً للحالة الحالية.', 'Add only information you can confirm. Leave the end date empty for a current item.')}</p></div><button className="button button--quiet" onClick={() => onChange([...value, blankItem()])}><Plus size={16}/>{tr('إضافة عنصر', 'Add item')}</button></header><div className="dashboard-structured-list">{value.length === 0 && <EmptyInline text={tr('لا توجد عناصر بعد.', 'No items yet.')} />}{value.map((item, index) => <article key={`${index}-${item.title}`}><div className="dashboard-list-card-top"><strong>{tr('عنصر', 'Item')} {index + 1}</strong><button className="dashboard-icon-button" aria-label={tr('حذف العنصر', 'Remove item')} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16}/></button></div><div className="dashboard-settings-grid"><label><span>{tr('العنوان أو المسمى', 'Title or role')}</span><input className="field" value={item.title} onChange={(event) => update(index, 'title', event.target.value)}/></label><label><span>{tr('الجهة', 'Organization')}</span><input className="field" value={item.organization} onChange={(event) => update(index, 'organization', event.target.value)}/></label><label><span>{tr('البداية', 'Start')}</span><input className="field" value={item.start} onChange={(event) => update(index, 'start', event.target.value)} placeholder="2024-01"/></label><label><span>{tr('النهاية', 'End')}</span><input className="field" value={item.end} onChange={(event) => update(index, 'end', event.target.value)} placeholder={tr('الحالي أو 2025-01', 'Current or 2025-01')}/></label></div><label><span>{tr('الوصف', 'Description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => update(index, 'description', event.target.value)}/></label></article>)}</div></>;
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><BookOpen size={15}/>{timeline ? tr('محطات زمنية', 'Milestones') : tr('قائمة منظمة', 'Structured list')}</p><h2>{title}</h2><p className="muted">{tr('أضف المعلومات التي يمكنك تأكيدها فقط. يمكنك ترك تاريخ النهاية فارغاً للحالة الحالية.', 'Add only information you can confirm. Leave the end date empty for a current item.')}</p></div><button className="button button--quiet" onClick={() => onChange([...value, blankItem()])}><Plus size={16}/>{tr('إضافة عنصر', 'Add item')}</button></header><div className="dashboard-structured-list">{value.length === 0 && <EmptyInline text={tr('لا توجد عناصر بعد.', 'No items yet.')} />}{value.map((item, index) => <article key={`${index}-${item.title}`}><div className="dashboard-list-card-top"><strong>{tr('عنصر', 'Item')} {index + 1}</strong><button className="dashboard-icon-button" aria-label={tr('حذف العنصر', 'Remove item')} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16}/></button></div><div className="dashboard-settings-grid"><label><span>{tr('العنوان أو المسمى', 'Title or role')}</span><DictatedInput value={item.title} onChange={(text) => update(index, 'title', text)} lang={lang} tr={tr}/></label><label><span>{tr('الجهة', 'Organization')}</span><DictatedInput value={item.organization} onChange={(text) => update(index, 'organization', text)} lang={lang} tr={tr}/></label><label><span>{tr('البداية', 'Start')}</span><DictatedInput value={item.start} onChange={(text) => update(index, 'start', text)} placeholder="2024-01" lang={lang} tr={tr}/></label><label><span>{tr('النهاية', 'End')}</span><DictatedInput value={item.end} onChange={(text) => update(index, 'end', text)} placeholder={tr('الحالي أو 2025-01', 'Current or 2025-01')} lang={lang} tr={tr}/></label></div><label><span>{tr('الوصف', 'Description')}</span><DictatedTextarea rows={3} value={item.description} onChange={(text) => update(index, 'description', text)} lang={lang} tr={tr}/></label></article>)}</div></>;
 }
-function StringList({ title, hint, value, onChange, tr }: { title: string; hint?: string; value: string[]; onChange: (value: string[]) => void; tr: (ar: string, en: string) => string }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Check size={15}/>{tr('قائمة قابلة للتحرير', 'Editable list')}</p><h2>{title}</h2>{hint && <p className="muted">{hint}</p>}</div><button className="button button--quiet" onClick={() => onChange([...value, ''])}><Plus size={16}/>{tr('إضافة', 'Add')}</button></header><div className="dashboard-string-list">{value.length === 0 && <EmptyInline text={tr('أضف أول عنصر لتبدأ.', 'Add your first item to start.')} />}{value.map((item, index) => <div key={`${index}-${item}`}><input className="field" value={item} onChange={(event) => onChange(value.map((valueItem, valueIndex) => valueIndex === index ? event.target.value : valueItem))}/><button className="dashboard-icon-button" aria-label={tr('حذف', 'Remove')} onClick={() => onChange(value.filter((_, valueIndex) => valueIndex !== index))}><X size={16}/></button></div>)}</div></>;
+function StringList({ title, hint, value, onChange, tr, lang }: { title: string; hint?: string; value: string[]; onChange: (value: string[]) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Check size={15}/>{tr('قائمة قابلة للتحرير', 'Editable list')}</p><h2>{title}</h2>{hint && <p className="muted">{hint}</p>}</div><button className="button button--quiet" onClick={() => onChange([...value, ''])}><Plus size={16}/>{tr('إضافة', 'Add')}</button></header><div className="dashboard-string-list">{value.length === 0 && <EmptyInline text={tr('أضف أول عنصر لتبدأ.', 'Add your first item to start.')} />}{value.map((item, index) => <div key={`${index}-${item}`}><DictatedInput value={item} onChange={(next) => onChange(value.map((valueItem, valueIndex) => valueIndex === index ? next : valueItem))} lang={lang} tr={tr}/><button className="dashboard-icon-button" aria-label={tr('حذف', 'Remove')} onClick={() => onChange(value.filter((_, valueIndex) => valueIndex !== index))}><X size={16}/></button></div>)}</div></>;
 }
+function SkillRadarSection({ draft, onChange, tr, lang }: { draft: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) {
+  const update = (key: keyof SkillRadar, values: string[]) => { const skillRadar = { ...draft.skillRadar, [key]: values }; onChange({ skillRadar, skills: [...new Set(Object.values(skillRadar).flat().map((item) => item.trim()).filter(Boolean))] }); };
+  return <div className="dashboard-radar-editor"><StringList title={tr('رادار المهارات', 'Skills radar')} hint={tr('تظهر مهاراتك العامة في موقعك، ويمكنك تنظيمها هنا بثلاث زوايا.', 'Your combined skills appear on the site; organize them here through three lenses.')} value={draft.skills} onChange={(skills) => onChange({ skills })} tr={tr} lang={lang}/><div className="dashboard-radar-editor__groups"><StringList title={tr('إنسانية', 'Human')} hint={tr('مثل القيادة والتواصل والتعاون.', 'Such as leadership, communication and collaboration.')} value={draft.skillRadar.human} onChange={(values) => update('human', values)} tr={tr} lang={lang}/><StringList title={tr('علمية', 'Scientific')} hint={tr('مثل البحث والتحليل والمنهجية.', 'Such as research, analysis and methodology.')} value={draft.skillRadar.scientific} onChange={(values) => update('scientific', values)} tr={tr} lang={lang}/><StringList title={tr('مهنية', 'Professional')} hint={tr('مثل التخصصات والأدوات والممارسات.', 'Such as specialties, tools and practices.')} value={draft.skillRadar.professional} onChange={(values) => update('professional', values)} tr={tr} lang={lang}/></div></div>;
+}
+function MilestonesSection({ draft, onChange, tr, lang }: { draft: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) { return <div className="dashboard-milestones-editor"><StringList title={tr('إنجازات مختصرة', 'Short achievements')} hint={tr('أضف الإنجازات التي تريد إبرازها في صورة نقاط واضحة.', 'Add achievements you want to highlight as clear points.')} value={draft.achievements} onChange={(achievements) => onChange({ achievements })} tr={tr} lang={lang}/><StructuredList title={tr('محطات المسيرة', 'Journey milestones')} value={draft.timeline} onChange={(timeline) => onChange({ timeline })} tr={tr} timeline lang={lang}/></div>; }
+
 function MediaSection({ title, hint, items, max, purpose, uploading, tr, onUpload, onChange }: { title: string; hint: string; items: string[]; max: number; purpose: 'skill' | 'work'; uploading: string; tr: (ar: string, en: string) => string; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void; onChange: (items: string[]) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ImagePlus size={15}/>{items.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{items.length < max && <UploadControl label={tr('إضافة صورة', 'Add image')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={(event) => void onUpload(event, purpose, (upload) => onChange([...items, upload.url]))}/>}</header><div className="dashboard-image-grid">{items.length === 0 && <EmptyInline text={tr('لا توجد صور مرفوعة بعد.', 'No images uploaded yet.')} />}{items.map((url, index) => <figure key={url}><img src={url} alt=""/><button className="dashboard-icon-button" onClick={() => onChange(items.filter((_, imageIndex) => imageIndex !== index))} aria-label={tr('إزالة الصورة', 'Remove image')}><X size={16}/></button></figure>)}</div></>;
 }
 function YoutubeSection({ value, onChange, tr }: { value: string; onChange: (value: string) => void; tr: (ar: string, en: string) => string }) { const valid = !value || /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(value); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Youtube size={15}/>{tr('فيديو اختياري', 'Optional video')}</p><h2>{tr('فيديو YouTube التعريفي', 'YouTube introduction')}</h2><p className="muted">{tr('يُحمّل مشغّل الفيديو في موقعك بعد تفاعل الزائر فقط.', 'The video player loads on your site only after visitor interaction.')}</p></div></header><label><span>{tr('رابط YouTube', 'YouTube URL')}</span><input className={`field ${!valid ? 'is-invalid' : ''}`} type="url" placeholder="https://youtu.be/..." value={value} onChange={(event) => onChange(event.target.value)}/></label>{!valid && <p className="dashboard-error">{tr('استخدم رابطاً صحيحاً من YouTube.', 'Use a valid YouTube URL.')}</p>}</>;
@@ -1371,7 +1479,7 @@ function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hi
 }
 function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]]; const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] }); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div><label><span>{tr('طلب إعادة توجيه خارجي', 'External redirect request')}</span><input className="field" type="url" placeholder="https://" value={draft.redirect} onChange={(event) => onChange({ redirect: event.target.value })}/><small className="muted">{tr('تُنفذ إعادة التوجيه بعد موافقة الإدارة والتحقق من الوجهة.', 'Redirect is applied only after administration approval and destination validation.')}</small></label></>;
 }
-function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept={purpose === 'receipt' ? 'application/pdf,image/png,image/jpeg,image/webp' : 'image/png,image/jpeg,image/webp'} onChange={onChange} disabled={Boolean(uploading)}/></label>; }
+function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept={purpose === 'receipt' ? 'application/pdf,image/*' : 'image/*'} onChange={onChange} disabled={Boolean(uploading)}/></label>; }
 function MidPointMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="MIDPOINT"><Gift size={compact ? 13 : 16}/><span>MIDPOINT</span></span>; }
 function MidPointAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><MidPointMark compact/></span>; }
 function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, busyOperation, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; locale: string; tr: (ar: string, en: string) => string }) {

@@ -84,7 +84,7 @@ function roundedCanvasRect(context: CanvasRenderingContext2D, x: number, y: numb
 
 async function brandedQr(url: string, mark: string) {
   const qr = await import('qrcode');
-  const dataUrl = await qr.toDataURL(url, { width: 640, margin: 4, errorCorrectionLevel: 'H' });
+  const dataUrl = await qr.toDataURL(url, { width: 640, margin: 4, errorCorrectionLevel: 'H', color: { dark: '#004422', light: '#FFFFFFFF' } });
 
   try {
     const code = await loadPublicImage(dataUrl);
@@ -248,6 +248,7 @@ export default function Personal() {
   const [preview, setPreview] = useState<MediaPreview>(null);
   const [video, setVideo] = useState(false);
   const [qr, setQr] = useState('');
+  const [vcardQr, setVcardQr] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   const profile = data?.profile || {};
@@ -280,14 +281,18 @@ export default function Personal() {
     let current = true;
     if (!profileUrl) {
       setQr('');
+      setVcardQr('');
       return undefined;
     }
-
     void brandedQr(profileUrl, profilePhoto)
       .then((value) => { if (current) setQr(value); })
       .catch(() => { if (current) setQr(''); });
+    void import('./Exports')
+      .then((module) => brandedQr(module.generateVCard(profile, siteName, profileUrl), profilePhoto))
+      .then((value) => { if (current) setVcardQr(value); })
+      .catch(() => { if (current) setVcardQr(''); });
     return () => { current = false; };
-  }, [profilePhoto, profileUrl]);
+  }, [profile, profilePhoto, profileUrl, siteName]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -381,6 +386,12 @@ export default function Personal() {
   const training = itemsFor(profile, 'training');
   const timeline = itemsFor(profile, 'timeline');
   const skills = itemsFor(profile, 'skills');
+  const rawSkillRadar = profile.skillRadar && typeof profile.skillRadar === 'object' ? profile.skillRadar as ProfileRecord : {};
+  const skillRadar = [
+    { key: 'human', label: t('إنسانية', 'Human'), items: itemsFor(rawSkillRadar, 'human') },
+    { key: 'scientific', label: t('علمية', 'Scientific'), items: itemsFor(rawSkillRadar, 'scientific') },
+    { key: 'professional', label: t('مهنية', 'Professional'), items: itemsFor(rawSkillRadar, 'professional') },
+  ].filter((group) => group.items.length > 0);
   const memberships = itemsFor(profile, 'memberships');
   const languages = itemsFor(profile, 'languages');
   const hobbies = itemsFor(profile, 'hobbies');
@@ -390,6 +401,7 @@ export default function Personal() {
   const socials = itemsFor(profile, 'socials');
   const buttons = itemsFor(profile, 'buttons');
   const allowContact = profile.allowContact !== false;
+  const blog = stringValue(profile.blog);
 
   return <div className="identity-page">
     <header className="identity-hero">
@@ -410,6 +422,7 @@ export default function Personal() {
         </div>
         <div className="identity-hero__actions" aria-label={t('إجراءات الهوية', 'Identity actions')}>
           <Button className="primary" onClick={() => void downloadVCard()}><Download size={18}/>{t('حفظ جهة الاتصال', 'Save contact')}</Button>
+          {siteName && <a className="button secondary" href={`https://ksa.men/export/badge?public=${encodeURIComponent(siteName)}&source=published`}><BadgeCheck size={18}/>{t('بطاقة معرض', 'Event badge')}</a>}
           <Button className="secondary" onClick={() => void share()}><Share2 size={18}/>{t('مشاركة', 'Share')}</Button>
         </div>
       </div>
@@ -425,6 +438,7 @@ export default function Personal() {
           </div>
           <p className="identity-introduction__copy">{stringValue(profile.bio)}</p>
         </section>}
+        {blog && <ProfileSection id="journal" icon={Sparkles} kicker={t('كلمة من صاحب الهوية', 'A NOTE FROM THE OWNER')} title={t('المدونة الشخصية', 'Personal journal')}><p className="identity-journal">{blog}</p></ProfileSection>}
 
         {(experience.length > 0 || education.length > 0 || training.length > 0 || timeline.length > 0) && <div className="identity-group">
           <div className="identity-group__label"><Landmark size={17}/><span>{t('المسيرة', 'JOURNEY')}</span></div>
@@ -442,10 +456,13 @@ export default function Personal() {
           </ProfileSection>}
         </div>}
 
-        {(skills.length > 0 || achievements.length > 0 || languages.length > 0 || memberships.length > 0 || hobbies.length > 0) && <div className="identity-group">
+        {(skills.length > 0 || skillRadar.length > 0 || achievements.length > 0 || languages.length > 0 || memberships.length > 0 || hobbies.length > 0) && <div className="identity-group">
           <div className="identity-group__label"><Sparkles size={17}/><span>{t('القدرات والاهتمامات', 'CAPABILITIES')}</span></div>
           <div className="identity-capabilities">
-            {skills.length > 0 && <ProfileSection id="skills" icon={Sparkles} title={t('المهارات', 'Skills')}><PillList items={skills}/></ProfileSection>}
+            {(skills.length > 0 || skillRadar.length > 0) && <ProfileSection id="skills" icon={Sparkles} title={t('المهارات', 'Skills')}>
+              {skills.length > 0 && <PillList items={skills}/>}
+              {skillRadar.length > 0 && <div className="identity-skill-radar">{skillRadar.map((group) => <div key={group.key}><strong>{group.label}</strong><PillList items={group.items}/></div>)}</div>}
+            </ProfileSection>}
             {achievements.length > 0 && <ProfileSection id="achievements" icon={Target} title={t('الإنجازات', 'Achievements')}><PillList items={achievements}/></ProfileSection>}
             {languages.length > 0 && <ProfileSection id="languages" icon={Globe2} title={t('اللغات', 'Languages')}><PillList items={languages}/></ProfileSection>}
             {memberships.length > 0 && <ProfileSection id="memberships" icon={Building2} title={t('العضويات المهنية', 'Memberships')}><PillList items={memberships}/></ProfileSection>}
@@ -529,10 +546,12 @@ export default function Personal() {
         </section>}
 
         <section className="identity-card identity-qr">
-          <div className="identity-aside__marker"><span>{t('للوصول السريع', 'SCAN TO VISIT')}</span></div>
-          {qr && <div className="identity-qr__image"><img src={qr} alt={t('رمز QR لموقع الهوية', 'QR code for this identity site')}/></div>}
-          <p>{t('امسح الرمز للاحتفاظ بالرابط أو مشاركته.', 'Scan to keep or share this address.')}</p>
-          {qr && <a download={`${siteName || 'ksa-men'}-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل QR', 'Download QR')}</a>}
+          <div className="identity-aside__marker"><span>{t('للوصول السريع', 'SCAN TO CONNECT')}</span></div>
+          <div className="identity-qr__dual">
+            {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز QR لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><a download={`${siteName || 'ksa-men'}-site-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل', 'Download')}</a></div>}
+            {vcardQr && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز QR لبطاقة الاتصال', 'QR code for the contact card')}/></div><strong>vCard</strong><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
+          </div>
+          <p>{t('رمز للموقع ورمز مستقل لبطاقة الاتصال؛ لا يتضمنان حقولاً اختار صاحب الهوية إخفاءها.', 'One code opens the site and one saves the contact card; neither includes fields the owner chose to hide.')}</p>
         </section>
       </aside>
     </div>

@@ -59,6 +59,9 @@ type Profile = {
   hobbies: Array<string | Json>;
   achievements: Array<string | Json>;
   timeline: Array<string | Json>;
+  skillRadar: { human: string[]; scientific: string[]; professional: string[] };
+  blog: string;
+  notes: string;
   skillImages: string[];
   workImages: string[];
   socials: Array<string | { label: string; url: string }>;
@@ -77,18 +80,18 @@ type D1ResultLike = { meta?: { changes?: number } };
 // Consecutive internal hyphens are valid DNS syntax; the legacy database guard is recorded below.
 const NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9_-]{1,160}$/;
-const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/cover-1600.webp']);
+const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/icon-192.png', '/assets/cover-1600.webp']);
 const PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country',
   'photo', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
-  'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillImages',
+  'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'notes', 'skillImages',
   'workImages', 'socials', 'buttons', 'hidden', 'searchable', 'allowContact',
   'redirect', 'translations',
 ]);
 const PUBLIC_PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
   'cover', 'youtube', 'experience', 'education', 'training', 'skills', 'memberships',
-  'languages', 'hobbies', 'achievements', 'timeline', 'skillImages', 'workImages',
+  'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'skillImages', 'workImages',
   'socials', 'buttons', 'redirect',
 ]);
 const RESUME_LISTS = [
@@ -221,7 +224,7 @@ function defaultProfile(name = ''): Profile {
     whatsapp: '',
     city: '',
     country: 'Saudi Arabia',
-    photo: '/assets/logo.webp',
+    photo: '/assets/icon-192.png',
     cover: '/assets/cover-1600.webp',
     youtube: '',
     experience: [],
@@ -233,6 +236,9 @@ function defaultProfile(name = ''): Profile {
     hobbies: [],
     achievements: [],
     timeline: [],
+    skillRadar: { human: [], scientific: [], professional: [] },
+    blog: '',
+    notes: '',
     skillImages: [],
     workImages: [],
     socials: [],
@@ -266,6 +272,23 @@ function profileList(value: unknown, field: string, maximum = 30): Array<string 
     apiError(422, `${field} must contain at most ${maximum} items`, 'VALIDATION');
   }
   return value.map((item) => structuredItem(item, field));
+}
+
+function stringList(value: unknown, field: string, maximum = 30): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > maximum) apiError(422, `${field} must contain at most ${maximum} items`, 'VALIDATION');
+  return value.map((item) => asString(item, field, 180, true));
+}
+
+function skillRadar(value: unknown): Profile['skillRadar'] {
+  if (value === undefined) return { human: [], scientific: [], professional: [] };
+  if (!isRecord(value)) apiError(422, 'skillRadar must be an object', 'VALIDATION');
+  for (const key of Object.keys(value)) if (!['human', 'scientific', 'professional'].includes(key)) apiError(422, `skillRadar cannot include ${key}`, 'VALIDATION');
+  return {
+    human: stringList(value.human, 'skillRadar.human'),
+    scientific: stringList(value.scientific, 'skillRadar.scientific'),
+    professional: stringList(value.professional, 'skillRadar.professional'),
+  };
 }
 
 function mediaList(value: unknown, field: string, maximum: number): string[] {
@@ -316,6 +339,9 @@ function normalizeProfile(value: unknown, fallbackName = '', nested = false): Pr
   profile.cover = mediaUrl(value.cover ?? profile.cover, 'cover');
   profile.youtube = youtubeUrl(value.youtube);
   for (const field of RESUME_LISTS) profile[field] = profileList(value[field], field);
+  profile.skillRadar = skillRadar(value.skillRadar);
+  profile.blog = asString(value.blog, 'blog', 12_000);
+  profile.notes = asString(value.notes, 'notes', 12_000);
   profile.skillImages = mediaList(value.skillImages, 'skillImages', 3);
   profile.workImages = mediaList(value.workImages, 'workImages', 4);
   profile.socials = linkList(value.socials, 'socials', 12);

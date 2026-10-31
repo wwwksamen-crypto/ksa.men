@@ -729,3 +729,50 @@
   .exports-shell *,
   .qr-tools * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Phase 3: public badge screen and separately selectable website/contact codes. */
+.exports-badge-screen {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(270px, 390px);
+  align-items: center;
+  gap: clamp(22px, 5vw, 62px);
+  margin-top: 15px;
+  padding: clamp(22px, 4vw, 36px);
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--exports-gold) 48%, var(--exports-border)) !important;
+  background: linear-gradient(116deg, color-mix(in srgb, var(--exports-green) 15%, var(--exports-surface)), var(--exports-surface));
+}
+.exports-badge-screen h2 { margin: 5px 0 8px; font-size: clamp(1.38rem, 2.5vw, 1.92rem); }
+.exports-badge-screen p:not(.exports-kicker) { max-width: 610px; margin: 0; color: var(--exports-muted); }
+.exports-badge-screen__frame {
+  width: min(100%, 390px);
+  justify-self: end;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--exports-gold) 58%, var(--exports-border));
+  border-radius: 20px;
+  background: var(--exports-bg);
+  box-shadow: 0 24px 46px color-mix(in srgb, var(--exports-bg) 62%, transparent);
+}
+.exports-badge-screen__frame .export-digital-card { width: 100%; height: 100%; }
+.exports-badge-screen__frame .export-digital-card__brand { top: 6.2%; inset-inline-start: 8.2%; font-size: clamp(10px, 3cqw, 27px); letter-spacing: .22em; }
+.exports-badge-screen__frame .export-digital-card__portrait { top: 15.4%; inset-inline-start: 8.2%; width: 22.45%; height: auto; aspect-ratio: 1; border-width: clamp(2px, .78cqw, 7px); }
+.exports-badge-screen__frame .export-digital-card__qr { top: 6.1%; inset-inline-end: 8.2%; width: 24.2%; height: auto; aspect-ratio: 1; padding: clamp(2px, 1.1cqw, 10px); border-radius: clamp(5px, 2cqw, 18px); }
+.exports-badge-screen__frame .export-digital-card__content { inset-inline: 8.3%; bottom: 15%; }
+.exports-badge-screen__frame .export-digital-card__content p { margin-bottom: 2.4%; font-size: clamp(9px, 2.78cqw, 25px); letter-spacing: .08em; }
+.exports-badge-screen__frame .export-digital-card__content h2 { max-width: 100%; font-size: clamp(21px, 7.33cqw, 66px); }
+.exports-badge-screen__frame .export-digital-card__content strong,
+.exports-badge-screen__frame .export-digital-card__content small { margin-top: 2.1%; font-size: clamp(11px, 3.44cqw, 31px); }
+.exports-badge-screen__frame .export-digital-card__content small { font-size: clamp(9px, 2.67cqw, 24px); overflow-wrap: anywhere; }
+.exports-badge-screen__frame .export-digital-card__foot { inset-inline: 8.3%; bottom: 5.3%; padding-top: 2.8%; font-size: clamp(8px, 2.33cqw, 21px); overflow-wrap: anywhere; }
+.exports-qr-mode-switch { display: inline-flex; gap: 5px; margin-top: 14px; padding: 4px; border: 1px solid var(--exports-border); border-radius: 12px; background: color-mix(in srgb, var(--exports-bg) 38%, transparent); }
+.exports-qr-mode-switch button { min-height: 34px; padding: 6px 11px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--exports-muted); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.exports-qr-mode-switch button.is-active { border-color: color-mix(in srgb, var(--exports-gold) 54%, transparent); background: var(--exports-green); color: #fff; }
+.exports-shell--published .exports-card-actions { border-color: color-mix(in srgb, var(--exports-gold) 48%, var(--exports-border)); }
+@media (max-width: 960px) { .exports-badge-screen { grid-template-columns: minmax(0, 1fr) minmax(230px, 330px); gap: 24px; } }
+@media (max-width: 640px) {
+  .exports-badge-screen { grid-template-columns: 1fr; padding: 22px; }
+  .exports-badge-screen__frame { justify-self: center; width: min(100%, 365px); }
+  .exports-shell--badge .exports-badge-screen__frame { width: min(100%, 420px); }
+}
+@media print { .exports-badge-screen { display: none !important; } }

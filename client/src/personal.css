@@ -806,3 +806,15 @@ dialog.identity-lightbox::backdrop { background: #031009e8; backdrop-filter: blu
 /* Phase 1 velvet continuity for each member-owned professional site. */
 .identity-page{background-image:radial-gradient(ellipse at 80% 0,color-mix(in srgb,var(--identity-green) 14%,transparent),transparent 45%),repeating-linear-gradient(125deg,color-mix(in srgb,var(--identity-accent) 4%,transparent) 0 1px,transparent 1px 8px)}
 .identity-page .identity-card,.identity-page .identity-section{background-image:linear-gradient(145deg,color-mix(in srgb,var(--identity-surface) 95%,var(--identity-green)),var(--identity-surface)),repeating-linear-gradient(125deg,color-mix(in srgb,var(--identity-accent) 4%,transparent) 0 1px,transparent 1px 8px);box-shadow:0 16px 40px color-mix(in srgb,var(--bg) 36%,transparent),inset 0 1px color-mix(in srgb,#fff 16%,transparent)}
+
+/* Published identity additions: journal and independently scannable website/contact codes. */
+.identity-journal { margin: 0; white-space: pre-wrap; color: var(--identity-text, inherit); line-height: 1.9; }
+.identity-qr__dual { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 13px; }
+.identity-qr__dual > div { display: grid; justify-items: center; gap: 6px; min-width: 0; text-align: center; }
+.identity-qr__dual strong { font-size: .78rem; color: inherit; }
+.identity-qr__dual .identity-qr__image { margin: 0; }
+.identity-qr__dual .identity-page__text-link { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: .76rem; cursor: pointer; }
+@media (max-width: 390px) { .identity-qr__dual { grid-template-columns: 1fr; } }
+.identity-skill-radar { display: grid; gap: 12px; margin-top: 15px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); }
+.identity-skill-radar > div { display: grid; gap: 7px; }
+.identity-skill-radar strong { color: var(--identity-accent, #006837); font-size: .84rem; }

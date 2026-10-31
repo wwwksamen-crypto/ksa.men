@@ -66,6 +66,7 @@ type ExportData = {
   site: string;
   allowed: boolean;
   translated: boolean;
+  source?: 'draft' | 'published';
 };
 
 type PdfMaker = {
@@ -516,16 +517,18 @@ function luxuryPdf(profile: Profile, data: ExportData, lang: Language) {
   };
 }
 
-function atsPdf(profile: Profile, data: ExportData, lang: Language) {
+function atsPdf(profile: Profile, data: ExportData, lang: Language, url: string, qr: string) {
   const copy = labels[lang];
   const rtl = lang === 'ar';
   const name = displayName(data, profile);
   const title = field(profile, 'title');
   const bio = field(profile, 'bio');
   const contact = [field(profile, 'email'), field(profile, 'phone'), field(profile, 'whatsapp'), [field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(', ')].filter(Boolean).join(' | ');
-  const content: any[] = [{ text: pdfText(name, rtl, 500, 22), style: 'name' }];
-  if (title) content.push({ text: pdfText(title, rtl), style: 'role' });
-  if (contact) content.push({ text: pdfText(contact, rtl), style: 'contact' });
+  const headerText: any[] = [{ text: pdfText(name, rtl, 398, 22), style: 'name' }];
+  if (title) headerText.push({ text: pdfText(title, rtl), style: 'role' });
+  if (contact) headerText.push({ text: pdfText(contact, rtl), style: 'contact' });
+  if (url) headerText.push({ text: url, style: 'url' });
+  const content: any[] = [{ columns: rtl ? [qr ? { image: qr, width: 74, margin: [0, 0, 12, 0] } : { width: 0, text: '' }, { width: '*', stack: headerText }] : [{ width: '*', stack: headerText }, qr ? { image: qr, width: 74, margin: [12, 0, 0, 0] } : { width: 0, text: '' }], columnGap: 0, margin: [0, 0, 0, 10] }];
   if (bio) content.push({ text: pdfText(copy.summary, rtl), style: 'heading' }, { text: pdfText(bio, rtl), style: 'body' });
   profileSections(profile, lang).forEach(([heading, entries]) => {
     content.push({ text: pdfText(heading, rtl), style: 'heading' }, ...entries.map((entry) => ({ ...entry, style: 'entry' })));
@@ -539,7 +542,8 @@ function atsPdf(profile: Profile, data: ExportData, lang: Language) {
     styles: {
       name: { font: 'Tajawal', bold: true, fontSize: 22, color: '#111111', margin: [0, 0, 0, 3], alignment: rtl ? 'right' : 'left' },
       role: { font: 'Tajawal', bold: true, fontSize: 12, color: '#222222', margin: [0, 0, 0, 4], alignment: rtl ? 'right' : 'left' },
-      contact: { font: 'Tajawal', fontSize: 9, color: '#333333', margin: [0, 0, 0, 14], alignment: rtl ? 'right' : 'left' },
+      contact: { font: 'Tajawal', fontSize: 9, color: '#333333', margin: [0, 0, 0, 5], alignment: rtl ? 'right' : 'left' },
+      url: { font: 'Tajawal', fontSize: 8.5, color: '#004422', margin: [0, 0, 0, 4], alignment: rtl ? 'right' : 'left' },
       heading: { font: 'Tajawal', bold: true, fontSize: 12, color: '#111111', margin: [0, 13, 0, 5], decoration: 'underline', alignment: rtl ? 'right' : 'left' },
       body: { font: 'Tajawal', fontSize: 10.5, color: '#111111', margin: [0, 0, 0, 5], alignment: rtl ? 'right' : 'left' },
       entry: { font: 'Tajawal', fontSize: 10.5, color: '#111111', margin: [0, 0, 0, 6], alignment: rtl ? 'right' : 'left' },
@@ -618,26 +622,41 @@ export default function Exports() {
   const [error, setError] = useState('');
   const [translationConsent, setTranslationConsent] = useState(false);
   const [cardMode, setCardMode] = useState<SmartCardMode>('professional');
+  const [qrMode, setQrMode] = useState<'site' | 'vcard'>('site');
   const [profileQr, setProfileQr] = useState('');
+  const [vcardQr, setVcardQr] = useState('');
   const badgeRef = useRef<HTMLDivElement>(null);
   const socialRef = useRef<HTMLDivElement>(null);
-  const site = typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('site') || '';
+  const query = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const site = query.get('site') || '';
+  const publicName = query.get('public') || '';
+  const isPublishedSource = Boolean(publicName);
 
   const reload = useCallback(async () => {
-    if (!site) { setError(t('لم يتم تحديد موقع للتصدير.', 'No site was selected for export.')); setLoading(false); return; }
+    if (!site && !publicName) { setError(t('لم يتم تحديد موقع للتصدير.', 'No site was selected for export.')); setLoading(false); return; }
     setLoading(true);
     setError('');
+    const requestQuery = new URLSearchParams({ lang: exportLang, kind: exportDataKindFor(kind) });
+    const cacheKey = `ksa-men:published-export:${publicName}:${exportLang}`;
     try {
-      const query = new URLSearchParams({ lang: exportLang, kind: exportDataKindFor(kind) });
-      const response = await api<ExportData>(`/api/export-data/${encodeURIComponent(site)}?${query}`);
+      const response = await api<ExportData>(isPublishedSource
+        ? `/api/public/export-data/${encodeURIComponent(publicName)}?${requestQuery}`
+        : `/api/export-data/${encodeURIComponent(site)}?${requestQuery}`);
       if (!response.allowed) throw new Error(t('لا تملك صلاحية هذا التصدير.', 'You are not allowed to create this export.'));
       setData(response);
+      if (isPublishedSource) { try { window.localStorage.setItem(cacheKey, JSON.stringify(response)); } catch {} }
     } catch (cause) {
+      if (isPublishedSource) {
+        try {
+          const saved = window.localStorage.getItem(cacheKey);
+          if (saved) { setData(JSON.parse(saved) as ExportData); return; }
+        } catch {}
+      }
       const message = cause instanceof Error ? cause.message : t('تعذر جلب بيانات التصدير.', 'Could not load export data.');
       setData(null);
       setError(message);
     } finally { setLoading(false); }
-  }, [exportLang, kind, site, t]);
+  }, [exportLang, isPublishedSource, kind, publicName, site, t]);
 
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
@@ -662,21 +681,29 @@ export default function Exports() {
   const publicUrl = data ? profileUrl(data.name) : '';
   const avatar = profile ? profileImage(profile) : QR_BRAND_ICON;
   const filename = useCallback((suffix: string, extension: string) => `${cleanFilename(data?.name || identity || data?.site || 'ksa-men')}-${kind}-${suffix}.${extension}`, [data?.name, data?.site, identity, kind]);
+  const vcardPayload = useMemo(() => profile && data ? profileVCard(profile, data.name, publicUrl) : '', [data, profile, publicUrl]);
   const buildProfileQr = useCallback(async () => {
     if (!publicUrl) throw new Error('A public profile URL is required for QR export.');
     return qrDataUrl(publicUrl, { width: 1800, centerImage: avatar });
   }, [avatar, publicUrl]);
+  const buildVCardQr = useCallback(async () => {
+    if (!vcardPayload) throw new Error('A contact card is required for QR export.');
+    return qrDataUrl(vcardPayload, { width: 1800, centerImage: avatar });
+  }, [avatar, vcardPayload]);
 
   useEffect(() => {
     let disposed = false;
-    if (!profile || !publicUrl) {
+    if (!profile || !publicUrl || !vcardPayload) {
       setProfileQr('');
+      setVcardQr('');
       return () => { disposed = true; };
     }
     setProfileQr('');
+    setVcardQr('');
     void buildProfileQr().then((value) => { if (!disposed) setProfileQr(value); }).catch(() => { if (!disposed) setProfileQr(''); });
+    void buildVCardQr().then((value) => { if (!disposed) setVcardQr(value); }).catch(() => { if (!disposed) setVcardQr(''); });
     return () => { disposed = true; };
-  }, [buildProfileQr, profile, publicUrl]);
+  }, [buildProfileQr, buildVCardQr, profile, publicUrl, vcardPayload]);
 
   const selectKind = (next: ExportKind) => {
     setKind(next);
@@ -696,7 +723,7 @@ export default function Exports() {
   };
 
   const translateEnglish = async () => {
-    if (!site || !translationConsent) return;
+    if (isPublishedSource || !site || !translationConsent) return;
     setBusy('translate');
     try {
       await api('/api/translate', { method: 'POST', body: JSON.stringify({ siteId: site, target: 'en', consent: true }) });
@@ -714,7 +741,8 @@ export default function Exports() {
       const pdfMake = await loadPdfMaker();
       await window.document.fonts.load('10.5px Tajawal');
       await window.document.fonts.load('bold 25px Tajawal');
-      const document = ats ? atsPdf(profile, data, exportLang) : luxuryPdf(profile, data, exportLang);
+      const atsQr = ats ? (profileQr || await buildProfileQr()) : '';
+      const document = ats ? atsPdf(profile, data, exportLang, publicUrl, atsQr) : luxuryPdf(profile, data, exportLang);
       pdfMake.createPdf(document).download(filename(ats ? 'ats' : 'profile', 'pdf'));
       notify(t('بدأ تنزيل ملف PDF قابل لاستخراج النص.', 'Your text-extractable PDF download has started.'));
     } catch (cause) {
@@ -732,7 +760,9 @@ export default function Exports() {
     if (!data || !publicUrl) return;
     setBusy('qr');
     try {
-      downloadDataUrl(profileQr || await buildProfileQr(), filename('qr', 'png'));
+      const isVcard = qrMode === 'vcard';
+      const image = isVcard ? (vcardQr || await buildVCardQr()) : (profileQr || await buildProfileQr());
+      downloadDataUrl(image, filename(isVcard ? 'vcard-qr' : 'site-qr', 'png'));
       notify(t('تم تجهيز QR عالي الدقة للطباعة.', 'A high-resolution print QR has been prepared.'));
     } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر إنشاء QR.', 'Could not create the QR code.')); }
     finally { setBusy(''); }
@@ -766,7 +796,7 @@ export default function Exports() {
   const actionForRoute = () => {
     if (kind === 'ats') return <Button onClick={() => void downloadPdf(true)} disabled={!verified || Boolean(busy)}><FileText size={17}/>{busy === 'ats' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل سيرة ATS', 'Download ATS résumé')}</Button>;
     if (kind === 'vcard') return <Button onClick={downloadVCard} disabled={!verified}><ContactRound size={17}/>{t('تنزيل vCard', 'Download vCard')}</Button>;
-    if (kind === 'qr') return <Button onClick={() => void downloadQr()} disabled={!verified || Boolean(busy)}><QrCode size={17}/>{busy === 'qr' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل QR', 'Download QR')}</Button>;
+    if (kind === 'qr') return <Button onClick={() => void downloadQr()} disabled={!verified || Boolean(busy)}><QrCode size={17}/>{busy === 'qr' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {qrMode === 'vcard' ? t('تنزيل QR لبطاقة الاتصال', 'Download vCard QR') : t('تنزيل QR للموقع', 'Download site QR')}</Button>;
     if (kind === 'badge') return <Button onClick={printBadge} disabled={!verified}><Printer size={17}/>{t('طباعة شارة المؤتمر', 'Print conference badge')}</Button>;
     if (kind === 'card') return <Button onClick={() => void imageFromCard('badge')} disabled={!verified || Boolean(busy)}><ImageDown size={17}/>{busy === 'badge' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل البطاقة الرقمية', 'Download digital card')}</Button>;
     if (kind === 'social') return <Button onClick={() => void imageFromCard('social')} disabled={!verified || Boolean(busy)}><Share2 size={17}/>{busy === 'social' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل بطاقة المشاركة', 'Download social card')}</Button>;
@@ -779,14 +809,14 @@ export default function Exports() {
   }, [profile]);
   const cardDetails = useMemo(() => profile ? smartCardDetails(profile, publicUrl, cardMode, exportLang) : null, [cardMode, exportLang, profile, publicUrl]);
 
-  return <div className="exports-shell" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
+  return <div className={`exports-shell${isPublishedSource ? ' exports-shell--published' : ''}${kind === 'badge' ? ' exports-shell--badge' : ''}`} dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
     <main className="exports-main">
       <header className="exports-hero card">
         <div className="exports-hero__halo" aria-hidden="true"/>
         <div className="exports-hero__copy">
-          <p className="exports-kicker"><ShieldCheck size={16}/>{t('مخرجاتك الخاصة', 'Your private exports')}</p>
-          <h1>{t('ملفك جاهز للمشاركة بثقة', 'Your profile, ready to share with confidence')}</h1>
-          <p>{t('ننشئ الملفات من بياناتك المخزنة فقط، مع احترام الحقول المخفية واللغة التي تختارها.', 'Files are made only from your stored data, respecting hidden fields and your selected language.')}</p>
+          <p className="exports-kicker"><ShieldCheck size={16}/>{isPublishedSource ? t('مخرجات منشورة', 'Published exports') : t('مخرجاتك الخاصة', 'Your private exports')}</p>
+          <h1>{isPublishedSource ? t('هوية جاهزة للمشاركة', 'An identity ready to share') : t('ملفك جاهز للمشاركة بثقة', 'Your profile, ready to share with confidence')}</h1>
+          <p>{isPublishedSource ? t('تستخدم هذه الصفحة النسخة المنشورة فقط، وتحترم الحقول التي اختار صاحب الهوية إخفاءها.', 'This page uses only the published version and respects fields its owner chose to hide.') : t('ننشئ الملفات من بياناتك المخزنة فقط، مع احترام الحقول المخفية واللغة التي تختارها.', 'Files are made only from your stored data, respecting hidden fields and your selected language.')}</p>
         </div>
         <div className="exports-hero__controls">
           <label className="exports-language"><Languages size={16}/><span className="sr-only">{t('لغة التصدير', 'Export language')}</span><select value={exportLang} onChange={(event) => selectLanguage(event.target.value === 'en' ? 'en' : 'ar')}><option value="ar">العربية</option><option value="en">English</option></select></label>
@@ -807,7 +837,7 @@ export default function Exports() {
       {loading && <section className="exports-state card"><LoaderCircle className="exports-spin" size={25}/><div><h2>{t('نجهز بيانات التصدير', 'Preparing export data')}</h2><p>{t('نتحقق من الصلاحية واللغة قبل إنشاء الملف.', 'We are verifying entitlement and language before creating the file.')}</p></div></section>}
       {!loading && error && <section className="exports-state exports-state--error card"><ShieldCheck size={25}/><div><h2>{t('تعذر فتح التصدير', 'Could not open this export')}</h2><p>{error}</p><Button className="button-quiet" onClick={() => void reload()}><RefreshCw size={16}/>{t('إعادة المحاولة', 'Try again')}</Button></div></section>}
 
-      {!loading && !error && data && exportLang === 'en' && !data.translated && <section className="exports-translation card">
+      {!loading && !error && data && !isPublishedSource && exportLang === 'en' && !data.translated && <section className="exports-translation card">
         <div className="exports-translation__mark"><Languages size={23}/></div>
         <div><h2>{t('لا توجد نسخة إنجليزية محفوظة بعد', 'There is no saved English version yet')}</h2><p>{t('لا نستبدل المحتوى العربي بترجمة شكلية. وافق صراحةً على طلب ترجمة المحتوى، ثم سنعيد جلب النسخة المحفوظة من الخادم.', 'We do not substitute your Arabic content with a cosmetic translation. Explicitly consent to translate the content, then we will fetch the saved server version again.')}</p>
           <label className="exports-consent"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)}/><span>{t('أوافق على إرسال بيانات ملفي إلى مزود الترجمة المعتمد لإنشاء نسخة إنجليزية قابلة للتصحيح.', 'I consent to send my profile data to the approved translation provider to create an editable English version.')}</span></label>
@@ -827,7 +857,7 @@ export default function Exports() {
         <section className="exports-details">
           <article className="exports-detail card"><FileText size={19}/><div><h3>{t('PDF تعريفي فاخر', 'Luxury identity PDF')}</h3><p>{t('تصميم بهوية KSA.MEN ونص حيّ قابل للاستخراج، مختلف عن السيرة الآلية.', 'KSA.MEN-branded, live extractable text in a design distinct from the machine-readable résumé.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(false)} disabled={Boolean(busy)}><Download size={15}/>{t('PDF', 'PDF')}</Button></article>
           <article className="exports-detail card"><BadgeCheck size={19}/><div><h3>{t('سيرة ATS أحادية العمود', 'Single-column ATS résumé')}</h3><p>{t('عناوين واضحة ونص Unicode حيّ بلا صورة صفحة أو زخارف تعيق التحليل.', 'Clear headings and live Unicode text, without a page image or decoration that hinders parsing.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(true)} disabled={Boolean(busy)}><Download size={15}/>ATS</Button></article>
-          <article className="exports-detail card"><QrCode size={19}/><div><h3>{t('QR عالي الدقة', 'High-resolution QR')}</h3><p>{t('يرتبط بعنوان ملفك العام، ومهيأ للطباعة والمسح الواضح.', 'Links to your public profile address and is prepared for crisp printing and scanning.')}</p></div><Button className="button-quiet" onClick={() => void downloadQr()} disabled={Boolean(busy)}><Download size={15}/>QR</Button></article>
+          <article className="exports-detail card"><QrCode size={19}/><div><h3>{t('QR للموقع وبطاقة الاتصال', 'Site and contact QR')}</h3><p>{t('اختر رمزاً مستقلاً للموقع أو لبطاقة vCard؛ وكلاهما يحترم الحقول المخفية.', 'Choose a separate code for the site or vCard; both respect hidden fields.')}</p></div><Button className="button-quiet" onClick={() => void downloadQr()} disabled={Boolean(busy)}><Download size={15}/>QR</Button></article>
           <article className="exports-detail card"><ContactRound size={19}/><div><h3>{t('بطاقة اتصال vCard', 'vCard contact file')}</h3><p>{t('تتضمن فقط وسائل الاتصال والحقول غير المخفية في ملفك.', 'Includes only non-hidden contact channels and profile fields.')}</p></div><Button className="button-quiet" onClick={downloadVCard}><Download size={15}/>vCard</Button></article>
         </section>
 
@@ -836,6 +866,11 @@ export default function Exports() {
           <div className="exports-mode-switch" aria-label={t('أوضاع بطاقة التعارف', 'Smart-card modes')}>
             {(['professional', 'business', 'quick'] as SmartCardMode[]).map((mode) => <button type="button" key={mode} onClick={() => setCardMode(mode)} className={cardMode === mode ? 'is-active' : ''} aria-pressed={cardMode === mode}>{smartCardLabels[exportLang][mode]}</button>)}
           </div>
+        </section>}
+
+        {kind === 'badge' && <section className="exports-badge-screen card">
+          <div><p className="exports-kicker"><BadgeCheck size={15}/>{t('بطاقة للمعرض', 'Event badge')}</p><h2>{t('بطاقة شاشة وجاهزة للطباعة', 'Screen-ready and print-ready')}</h2><p>{isPublishedSource ? t('يمكن فتح هذه البطاقة بلا اتصال بعد عرضها مرة واحدة على هذا الجهاز.', 'This published badge can be reopened offline after it has been viewed once on this device.') : t('اطبع الشارة أو افتحها في وضع الشاشة عند لقاء الحضور.', 'Print the badge or open it in screen mode when meeting attendees.')}</p></div>
+          <div className="exports-badge-screen__frame"><DigitalCardArtwork avatar={avatar} profileQr={profileQr} identity={identity} details={cardDetails} publicUrl={publicUrl} lang={exportLang} mode={cardMode}/></div>
         </section>}
 
         {(kind === 'card' || kind === 'badge' || kind === 'social') && <section className="exports-preview-panel card">
@@ -854,8 +889,8 @@ export default function Exports() {
         </section>}
 
         {kind === 'qr' && <section className="exports-qr-preview card">
-          <div><p className="exports-kicker"><QrCode size={15}/>{t('معاينة قابلة للمسح', 'Scannable preview')}</p><h2>{t('رمز ملفك العام', 'Your public profile code')}</h2><p>{t('نُبقي هامش المسح والصورة المركزية ضمن حجم آمن للقراءة عند الطباعة.', 'The quiet zone and center mark stay within a scan-safe size for print.')}</p><bdi dir="ltr">{publicUrl}</bdi></div>
-          <div className="exports-qr-preview__code">{profileQr ? <img src={profileQr} alt={t('رمز QR للملف العام', 'QR code for the public profile')}/> : <LoaderCircle className="exports-spin" size={28}/>}</div>
+          <div><p className="exports-kicker"><QrCode size={15}/>{t('معاينة قابلة للمسح', 'Scannable preview')}</p><h2>{qrMode === 'site' ? t('رمز موقع الهوية', 'Identity website code') : t('رمز بطاقة الاتصال', 'Contact-card code')}</h2><p>{qrMode === 'site' ? t('يرتبط هذا الرمز بعنوان ملفك المنشور.', 'This code opens your published identity address.') : t('يحمل هذا الرمز بطاقة vCard بوسائل الاتصال العامة فقط.', 'This code carries a vCard with public contact channels only.')}</p><div className="exports-qr-mode-switch" role="group" aria-label={t('نوع رمز QR', 'QR type')}><button type="button" className={qrMode === 'site' ? 'is-active' : ''} onClick={() => setQrMode('site')}>{t('الموقع', 'Website')}</button><button type="button" className={qrMode === 'vcard' ? 'is-active' : ''} onClick={() => setQrMode('vcard')}>vCard</button></div><bdi dir="ltr">{qrMode === 'site' ? publicUrl : t('بطاقة اتصال عامة', 'Public contact card')}</bdi></div>
+          <div className="exports-qr-preview__code">{(qrMode === 'site' ? profileQr : vcardQr) ? <img src={qrMode === 'site' ? profileQr : vcardQr} alt={qrMode === 'site' ? t('رمز QR للملف العام', 'QR code for the public profile') : t('رمز QR لبطاقة الاتصال', 'QR code for the contact card')}/> : <LoaderCircle className="exports-spin" size={28}/>}</div>
         </section>}
 
         <section className="exports-card-actions card">

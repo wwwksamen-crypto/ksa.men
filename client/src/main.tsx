@@ -27,15 +27,16 @@ function App(){
  const [toast,setToast]=useState(''),[menu,setMenu]=useState(false),[loading,setLoading]=useState(true);
  const [install,setInstall]=useState<any>(null),[update,setUpdate]=useState<ServiceWorker|null>(null),[error,setError]=useState('');
  const t=(ar:string,en:string)=>lang==='ar'?ar:en;
- const path=location.pathname,sub=location.hostname.endsWith('.ksa.men')&&location.hostname!=='www.ksa.men';
+	 const path=location.pathname,sub=location.hostname.endsWith('.ksa.men')&&location.hostname!=='www.ksa.men';
+	 const publicExport=path.startsWith('/export/')&&new URLSearchParams(location.search).has('public');
  const workspace=path==='/dashboard'||path==='/admin'||path.startsWith('/export/');
  const season=activeSeason(platform?.season);
  const refresh=async()=>{if(sub)return;const d:any=await api('/api/auth/me');setUser(d.user);setCSRF(d.csrf||'');};
  useEffect(()=>{document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';localStorage.setItem('ksa-lang',lang);},[lang]);
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('ksa-theme',theme);},[theme]);
  useEffect(()=>{if(season)document.documentElement.dataset.season=season;else delete document.documentElement.dataset.season;},[season]);
- useEffect(()=>{
-  if(sub)setLoading(false);else Promise.all([api('/api/platform').then(setPlatform),refresh()]).catch(e=>setError(e.message)).finally(()=>setLoading(false));
+	 useEffect(()=>{
+	  if(sub||publicExport)setLoading(false);else Promise.all([api('/api/platform').then(setPlatform),refresh()]).catch(e=>setError(e.message)).finally(()=>setLoading(false));
   if(!sub&&'serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(r=>{if(r.waiting)setUpdate(r.waiting);r.addEventListener('updatefound',()=>{const w=r.installing;w?.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)setUpdate(w);});});}).catch(()=>{});}
   const handler=(e:any)=>{e.preventDefault();setInstall(e);};window.addEventListener('beforeinstallprompt',handler);
   return()=>window.removeEventListener('beforeinstallprompt',handler);
@@ -52,7 +53,7 @@ function App(){
  else if(path==='/auth')page=<Auth/>;
  else if(path==='/dashboard')page=user?<Dashboard/>:<Auth/>;
  else if(path==='/admin')page=user&&isStaffRole(user.role)?<Admin/>:<Auth/>;
- else if(path.startsWith('/export/'))page=user?<Exports/>:<Auth/>;
+ else if(path.startsWith('/export/'))page=new URLSearchParams(location.search).has('public')?<Exports/>:user?<Exports/>:<Auth/>;
  else if(path==='/search')page=<SearchPage/>;
  else if(path==='/qr')page=<div className="page"><PageTitle title={t('شارك حضورك بلمسة','One scan. Your whole story.')} subtitle={t('QR وبطاقة اتصال. هدية من المنصة، دون تسجيل.','QR and contact cards. A gift from us. No account needed.')}/><QRTools/></div>;
  else if(path==='/radar')page=user?<Radar/>:<Auth/>;

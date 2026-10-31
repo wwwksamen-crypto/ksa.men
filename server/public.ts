@@ -37,8 +37,10 @@ function visibility(raw:Record<string,unknown>){
   return Array.isArray(raw.hidden)?raw.hidden.filter((field):field is string=>typeof field==='string'):[];
 }
 
+const publicExportName=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
 /** Applies the published locale first, then removes every field that its owner hid. */
-function visibleProfile(raw:Record<string,unknown>,lang:string,includeVisibility=false){
+export function visibleProfile(raw:Record<string,unknown>,lang:string,includeVisibility=false){
   const translation=lang==='en'&&raw.translations&&typeof raw.translations==='object'
     ?(raw.translations as Record<string,unknown>).en
     :undefined;
@@ -140,6 +142,21 @@ export function registerPublic(app:App){
     return c.json({profile:{...profile,url:profile.url||profile.site},mode:payload.mode||'professional',expiresAt:link.expires_at});
   });
 
+  // A visitor can receive only the approved published snapshot, never an editable draft.
+  app.get('/api/public/export-data/:name',async c=>{
+    const host=new URL(c.req.url).hostname;
+    const name=c.req.param('name').trim().toLowerCase();
+    if(host!==c.env.ROOT_DOMAIN||!publicExportName.test(name))throw new HTTPException(404,{message:'المخرج العام غير متاح'});
+    const site:any=await one(c,"SELECT s.*,n.name FROM dns_names n JOIN sites s ON s.id=n.site_id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL AND s.lock_hash IS NULL AND u.status='active'",name);
+    if(!site)throw new HTTPException(404,{message:'المخرج العام غير متاح'});
+    const rule=exportRule(c.req.query('kind')||'profile');
+    const lang=c.req.query('lang')==='en'?'en':'ar';
+    const raw=publishedJson(site);
+    const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
+    return c.json({profile:visibleProfile(raw,lang,true),name:site.name,site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation,source:'published'});
+  });
+
+  // Owners and authorised delegates may preview their own editable draft only on the authenticated route.
   app.get('/api/export-data/:site',async c=>{
     const site=await siteFor(c,c.req.param('site'));
     const rule=exportRule(c.req.query('kind')||'profile');
@@ -149,7 +166,7 @@ export function registerPublic(app:App){
     const lang=c.req.query('lang')==='en'?'en':'ar';
     const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
     const name:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? LIMIT 1',site.id);
-    return c.json({profile:visibleProfile(raw,lang,true),name:name?.name??'',site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation});
+    return c.json({profile:visibleProfile(raw,lang,true),name:name?.name??'',site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation,source:'draft'});
   });
 
   app.post('/api/upload',async c=>{
@@ -161,14 +178,16 @@ export function registerPublic(app:App){
     const purpose=z.enum(['photo','cover','skill','work','receipt']).parse(form.get('purpose'));
     const siteId=String(form.get('siteId')||'');
     if(siteId)await siteFor(c,siteId);
-    if(file.size>8*1024*1024||file.size<12)throw new HTTPException(400,{message:'حجم الملف غير مناسب؛ الحد 8 ميجابايت'});
+    if(file.size<12)throw new HTTPException(400,{message:'اختر ملفاً كاملاً للرفع'});
+    if(purpose==='receipt'&&file.size>8*1024*1024)throw new HTTPException(400,{message:'حجم الإيصال يتجاوز الحد المسموح'});
     const bytes=new Uint8Array(await file.arrayBuffer());
     let mime='';
     if(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)mime='image/jpeg';
     if(bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71)mime='image/png';
     if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')mime='image/webp';
     if(purpose==='receipt'&&new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')mime='application/pdf';
-    if(!mime||file.type!==mime)throw new HTTPException(400,{message:'محتوى الملف غير مسموح؛ استخدم PNG أو JPEG أو WebP، أو PDF للإيصال'});
+    if(!mime||file.type!==mime)throw new HTTPException(400,{message:'تعذر التحقق من محتوى الملف'});
+    if(purpose!=='receipt'&&mime!=='image/webp')throw new HTTPException(400,{message:'تُجهز صور الهوية بصيغة WebP قبل الرفع'});
     const id=uid(),key='user/'+user.id+'/'+id;
     await c.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});
     await run(c,'INSERT INTO media(id,owner_id,site_id,purpose,bucket_key,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)',id,user.id,siteId||null,purpose,key,mime,file.size,now());
