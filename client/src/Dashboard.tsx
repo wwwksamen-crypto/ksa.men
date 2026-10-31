@@ -99,7 +99,6 @@ type ProfileDraft = {
   hidden: string[];
   searchable: boolean;
   allowContact: boolean;
-  redirect: string;
   translations?: { ar?: Partial<ProfileDraft>; en?: Partial<ProfileDraft> };
 };
 
@@ -118,7 +117,6 @@ type Site = {
 
 type DashboardData = {
   sites?: Site[];
-  unboundNames?: UnboundName[];
   reviews?: Record<string, unknown>[];
   wallet?: { balance?: number; [key: string]: unknown };
   ledger?: Record<string, unknown>[];
@@ -129,29 +127,20 @@ type DashboardData = {
   user?: Record<string, unknown>;
   analytics?: Record<string, unknown> | unknown[];
   quickLinks?: QuickLink[];
-  transfers?: Record<string, unknown>[];
-  nameTransfers?: Record<string, unknown>[];
-  handovers?: Record<string, unknown>[];
   preferences?: MemberPreferences;
   loyalty?: LoyaltyData;
   [key: string]: unknown;
 };
 
-type UnboundName = {
-  name: string;
-  [key: string]: unknown;
-};
 type NameAvailability = { name: string; valid: boolean; available: boolean; reason?: string | null; suggestions?: string[] };
 type NameReservation = { name: string; site: Site; createdAt: number };
 type WalletOperation = 'transfer';
 type LoyaltyOperation = 'daily' | 'preferences' | 'competition';
 type MemberPreferences = {
-  gender: 'male' | 'female' | 'prefer_not_to_say';
   ageBand: 'student' | 'early_career' | 'established' | 'expert' | 'prefer_not_to_say';
   seasonalThemeEnabled: boolean;
   seasonalNoticesEnabled: boolean;
   badgesEnabled: boolean;
-  femalePrivacyPreset: boolean;
   updatedAt?: number;
 };
 type DailyChallenge = { id: string; kind: 'memory' | 'focus' | 'speed'; title: string; prompt: string; choices: string[]; rewardPoints: number };
@@ -160,7 +149,7 @@ type CompetitionEntry = { id: string; status: 'entered' | 'winner' | 'not_select
 type LoyaltyCompetition = { key: string; title: string; terms: string; endsAt: number; url?: string; entry?: CompetitionEntry | null };
 type LoyaltyCommunity = { kind: 'telegram' | 'whatsapp' | 'youtube' | 'promotion'; label: string; url: string };
 type LoyaltyData = { daily?: DailyActivity; competition?: LoyaltyCompetition | null; communities?: LoyaltyCommunity[] };
-const defaultMemberPreferences: MemberPreferences = { gender: 'prefer_not_to_say', ageBand: 'prefer_not_to_say', seasonalThemeEnabled: true, seasonalNoticesEnabled: false, badgesEnabled: true, femalePrivacyPreset: false };
+const defaultMemberPreferences: MemberPreferences = { ageBand: 'prefer_not_to_say', seasonalThemeEnabled: true, seasonalNoticesEnabled: false, badgesEnabled: true };
 
 type Service = {
   key: string;
@@ -248,17 +237,23 @@ const editorGroups: Array<{ key: string; ar: string; en: string; steps: EditorSe
 ];
 
 const editorSectionMap = Object.fromEntries(editorSections.map(([key, ar, en]) => [key, { ar, en }])) as Record<EditorSection, { ar: string; en: string }>;
+const editorSectionIcons: Record<EditorSection, typeof UserRound> = {
+  identity: UserRound, bio: PencilLine, contact: Mail, experience: FileText, education: BookOpen, training: BadgeCheck, achievements: Sparkles,
+  skills: Settings2, memberships: UsersRound, languages: Languages, hobbies: Sparkles, skillImages: ImagePlus, workImages: ImagePlus,
+  youtube: Youtube, socials: Link2, buttons: PanelTop, blog: BookOpen, notes: FileText, privacy: ShieldCheck,
+};
+function EditorSectionIcon({ section }: { section: EditorSection }) { const Icon = editorSectionIcons[section]; return <Icon size={16} strokeWidth={1.8} aria-hidden="true"/>; }
 
 const notificationSoundStorageKey = 'ksa-men:dashboard-notification-sound';
 type AudioContextConstructor = new () => AudioContext;
 const blankItem = (): ResumeItem => ({ title: '', organization: '', start: '', end: '', description: '' });
-const DEFAULT_PROFILE_IMAGE = '/assets/icon-192.png';
+const DEFAULT_PROFILE_IMAGE = '/assets/logo-emblem.webp';
 const DEFAULT_COVER_IMAGE = '/assets/cover-1600.webp';
 const emptyDraft = (): ProfileDraft => ({
   name: '', title: '', bio: '', email: '', phone: '', whatsapp: '', city: '', country: 'المملكة العربية السعودية',
   photo: DEFAULT_PROFILE_IMAGE, avatarMode: 'photo', cover: DEFAULT_COVER_IMAGE, youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
   hobbies: [], achievements: [], timeline: [], skillRadar: { human: [], scientific: [], professional: [] }, blog: '', notes: '', skillImages: [], workImages: [], socials: [], buttons: [], hidden: [],
-  searchable: true, allowContact: true, redirect: '',
+  searchable: true, allowContact: true,
 });
 
 function asArray<T>(value: unknown): T[] { return Array.isArray(value) ? value as T[] : []; }
@@ -288,7 +283,7 @@ function parseDraft(source: unknown): ProfileDraft {
     ...emptyDraft(),
     ...Object.fromEntries(Object.keys(emptyDraft()).map((key) => [key, raw[key] ?? (emptyDraft() as unknown as Record<string, unknown>)[key]])),
     name: asText(raw.name), title: asText(raw.title), bio: asText(raw.bio), email: asText(raw.email), phone: asText(raw.phone), whatsapp: asText(raw.whatsapp),
-    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo) || DEFAULT_PROFILE_IMAGE, avatarMode: raw.avatarMode === 'monogram' ? 'monogram' : 'photo', cover: asText(raw.cover) || DEFAULT_COVER_IMAGE, youtube: asText(raw.youtube), redirect: asText(raw.redirect), blog: asText(raw.blog), notes: asText(raw.notes),
+    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo) || DEFAULT_PROFILE_IMAGE, avatarMode: raw.avatarMode === 'monogram' ? 'monogram' : 'photo', cover: asText(raw.cover) || DEFAULT_COVER_IMAGE, youtube: asText(raw.youtube), blog: asText(raw.blog), notes: asText(raw.notes),
     experience: normalizeStructured(raw.experience), education: normalizeStructured(raw.education), training: normalizeStructured(raw.training), timeline: normalizeStructured(raw.timeline),
     skills: normalizeStrings(raw.skills), memberships: normalizeStrings(raw.memberships), languages: normalizeStrings(raw.languages), hobbies: normalizeStrings(raw.hobbies), achievements: normalizeStrings(raw.achievements),
     skillRadar: {
@@ -422,7 +417,6 @@ export default function Dashboard() {
   const [membershipAction, setMembershipAction] = useState<'trial_extension' | 'annual_contact' | ''>('');
   const [translationConsent, setTranslationConsent] = useState(false);
   const [translationTarget, setTranslationTarget] = useState<TranslationTarget>('en');
-  const [nameTransfer, setNameTransfer] = useState({ name: '', recipient: '', confirmed: false });
   const [lockForm, setLockForm] = useState({ enabled: false, password: '', message: '' });
   const [pin, setPinValue] = useState('');
   const [deleteReason, setDeleteReason] = useState('');
@@ -443,8 +437,6 @@ export default function Dashboard() {
   const [reservingName, setReservingName] = useState(false);
   const [walletOperation, setWalletOperation] = useState<WalletOperation | ''>('');
   const [loyaltyOperation, setLoyaltyOperation] = useState<LoyaltyOperation | ''>('');
-  const [attachingName, setAttachingName] = useState('');
-  const [attachTargetId, setAttachTargetId] = useState('');
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
     try { return window.localStorage.getItem(notificationSoundStorageKey) === 'on'; } catch { return false; }
   });
@@ -459,12 +451,20 @@ export default function Dashboard() {
   const notificationAudioRef = useRef<AudioContext | null>(null);
   const seenNotificationIdsRef = useRef<Set<string> | null>(null);
   const dashboardInteractiveRef = useRef<HTMLDivElement | null>(null);
+  const editorCardRef = useRef<HTMLDetailsElement | null>(null);
   const nameCheckSequenceRef = useRef(0);
 
   const tr = useCallback((ar: string, en: string) => t(ar, en), [t]);
   const locale = lang === 'ar' ? 'ar-SA' : 'en-US';
   const normalizedNameCandidate = nameCandidate.trim().toLowerCase();
   const localNameCandidateValid = validNameLabel(normalizedNameCandidate);
+  const selectEditorSection = useCallback((section: EditorSection) => {
+    setEditorSection(section);
+    window.setTimeout(() => {
+      const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+      editorCardRef.current?.scrollIntoView({ behavior, block: 'start' });
+    }, 0);
+  }, []);
 
   useEffect(() => {
     const candidate = normalizedNameCandidate;
@@ -728,6 +728,12 @@ export default function Dashboard() {
     const url = new URL(window.location.href);
     url.searchParams.set('tab', tab);
     window.history.pushState({}, '', url);
+    if (tab === 'editor') {
+      window.setTimeout(() => {
+        const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+        (editorCardRef.current ?? dashboardInteractiveRef.current)?.scrollIntoView({ behavior, block: 'start' });
+      }, 0);
+    }
   };
 
   const changeDraft = useCallback((patch: Partial<ProfileDraft> | ((current: ProfileDraft) => ProfileDraft)) => {
@@ -1076,12 +1082,6 @@ export default function Dashboard() {
     finally { setLoyaltyOperation(''); }
   };
 
-  const applyFemalePrivacyPreset = () => {
-    changeDraft((current) => ({ ...current, avatarMode: 'monogram', allowContact: true, hidden: [...new Set([...current.hidden, 'phone'])] }));
-    void updateLoyaltyPreferences({ femalePrivacyPreset: true });
-    notify(tr('فُعّل بديل الأحرف الأولى وأُخفي رقم الهاتف المباشر. تبقى مراسلة الموقع متاحة بموافقتك.', 'Initials mode is on and the direct phone number is hidden. Contact requests remain available with your approval.'));
-  };
-
   const enterCompetition = async () => {
     if (loyaltyOperation === 'competition') return;
     setLoyaltyOperation('competition');
@@ -1127,37 +1127,6 @@ export default function Dashboard() {
     catch (error) { notify(errorMessage(error)); }
   };
 
-  const beginNameTransfer = async () => {
-    if (!nameTransfer.name.trim() || !nameTransfer.recipient.trim() || !nameTransfer.confirmed) return;
-    if (!window.confirm(tr('نقل الاسم لا ينقل الموقع أو الصور أو المحتوى أو QR تلقائياً. سيحتاج المستفيد لقبول العملية وموافقة الإدارة. هل تريد المتابعة؟', 'Transferring the name does not transfer the site, images, content, or QR. Recipient acceptance and administration approval are required. Continue?'))) return;
-    try { await api('/api/names/transfer', { method: 'POST', body: JSON.stringify({ name: nameTransfer.name.trim(), recipient: nameTransfer.recipient.trim() }) }); setNameTransfer({ name: '', recipient: '', confirmed: false }); await loadDashboard(); notify(tr('تم إنشاء طلب نقل الاسم.', 'Name transfer request created.')); }
-    catch (error) { notify(errorMessage(error)); }
-  };
-
-  const acceptNameTransfer = async (id: string) => {
-    if (!window.confirm(tr('بقبول الاسم، تدرك أن بيانات ومحتوى المالك السابق لا تنتقل إليك. هل تريد المتابعة؟', 'By accepting the name, you understand the former owner’s data and content do not transfer to you. Continue?'))) return;
-    try { await api(`/api/names/transfers/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify({}) }); await loadDashboard(); notify(tr('تم تسجيل قبولك بانتظار الإجراء الإداري.', 'Your acceptance was recorded pending administration action.')); }
-    catch (error) { notify(errorMessage(error)); }
-  };
-  const acceptHandover = async (id: string) => {
-    if (!window.confirm(tr('سيمنحك القبول إدارة الموقع وفق السياسة؛ تحقّق من البريد والهوية قبل المتابعة.', 'Accepting grants site management under policy; verify the email and identity before proceeding.'))) return;
-    try { await api(`/api/handovers/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify({}) }); await loadDashboard(); notify(tr('تم قبول التسليم.', 'Handover accepted.')); }
-    catch (error) { notify(errorMessage(error)); }
-  };
-
-  const attachUnboundName = async (name: string, siteId: string | null) => {
-    if (attachingName) return;
-    setAttachingName(name);
-    try {
-      const result = await api<{ site?: Site }>(`/api/names/${encodeURIComponent(name)}/attach`, { method: 'POST', body: JSON.stringify({ siteId }) });
-      setActiveTab('editor');
-      if (result.site) await openSite(result.site);
-      await loadDashboard();
-      notify(tr('تم ربط الاسم بمسودتك.', 'The name is now attached to your draft.'));
-    } catch (error) { notify(errorMessage(error)); }
-    finally { setAttachingName(''); }
-  };
-
   const markNotificationRead = async (notification: Notification) => {
     if (notification.read_at) return;
     try { await api(`/api/notifications/${encodeURIComponent(notification.id)}/read`, { method: 'POST', body: JSON.stringify({}) }); setDashboard((current) => current ? { ...current, notifications: asArray<Notification>(current.notifications).map((item) => item.id === notification.id ? { ...item, read_at: Math.floor(Date.now() / 1000) } : item) } : current); }
@@ -1169,17 +1138,12 @@ export default function Dashboard() {
   const loyalty = dashboard?.loyalty;
   const siteAnalytics = (activeSite?.analytics ?? (dashboard?.analytics && activeSite ? (dashboard.analytics as Record<string, unknown>)[activeSite.id] : null)) as Record<string, unknown> | unknown[] | null;
   const analyticsEntries = siteAnalytics && typeof siteAnalytics === 'object' && !Array.isArray(siteAnalytics) ? Object.entries(siteAnalytics) : [];
-  const reviews = asArray<Record<string, unknown>>(dashboard?.reviews).filter((review) => !activeSite || review.site_id === activeSite.id);
+  const reviews = asArray<Record<string, unknown>>(dashboard?.reviews).filter((review) => review.kind !== 'redirect' && (!activeSite || review.site_id === activeSite.id));
   const notifications = asArray<Notification>(dashboard?.notifications);
-  const selectedTranslation = draft.translations?.[translationTarget];
-  const pendingTransfers = asArray<Record<string, unknown>>(dashboard?.transfers ?? dashboard?.nameTransfers).filter((item) => item.status === 'pending');
-  const handovers = asArray<Record<string, unknown>>(dashboard?.handovers).filter((item) => item.status === 'pending');
   const conversations = asArray<Conversation>(messagesData?.conversations);
   const requests = asArray<Record<string, unknown>>(messagesData?.requests);
   const existingQuickLinks = asArray<QuickLink>(dashboard?.quickLinks);
-  const unboundNames = asArray<UnboundName>(dashboard?.unboundNames).filter((item) => validNameLabel(asText(item.name)));
-  const attachSites = asArray<Site>(dashboard?.sites);
-  const attachmentSiteId = attachTargetId || activeSite?.id || attachSites[0]?.id || null;
+  const selectedTranslation = draft.translations?.[translationTarget];
   const activeSiteUrl = publicSiteUrl(activeSite?.name);
   const subscriptionRequests = asArray<Record<string, unknown>>(dashboard?.subscriptionRequests);
   const initialReservationFlow = !activeSite && activeTab === 'editor';
@@ -1243,11 +1207,6 @@ export default function Dashboard() {
 
       {activeTab === 'editor' && <section className="dashboard-editor">
         {!activeSite ? <>
-          {(handovers.length > 0 || pendingTransfers.length > 0 || unboundNames.length > 0) && <section className="card dashboard-received-invites"><h2>{tr('خطوة جاهزة لك', 'A ready next step')}</h2><p className="muted">{tr('لديك اسم أو تسليم مرتبط بحسابك. يمكنك إكماله هنا دون حجز اسم إضافي.', 'A name or handover is associated with your account. Complete it here without reserving another name.')}</p>
-            {unboundNames.map((item) => <div key={item.name}><strong dir="ltr">{item.name}.ksa.men</strong><button className="button" disabled={Boolean(attachingName)} onClick={() => void attachUnboundName(item.name, null)}>{tr('ابدأ بهذا الاسم', 'Start with this name')}</button></div>)}
-            {handovers.map((item) => <div key={String(item.id)}><span>{tr('موقع بانتظار قبول تسليمه', 'A site awaits your handover acceptance')}</span><button className="button" onClick={() => void acceptHandover(String(item.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}
-            {pendingTransfers.map((item) => <div key={String(item.id)}><strong dir="ltr">{String(item.name)}.ksa.men</strong><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(item.id))}>{tr('قبول الاسم المنقول', 'Accept transferred name')}</button></div>)}
-          </section>}
           <InitialNameReservation
           candidate={nameCandidate}
           availability={nameAvailability?.name === normalizedNameCandidate ? nameAvailability : null}
@@ -1279,13 +1238,13 @@ export default function Dashboard() {
               {editorGroups.map((group) => <section className={`dashboard-editor-group ${group.steps.includes(editorSection) ? 'is-active' : ''}`} key={group.key}>
                 <p className="dashboard-editor-group-label"><span>{tr(group.ar, group.en)}</span><small>{group.steps.filter((step) => step === editorSection).length ? tr('قيد التحرير', 'Editing') : `${group.steps.length} ${tr('خطوات', 'steps')}`}</small></p>
                 <div className="dashboard-editor-substeps">
-                  {group.steps.map((step) => <button type="button" key={step} className={editorSection === step ? 'is-active' : ''} aria-current={editorSection === step ? 'step' : undefined} onClick={() => setEditorSection(step)}>
-                    <span>{tr(editorSectionMap[step].ar, editorSectionMap[step].en)}</span><ChevronLeft size={15}/>
+                  {group.steps.map((step) => <button type="button" key={step} className={editorSection === step ? 'is-active' : ''} aria-current={editorSection === step ? 'step' : undefined} onClick={() => selectEditorSection(step)}>
+                    <EditorSectionIcon section={step}/><span>{tr(editorSectionMap[step].ar, editorSectionMap[step].en)}</span><ChevronLeft size={15}/>
                   </button>)}
                 </div>
               </section>)}
             </aside>
-            <details className="dashboard-edit-card card" open>
+            <details id="identity-editor-section" className="dashboard-edit-card card" ref={editorCardRef} open>
               <summary><span><PencilLine size={16}/>{tr(editorSectionMap[editorSection].ar, editorSectionMap[editorSection].en)}</span><ChevronDown size={18}/></summary>
               <div className="dashboard-edit-card__body">
                 <EditorGuide section={editorSection} tr={tr}/>
@@ -1364,13 +1323,10 @@ export default function Dashboard() {
       </section>}
 
       {activeTab === 'settings' && <section className="dashboard-settings stack">
-        <LoyaltyPreferencesPanel preferences={memberPreferences} busy={loyaltyOperation === 'preferences'} canApplyFemalePrivacy={Boolean(activeSite)} onChange={updateLoyaltyPreferences} onApplyFemalePrivacy={applyFemalePrivacyPreset} tr={tr}/>
+        <LoyaltyPreferencesPanel preferences={memberPreferences} busy={loyaltyOperation === 'preferences'} onChange={updateLoyaltyPreferences} tr={tr}/>
         <section className="card dashboard-notification-sound"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('صوت التنبيهات', 'Notification sound')}</h2></div></div><p className="muted">{tr('خيار محلي لهذا المتصفح، متوقف افتراضياً. يتطلب التفعيل تفاعلك لتهيئة الصوت؛ لا يُرسل هذا التفضيل إلى الخادم.', 'A local preference for this browser, off by default. Enabling requires your interaction to initialize audio; this preference is not sent to the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={notificationSoundEnabled} onChange={(event) => void setNotificationSound(event.target.checked)}/>{tr('تشغيل نغمة للتنبيهات الجديدة فقط', 'Play a chime only for newly observed notifications')}</label></section>
         <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
         <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div><a className="button button--quiet" href="/auth?return=%2Fdashboard%3Ftab%3Dsettings">{tr('إعادة التحقق بالبريد', 'Verify again by email')}</a></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/[٠-٩۰-۹]/g, (character) => String(character.charCodeAt(0) - (character.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660))).replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/[٠-٩۰-۹]/g, (character) => String(character.charCodeAt(0) - (character.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660))).replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
-        {unboundNames.length > 0 && <section className="card dashboard-unbound-names"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('ربط اسم منقول', 'Attach transferred name')}</h2></div></div><p className="muted">{tr('الاسم المنقول ملك لك لكنه غير مرتبط بمسودة. اختر مسودة قائمة أو أنشئ الأولى منه.', 'This transferred name belongs to you but is not attached to a draft. Choose an existing draft or create the first one from it.')}</p>{attachSites.length > 0 && <label><span>{tr('المسودة المستهدفة', 'Target draft')}</span><select className="field" value={attachmentSiteId || ''} onChange={(event) => setAttachTargetId(event.target.value)}>{attachSites.map((site) => <option key={site.id} value={site.id}>{site.name ? `${site.name}.ksa.men` : site.id}</option>)}</select></label>}<div className="dashboard-unbound-name-list">{unboundNames.map((item) => <div key={item.name}><strong dir="ltr"><bdi>{item.name}.ksa.men</bdi></strong><button className="button button--quiet" disabled={Boolean(attachingName)} onClick={() => void attachUnboundName(item.name, attachmentSiteId)}>{attachingName === item.name ? <RefreshCw className="spin" size={16}/> : <Link2 size={16}/>} {attachmentSiteId ? tr('ربط بالمسودة', 'Attach to draft') : tr('إنشاء مسودة وربط الاسم', 'Create draft & attach')}</button></div>)}</div></section>}
-        <section className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('نقل الاسم المميز', 'Distinctive name transfer')}</h2></div></div><p className="muted">{tr('يُنقل الاسم فقط؛ لا تنتقل المسودة أو المحتوى أو الصور أو روابط QR تلقائياً، وقد تتأثر الروابط القديمة.', 'Only the name transfers. Draft, content, images, and QR links do not transfer automatically, and old links may be affected.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الاسم المملوك', 'Owned name')}</span><input className="field" value={nameTransfer.name} onChange={(event) => setNameTransfer({ ...nameTransfer, name: event.target.value })}/></label><label><span>{tr('المستفيد (C# أو اسم)', 'Recipient (C# or name)')}</span><input className="field" value={nameTransfer.recipient} onChange={(event) => setNameTransfer({ ...nameTransfer, recipient: event.target.value })}/></label></div><label className="dashboard-check"><input type="checkbox" checked={nameTransfer.confirmed} onChange={(event) => setNameTransfer({ ...nameTransfer, confirmed: event.target.checked })}/>{tr('أفهم أثر النقل وفصل الاسم عن بيانات الموقع.', 'I understand the transfer consequences and separation from site data.')}</label><button className="button" disabled={!nameTransfer.confirmed} onClick={() => void beginNameTransfer()}><ArrowLeftRight size={16}/>{tr('إنشاء طلب نقل', 'Create transfer request')}</button>{pendingTransfers.length > 0 && <div className="dashboard-pending-list">{pendingTransfers.map((transfer, index) => <div key={String(transfer.id ?? index)}><span>{String(transfer.name ?? tr('اسم مميز', 'Distinctive name'))}</span><button className="button button--quiet" onClick={() => void acceptNameTransfer(String(transfer.id))}>{tr('قبول النقل', 'Accept transfer')}</button></div>)}</div>}</section>
-        {handovers.length > 0 && <section className="card"><div className="dashboard-section-heading"><div><UsersRound size={18}/><h2>{tr('تسليمات بانتظار قبولك', 'Handovers awaiting your acceptance')}</h2></div></div>{handovers.map((handover, index) => <div className="dashboard-history-row" key={String(handover.id ?? index)}><p>{String(handover.site_id ?? '')}</p><time>{formatDate(Number(handover.created_at), locale)}</time><button className="button button--quiet" onClick={() => void acceptHandover(String(handover.id))}>{tr('قبول التسليم', 'Accept handover')}</button></div>)}</section>}
         <section className="card dashboard-danger"><div className="dashboard-section-heading"><div><Trash2 size={18}/><h2>{tr('الخصوصية ودورة البيانات', 'Privacy and data lifecycle')}</h2></div><a className="button button--quiet" href="/auth?return=%2Fdashboard%3Ftab%3Dsettings">{tr('إعادة التحقق بالبريد', 'Verify again by email')}</a></div><p>{tr('ابدأ بالإخفاء الفوري عند الحاجة. الأرشفة توقف الإتاحة العامة، والإتلاف يطبّق بعد تحقق حديث ومن دون حجز نظامي أو تشغيلي قائم.', 'Use immediate hiding when needed. Archiving stops public availability; erasure executes after fresh verification and only where no legal or operational hold exists.')}</p><button className="button button--quiet" onClick={() => void hidePublicPresence()}><EyeOff size={16}/>{tr('إخفاء موقعي العام الآن', 'Hide my public site now')}</button><div className="dashboard-settings-grid"><label><span>{tr('الإجراء المطلوب', 'Requested action')}</span><select className="field" value={deletionAction} onChange={(event) => setDeletionAction(event.target.value as 'archive'|'schedule'|'destroy')}><option value="archive">{tr('أرشفة الحساب وإيقاف الإتاحة العامة', 'Archive account and stop public availability')}</option><option value="schedule">{tr('إتلاف مجدول', 'Scheduled erasure')}</option><option value="destroy">{tr('إتلاف فوري إن لم يوجد حجز', 'Immediate erasure if no hold exists')}</option></select></label>{deletionAction === 'schedule' && <label><span>{tr('موعد الإتلاف', 'Erasure time')}</span><input className="field" type="datetime-local" value={deletionSchedule} onChange={(event) => setDeletionSchedule(event.target.value)}/></label>}</div><textarea className="field" rows={3} value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} placeholder={tr('سبب اختياري للإجراء', 'Optional reason')}/><label className="dashboard-check"><input type="checkbox" checked={deletionConfirmed} onChange={(event) => setDeletionConfirmed(event.target.checked)}/>{tr('أؤكد اختياري وأفهم أن الإتلاف النهائي لا يمكن التراجع عنه بعد تنفيذه.', 'I confirm this choice and understand final erasure cannot be reversed once executed.')}</label><button className="button button--danger" disabled={!deletionConfirmed} onClick={() => void requestDeletion()}><Trash2 size={16}/>{tr('تسجيل الإجراء', 'Record this action')}</button></section>
       </section>}
 
@@ -1512,7 +1468,10 @@ function YoutubeSection({ value, onChange, tr }: { value: string; onChange: (val
 }
 function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hint: string; value: Social[]; onChange: (value: Social[]) => void; max: number; tr: (ar: string, en: string) => string }) { const update = (index: number, key: keyof Social, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item)); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Link2 size={15}/>{value.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{value.length < max && <button className="button button--quiet" onClick={() => onChange([...value, { label: '', url: '' }])}><Plus size={16}/>{tr('إضافة رابط', 'Add link')}</button>}</header><div className="dashboard-link-list">{value.length === 0 && <EmptyInline text={tr('لا توجد روابط مضافة بعد.', 'No links added yet.')} />}{value.map((item, index) => <div key={`${index}-${item.url}`}><Globe2 size={17}/><input className="field" value={item.label} placeholder={tr('العنوان', 'Label')} onChange={(event) => update(index, 'label', event.target.value)}/><input className="field" type="url" value={item.url} placeholder="https://" onChange={(event) => update(index, 'url', event.target.value)}/>{item.url && <small>{socialHost(item.url)}</small>}<button className="dashboard-icon-button" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))} aria-label={tr('حذف الرابط', 'Remove link')}><X size={16}/></button></div>)}</div></>;
 }
-function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]]; const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] }); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div><label><span>{tr('طلب إعادة توجيه خارجي', 'External redirect request')}</span><input className="field" type="url" placeholder="https://" value={draft.redirect} onChange={(event) => onChange({ redirect: event.target.value })}/><small className="muted">{tr('تُنفذ إعادة التوجيه بعد موافقة الإدارة والتحقق من الوجهة.', 'Redirect is applied only after administration approval and destination validation.')}</small></label></>;
+function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) {
+  const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]];
+  const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] });
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div></>;
 }
 function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/></label>; }
 function ProfessionalPointsMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="Professional points"><Gift size={compact ? 13 : 16}/><span>{compact ? 'نقاط' : 'نقاط التميز'}</span></span>; }
@@ -1529,7 +1488,7 @@ function WalletPanel({ balance, ledger, transferForm, setTransferForm, onTransfe
   </section>;
 }
 
-function LoyaltyPreferencesPanel({ preferences, busy, canApplyFemalePrivacy, onChange, onApplyFemalePrivacy, tr }: { preferences: MemberPreferences; busy: boolean; canApplyFemalePrivacy: boolean; onChange: (patch: Partial<MemberPreferences>) => void; onApplyFemalePrivacy: () => void; tr: (ar: string, en: string) => string }) {
+function LoyaltyPreferencesPanel({ preferences, busy, onChange, tr }: { preferences: MemberPreferences; busy: boolean; onChange: (patch: Partial<MemberPreferences>) => void; tr: (ar: string, en: string) => string }) {
   const ageOptions: Array<[MemberPreferences['ageBand'], string, string, string, string]> = [
     ['student', 'طالب أو في بداية التعلّم', 'Student or learning stage', 'اجعل ركنك مركزاً على بناء المهارات وعرض إنجازات التعلّم.', 'Focus your private space on skills and learning achievements.'],
     ['early_career', 'بداية المسيرة المهنية', 'Early career', 'رتّب أولوياتك حول الخبرات والمشروعات والمهارات القابلة للعرض.', 'Prioritise experience, projects, and showcase-ready skills.'],
@@ -1538,14 +1497,8 @@ function LoyaltyPreferencesPanel({ preferences, busy, canApplyFemalePrivacy, onC
     ['prefer_not_to_say', 'أفضل عدم التحديد', 'Prefer not to say', 'ستبقى الإرشادات عامة ويمكنك تغيير هذا الاختيار في أي وقت.', 'Guidance remains general and you can change this at any time.'],
   ];
   const current = ageOptions.find(([value]) => value === preferences.ageBand) ?? ageOptions[4];
-  const genderCopy = preferences.gender === 'female'
-    ? tr('يمكنك تفعيل بديل الأحرف الأولى وإخفاء الهاتف المباشر بضغطة واحدة.', 'You can enable initials mode and hide the direct phone number in one step.')
-    : preferences.gender === 'male'
-      ? tr('نقترح ترتيب المحتوى حول المسيرة والمهارات التي تختارها أنت.', 'We suggest arranging content around the journey and skills you choose.')
-      : tr('نقترح محتوى عاماً دون افتراضات شخصية.', 'We keep suggestions general without personal assumptions.');
-  return <section className="card dashboard-loyalty-preferences"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('تخصيص مساحتك', 'Personalise your space')}</h2></div></div><p className="muted">{tr('هذه الخيارات خاصة بحسابك ولا تظهر في موقعك أو ملفك العام.', 'These choices stay private to your account and never appear on your public site or profile.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الخيار الشخصي', 'Personal option')}</span><select className="field" value={preferences.gender} disabled={busy} onChange={(event) => onChange({ gender: event.target.value as MemberPreferences['gender'] })}><option value="male">{tr('ذكر', 'Male')}</option><option value="female">{tr('أنثى', 'Female')}</option><option value="prefer_not_to_say">{tr('أفضل عدم التحديد', 'Prefer not to say')}</option></select></label><label><span>{tr('المرحلة المهنية التقريبية', 'Approximate career stage')}</span><select className="field" value={preferences.ageBand} disabled={busy} onChange={(event) => onChange({ ageBand: event.target.value as MemberPreferences['ageBand'] })}>{ageOptions.map(([value, ar, en]) => <option key={value} value={value}>{tr(ar, en)}</option>)}</select></label><div className="dashboard-personalisation-note"><strong>{tr('اقتراح لمساحتك', 'A suggestion for your space')}</strong><p>{tr(current[3], current[4])}<br/>{genderCopy}</p></div></div>{preferences.gender === 'female' && <div className="dashboard-female-privacy"><div><strong>{tr('خصوصية موسعة اختيارية', 'Optional enhanced privacy')}</strong><p>{tr('تستبدل الصورة بأحرف الاسم الأولى، وتخفي رقم الهاتف المباشر، وتبقي نموذج المراسلة المهني متاحاً بموافقتك.', 'It uses initials instead of the photo, hides the direct phone number, and keeps professional contact requests available with your approval.')}</p></div><button className="button button--quiet" type="button" disabled={busy || !canApplyFemalePrivacy || preferences.femalePrivacyPreset} onClick={onApplyFemalePrivacy}>{preferences.femalePrivacyPreset ? tr('الخصوصية الموسعة مفعلة', 'Enhanced privacy is enabled') : tr('تفعيل الخصوصية الموسعة', 'Enable enhanced privacy')}</button>{!canApplyFemalePrivacy && <small>{tr('احجزي نطاقك أولاً لتطبيق هذا الاختيار على هويتك.', 'Reserve your site first to apply this choice to your identity.')}</small>}</div>}<div className="dashboard-loyalty-options"><label className="dashboard-check"><input type="checkbox" checked={preferences.seasonalThemeEnabled} disabled={busy} onChange={(event) => onChange({ seasonalThemeEnabled: event.target.checked })}/>{tr('إظهار لمسات المناسبات في مساحتي وعلى الرئيسية لهذا المتصفح', 'Show occasion touches in my space and homepage on this browser')}</label><label className="dashboard-check"><input type="checkbox" checked={preferences.seasonalNoticesEnabled} disabled={busy} onChange={(event) => onChange({ seasonalNoticesEnabled: event.target.checked })}/>{tr('تلقي تنبيه المناسبة داخل المساحة وعبر البريد', 'Receive occasion notice in my space and by email')}</label><label className="dashboard-check"><input type="checkbox" checked={preferences.badgesEnabled} disabled={busy} onChange={(event) => onChange({ badgesEnabled: event.target.checked })}/>{tr('إظهار أوسمة تمارين اليوم في ركني الخاص', 'Show daily-exercise badges in my private corner')}</label></div></section>;
+  return <section className="card dashboard-loyalty-preferences"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('تخصيص مساحتك', 'Personalise your space')}</h2></div></div><p className="muted">{tr('هذه الخيارات خاصة بحسابك ولا تظهر في موقعك أو ملفك العام.', 'These choices stay private to your account and never appear on your public site or profile.')}</p><div className="dashboard-settings-grid"><label><span>{tr('المرحلة المهنية التقريبية', 'Approximate career stage')}</span><select className="field" value={preferences.ageBand} disabled={busy} onChange={(event) => onChange({ ageBand: event.target.value as MemberPreferences['ageBand'] })}>{ageOptions.map(([value, ar, en]) => <option key={value} value={value}>{tr(ar, en)}</option>)}</select></label><div className="dashboard-personalisation-note"><strong>{tr('اقتراح لمساحتك', 'A suggestion for your space')}</strong><p>{tr(current[3], current[4])}</p></div></div><div className="dashboard-loyalty-options"><label className="dashboard-check"><input type="checkbox" checked={preferences.seasonalThemeEnabled} disabled={busy} onChange={(event) => onChange({ seasonalThemeEnabled: event.target.checked })}/>{tr('إظهار لمسات المناسبات في مساحتي وعلى الرئيسية لهذا المتصفح', 'Show occasion touches in my space and homepage on this browser')}</label><label className="dashboard-check"><input type="checkbox" checked={preferences.seasonalNoticesEnabled} disabled={busy} onChange={(event) => onChange({ seasonalNoticesEnabled: event.target.checked })}/>{tr('تلقي تنبيه المناسبة داخل المساحة وعبر البريد', 'Receive occasion notice in my space and by email')}</label><label className="dashboard-check"><input type="checkbox" checked={preferences.badgesEnabled} disabled={busy} onChange={(event) => onChange({ badgesEnabled: event.target.checked })}/>{tr('إظهار أوسمة تمارين اليوم في ركني الخاص', 'Show daily-exercise badges in my private corner')}</label></div></section>;
 }
-
 function LoyaltyPanel({ daily, competition, communities, busy, competitionBusy, activeSiteUrl, onSubmit, onCompetitionEnter, tr, notify }: { daily?: DailyActivity; competition?: LoyaltyCompetition | null; communities: LoyaltyCommunity[]; busy: boolean; competitionBusy: boolean; activeSiteUrl: string; onSubmit: (challenge: DailyChallenge, answer: string) => void; onCompetitionEnter: () => void; tr: (ar: string, en: string) => string; notify: (message: string) => void }) {
   const [answer, setAnswer] = useState('');
   const challenge = daily?.challenge;

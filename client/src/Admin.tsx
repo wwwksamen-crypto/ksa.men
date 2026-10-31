@@ -38,7 +38,6 @@ type AdminTabDefinition = {
 
 type AdminData = Partial<Record<Exclude<AdminTab, 'content' | 'pricing' | 'lock' | 'backup'>, unknown>> & {
   settings?: unknown;
-  transfers?: unknown;
   competitionEntries?: unknown;
 };
 
@@ -154,7 +153,7 @@ function records(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.filter((item): item is JsonRecord => Boolean(record(item)));
   const object = record(value);
   if (!object) return [];
-  for (const key of ['items', 'users', 'reviews', 'requests', 'payments', 'services', 'names', 'transfers', 'entries', 'audit', 'data', 'backups']) {
+  for (const key of ['items', 'users', 'reviews', 'requests', 'payments', 'services', 'names', 'entries', 'audit', 'data', 'backups']) {
     if (Array.isArray(object[key])) return records(object[key]);
   }
   return [];
@@ -342,9 +341,6 @@ export default function Admin() {
   const [assignedTo, setAssignedTo] = useState('');
   const [notification, setNotification] = useState({ recipient: '', title: '', body: '' });
   const [nameForm, setNameForm] = useState({ name: '', kind: 'policy', reason: '' });
-  const [proxySite, setProxySite] = useState({ email: '', name: '', authorization: '', profileName: '', title: '', city: '', bio: '' });
-  const [lastProxy, setLastProxy] = useState<MaybeRecord>();
-  const [handover, setHandover] = useState({ id: '', email: '' });
   const [contentSlug, setContentSlug] = useState<(typeof contentSlugs)[number][0]>('about');
   const [content, setContent] = useState<ContentDraft>({ title_ar: '', title_en: '', body_ar: '', body_en: '' });
   const [contentMeta, setContentMeta] = useState<MaybeRecord>();
@@ -421,7 +417,7 @@ export default function Admin() {
             : target === 'services' && managerOrOwner
               ? [['services', '/api/admin/services']]
               : target === 'names' && owner
-                ? [['names', '/api/admin/names'], ['transfers', '/api/admin/transfers']]
+                ? [['names', '/api/admin/names']]
                 : target === 'content' && owner
                   ? [['settings', '/api/admin/settings'], ['competitionEntries', '/api/admin/competition-entries']]
                   : ['pricing', 'lock'].includes(target) && owner
@@ -494,7 +490,6 @@ export default function Admin() {
   const payments = useMemo(() => records(data.payments), [data.payments]);
   const services = useMemo(() => records(data.services), [data.services]);
   const names = useMemo(() => records(data.names), [data.names]);
-  const transfers = useMemo(() => records(data.transfers), [data.transfers]);
   const audit = useMemo(() => records(data.audit), [data.audit]);
   const membershipRequests = useMemo(() => records(data.membership), [data.membership]);
   const competitionEntries = useMemo(() => records(record(data.competitionEntries)?.entries ?? data.competitionEntries), [data.competitionEntries]);
@@ -739,38 +734,6 @@ export default function Admin() {
             <button className="button" disabled={busy === 'notification'}>{tr('إرسال الإشعار', 'Send notification')}</button>
           </form>
         </div>
-        <ProxySitePanel
-          tr={tr}
-          busy={busy}
-          proxySite={proxySite}
-          setProxySite={setProxySite}
-          handover={handover}
-          setHandover={setHandover}
-          lastProxy={lastProxy}
-          setError={setError}
-          onCreate={(event) => {
-            event.preventDefault();
-            if (!proxySite.authorization.trim() || !proxySite.name.trim() || !proxySite.profileName.trim()) {
-              setError(tr('أدخل اسم النطاق واسم صاحب الموقع والتفويض الموثق قبل الإنشاء.', 'Enter the subdomain, site owner name and documented authorization before creation.'));
-              return;
-            }
-            const draft = Object.fromEntries(Object.entries({ name: proxySite.profileName.trim(), title: proxySite.title.trim(), city: proxySite.city.trim(), bio: proxySite.bio.trim() }).filter(([, value]) => Boolean(value)));
-            void mutate('proxy-site', () => api<unknown>('/api/admin/sites', { method: 'POST', body: JSON.stringify({ email: proxySite.email, name: proxySite.name, authorization: proxySite.authorization, draft }) }), { fresh: true, reload: false, success: tr('أنشأ الخادم مسودة الموقع المحكومة بالتفويض.', 'The server created the authorization-governed site draft.') }).then((result) => {
-              const payload = record(result);
-              if (payload) {
-                setLastProxy(payload);
-                const created = record(payload.site);
-                const id = text(created?.id, '');
-                if (id) setHandover((value) => ({ ...value, id }));
-              }
-            });
-          }}
-          onHandover={(event) => {
-            event.preventDefault();
-            if (!handover.id || !handover.email) return;
-            void mutate('handover', () => api(`/api/admin/sites/${encodeURIComponent(handover.id)}/handover`, { method: 'POST', body: JSON.stringify({ email: handover.email }) }), { fresh: true, reload: false, success: tr('أُرسل طلب التسليم؛ لا يكتمل حتى قبول الحساب صاحب البريد المتحقق منه.', 'The handover request was sent; it completes only after acceptance by the verified account for that email.') });
-          }}
-        />
       </section>}
     </div>
   );
@@ -865,11 +828,8 @@ export default function Admin() {
 
   const renderNames = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('الأسماء المحجوزة والنقل', 'Reserved names & transfers')}</h1><p className="muted">{tr('الأسماء التقنية المرتبطة بتشغيل المنصة لا تتاح لتحرير الواجهة، كما لا ينتقل محتوى الموقع مع ملكية الاسم.', 'Technical names used by the platform are not releasable from the UI, and site content never moves with name ownership.')}</p></div></section>
-      <section className="admin-grid admin-grid-2">
-        <div className="card stack"><h2>{tr('حجز اسم', 'Reserve a name')}</h2><form className="stack" onSubmit={(event) => { event.preventDefault(); if (!nameForm.name || !nameForm.reason) return; void mutate('reserve-name', () => api('/api/admin/names', { method: 'POST', body: JSON.stringify(nameForm) }), { fresh: true, success: tr('تم حجز الاسم مع سبب السياسة.', 'The name was reserved with its policy reason.') }).then((result) => { if (result !== undefined) setNameForm({ name: '', kind: 'policy', reason: '' }); }); }}><label className="field"><span>{tr('الاسم', 'Name')}</span><input value={nameForm.name} onChange={(event) => setNameForm((value) => ({ ...value, name: event.target.value.toLowerCase() }))} pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" required /></label><label className="field"><span>{tr('النوع', 'Kind')}</span><select value={nameForm.kind} onChange={(event) => setNameForm((value) => ({ ...value, kind: event.target.value }))}><option value="policy">{tr('سياسة', 'Policy')}</option><option value="technical">{tr('تقني', 'Technical')}</option></select></label><label className="field"><span>{tr('السبب', 'Reason')}</span><textarea rows={2} value={nameForm.reason} onChange={(event) => setNameForm((value) => ({ ...value, reason: event.target.value }))} required /></label><button className="button" disabled={busy === 'reserve-name'}>{tr('حجز الاسم', 'Reserve name')}</button></form></div>
-        <div className="card stack"><h2>{tr('طلبات النقل المقبولة من المستفيد', 'Recipient-accepted transfer requests')}</h2>{transfers.length ? transfers.map((transfer) => { const id = idOf(transfer); const accepted = text(field(transfer, 'status'), '').toLowerCase() === 'accepted'; return <div className="admin-transfer" key={id}><div><strong>{text(field(transfer, 'name'))}</strong><p className="muted">{text(field(transfer, 'from_name', 'from_user', 'sender'))} → {text(field(transfer, 'to_name', 'to_user', 'recipient'))}</p></div><span className={`admin-status ${statusTone(field(transfer, 'status'))}`}>{text(field(transfer, 'status'))}</span>{accepted && <div className="admin-actions"><button className="button button-quiet" type="button" disabled={!id || busy === `transfer-${id}-approve`} onClick={() => void mutate(`transfer-${id}-approve`, () => api(`/api/admin/transfers/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision: 'approve' }) }), { fresh: true, success: tr('تم تسجيل اعتماد النقل وفصل المحتوى عن الاسم.', 'The transfer approval was recorded and content remains separate from the name.') })}>{tr('اعتماد', 'Approve')}</button><button className="button button-danger" type="button" disabled={!id || busy === `transfer-${id}-reject`} onClick={() => void mutate(`transfer-${id}-reject`, () => api(`/api/admin/transfers/${encodeURIComponent(id)}/decision`, { method: 'POST', body: JSON.stringify({ decision: 'reject' }) }), { fresh: true, success: tr('تم تسجيل رفض النقل.', 'The transfer rejection was recorded.') })}>{tr('رفض', 'Reject')}</button></div>}</div>; }) : <Empty title={tr('لا توجد طلبات نقل.', 'No transfer requests were returned.')} />}</div>
-      </section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('الأسماء المحجوزة', 'Reserved names')}</h1><p className="muted">{tr('تُدار الحجوزات التشغيلية فقط من هنا. الاسم المرتبط بعضوية لا يُنقل أو يُسلّم من المنصة.', 'Only operational reservations are managed here. A member-bound name cannot be transferred or handed over through the platform.')}</p></div></section>
+      <section className="card stack"><h2>{tr('حجز اسم', 'Reserve a name')}</h2><form className="stack" onSubmit={(event) => { event.preventDefault(); if (!nameForm.name || !nameForm.reason) return; void mutate('reserve-name', () => api('/api/admin/names', { method: 'POST', body: JSON.stringify(nameForm) }), { fresh: true, success: tr('تم حجز الاسم مع سبب السياسة.', 'The name was reserved with its policy reason.') }).then((result) => { if (result !== undefined) setNameForm({ name: '', kind: 'policy', reason: '' }); }); }}><label className="field"><span>{tr('الاسم', 'Name')}</span><input value={nameForm.name} onChange={(event) => setNameForm((value) => ({ ...value, name: event.target.value.toLowerCase() }))} pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" required /></label><label className="field"><span>{tr('النوع', 'Kind')}</span><select value={nameForm.kind} onChange={(event) => setNameForm((value) => ({ ...value, kind: event.target.value }))}><option value="policy">{tr('سياسة', 'Policy')}</option><option value="technical">{tr('تقني', 'Technical')}</option></select></label><label className="field"><span>{tr('السبب', 'Reason')}</span><textarea rows={2} value={nameForm.reason} onChange={(event) => setNameForm((value) => ({ ...value, reason: event.target.value }))} required /></label><button className="button" disabled={busy === 'reserve-name'}>{tr('حجز الاسم', 'Reserve name')}</button></form></section>
       <section className="card stack"><h2>{tr('سجل الأسماء المحجوزة', 'Reserved-name registry')}</h2><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الاسم', 'Name')}</th><th>{tr('النوع', 'Kind')}</th><th>{tr('السبب', 'Reason')}</th><th>{tr('الإجراء', 'Action')}</th></tr></thead><tbody>{names.length ? names.map((name) => { const nameText = text(field(name, 'name'), ''); const kind = text(field(name, 'kind', 'type'), '').toLowerCase(); const technical = kind === 'technical' || Boolean(field(name, 'technical', 'immutable')); return <tr key={nameText}><td>{nameText}</td><td><span className={`admin-status ${technical ? 'danger' : 'neutral'}`}>{technical ? tr('تقني / غير قابل للتحرير', 'Technical / immutable') : text(field(name, 'kind', 'type'))}</span></td><td>{text(field(name, 'reason'))}</td><td>{technical ? <span className="muted">{tr('محمي للتشغيل', 'Protected for operation')}</span> : <button className="button button-danger button-small" type="button" disabled={busy === `release-${nameText}`} onClick={() => void mutate(`release-${nameText}`, () => api(`/api/admin/names/${encodeURIComponent(nameText)}/release`, { method: 'POST' }), { fresh: true, success: tr('تم تحرير الاسم المحجوز.', 'The reserved name was released.') })}>{tr('تحرير', 'Release')}</button>}</td></tr>; }) : <tr><td colSpan={4}>{tr('لا توجد أسماء محجوزة.', 'No reserved names were returned.')}</td></tr>}</tbody></table></div></section>
     </div>
   );
@@ -1045,24 +1005,6 @@ function AdminNavigation(props: {
       </div>;
     })}
   </nav>;
-}
-
-function ProxySitePanel(props: {
-  tr: (ar: string, en: string) => string;
-  busy: string | null;
-  proxySite: { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string };
-  setProxySite: (value: { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string } | ((previous: { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string }) => { email: string; name: string; authorization: string; profileName: string; title: string; city: string; bio: string })) => void;
-  handover: { id: string; email: string };
-  setHandover: (value: { id: string; email: string } | ((previous: { id: string; email: string }) => { id: string; email: string })) => void;
-  lastProxy: MaybeRecord;
-  setError: (value: string) => void;
-  onCreate: (event: FormEvent<HTMLFormElement>) => void;
-  onHandover: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  const { tr, busy, proxySite, setProxySite, handover, setHandover, lastProxy, onCreate, onHandover } = props;
-  const createdSite = record(lastProxy?.site);
-  const createdHandover = record(lastProxy?.handover);
-  return <div className="card stack"><div><h2>{tr('موقع بالنيابة وتسليم موثق', 'Proxy site & documented handover')}</h2><p className="muted">{tr('تبدأ المسودة بالبيانات الأساسية، ثم تكملها بالصور والأقسام في المحرر المفوّض. لا تنشر بيانات الغير، ولا يكتمل التسليم لمجرد إدخال البريد؛ القبول يتم لاحقاً من لوحة الحساب المتحقق للمستلم.', 'Start with the basic profile, then complete images and sections in the delegated editor. Third-party data is not published, and entering an email never completes a handover; acceptance happens later from the recipient’s verified account dashboard.')}</p></div><form className="stack" onSubmit={onCreate}><div className="admin-form-pair"><label className="field"><span>{tr('بريد المستلم (اختياري عند الإنشاء)', 'Recipient email (optional at creation)')}</span><input type="email" value={proxySite.email} onChange={(event) => setProxySite((value) => ({ ...value, email: event.target.value }))} /></label><label className="field"><span>{tr('اسم النطاق الفرعي', 'Subdomain name')}</span><input value={proxySite.name} pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" onChange={(event) => setProxySite((value) => ({ ...value, name: event.target.value.toLowerCase() }))} required /></label><label className="field"><span>{tr('اسم صاحب الموقع', 'Site owner name')}</span><input value={proxySite.profileName} onChange={(event) => setProxySite((value) => ({ ...value, profileName: event.target.value }))} required /></label><label className="field"><span>{tr('المسمى المهني', 'Professional title')}</span><input value={proxySite.title} onChange={(event) => setProxySite((value) => ({ ...value, title: event.target.value }))} /></label><label className="field"><span>{tr('المدينة', 'City')}</span><input value={proxySite.city} onChange={(event) => setProxySite((value) => ({ ...value, city: event.target.value }))} /></label></div><label className="field"><span>{tr('نبذة الموقع', 'Site biography')}</span><textarea rows={3} value={proxySite.bio} onChange={(event) => setProxySite((value) => ({ ...value, bio: event.target.value }))} /></label><label className="field"><span>{tr('نص أو مرجع التفويض الموثق', 'Documented authorization text or reference')}</span><textarea rows={2} minLength={8} value={proxySite.authorization} onChange={(event) => setProxySite((value) => ({ ...value, authorization: event.target.value }))} required /></label><button className="button" disabled={busy === 'proxy-site'}>{tr('إنشاء مسودة مفوضة', 'Create authorized draft')}</button></form>{createdSite && <div className="admin-proxy-result"><strong>{tr('نتيجة المسار', 'Route result')}</strong><span>{tr('معرف الموقع', 'Site ID')}: <b className="admin-mono">{text(createdSite.id)}</b></span><span>{tr('الحالة', 'Status')}: {text(createdSite.status)}</span><a className="button primary" href={'/dashboard?site='+encodeURIComponent(text(createdSite.id))+'&tab=editor'}>{tr('أكمل الموقع في المحرر','Continue in the site editor')}</a>{createdHandover && <span>{tr('معرف طلب التسليم', 'Handover request ID')}: <b className="admin-mono">{text(createdHandover.id)}</b></span>}</div>}<form className="admin-inline-form" onSubmit={onHandover}><input aria-label={tr('معرف الموقع', 'Site ID')} placeholder={tr('معرف الموقع', 'Site ID')} value={handover.id} onChange={(event) => setHandover((value) => ({ ...value, id: event.target.value }))} /><input aria-label={tr('بريد المستلم', 'Recipient email')} type="email" placeholder={tr('بريد المستلم المتحقق', 'Verified recipient email')} value={handover.email} onChange={(event) => setHandover((value) => ({ ...value, email: event.target.value }))} /><button className="button button-secondary" disabled={busy === 'handover'}>{tr('طلب التسليم', 'Request handover')}</button></form><p className="admin-route-note">{tr('أكمل الموقع في المحرر، وأرسله للمراجعة قبل نشره. يبقى قبول نقل إدارة الموقع لصاحب البريد المتحقق خطوة مستقلة.', 'Complete the site in the editor and submit it for review. Transfer of site management remains a separate acceptance step by the verified email owner.')}</p></div>;
 }
 
 function SnapshotDiff({ review, tr }: { review: JsonRecord; tr: (ar: string, en: string) => string }) {

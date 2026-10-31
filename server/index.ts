@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { getCookie, setCookie } from 'hono/cookie';
 import { ZodError } from 'zod';
-import { type Bindings, type Session, type User, type Env, one, now, digest, hmac, verifySecret, rate, setting, safeUrl, publicProfile } from './core';
+import { type Bindings, type Session, type User, type Env, one, now, digest, hmac, verifySecret, rate, setting } from './core';
 import { registerAuth } from './auth';
 import {registerPreview} from './preview';
 import { registerOG,personalizedHTML } from './og';
@@ -10,7 +10,7 @@ import { registerBackup, makeBackup } from './backup';
 import { registerBusiness } from './business';
 import { registerOperations } from './operations';
 import { registerIntelligence, fetchRadar } from './intelligence';
-import { registerPublic, publishedForHost, personalGate } from './public';
+import { registerPublic } from './public';
 import { runDataLifecycle } from './lifecycle';
 import { runSeasonalNotices } from './loyalty';
 
@@ -78,13 +78,6 @@ app.use('*', async (c, next) => {
     if (path.startsWith('/api/')) throw new HTTPException(423, { message: lock.message || 'المنصة مقفلة' });
     // Root keeps the interactive SPA gate; subdomains use an origin-local gate form.
     if (!rootHost) return c.html(lockHTML(c, lock), 423);
-  }
-  if (!rootHost && !path.startsWith('/api/')) {
-    const site = await publishedForHost(c);
-    if (site.published && await personalGate(c, site)) {
-      const profile = publicProfile(JSON.parse(site.published));
-      if (profile.redirect && safeUrl(profile.redirect)) return c.redirect(profile.redirect, 302);
-    }
   }
   await next();
   security(c);

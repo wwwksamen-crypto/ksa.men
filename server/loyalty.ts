@@ -2,18 +2,13 @@ import type { Env } from './core';
 import { appendAudit, now, uid } from './core';
 import { deliverDecisionEmail } from './decision-email';
 
-export const GENDERS = ['male', 'female', 'prefer_not_to_say'] as const;
-export type Gender = typeof GENDERS[number];
-
 export const AGE_BANDS = ['student', 'early_career', 'established', 'expert', 'prefer_not_to_say'] as const;
 export type AgeBand = typeof AGE_BANDS[number];
 export type MemberPreferences = {
-  gender: Gender;
   ageBand: AgeBand;
   seasonalThemeEnabled: boolean;
   seasonalNoticesEnabled: boolean;
   badgesEnabled: boolean;
-  femalePrivacyPreset: boolean;
   updatedAt: number;
 };
 
@@ -33,12 +28,10 @@ type DailyChallenge = {
 type Season = { occasion: string; startsAt: number; endsAt: number };
 
 const DEFAULT_MEMBER_PREFERENCES: MemberPreferences = {
-  gender: 'prefer_not_to_say',
   ageBand: 'prefer_not_to_say',
   seasonalThemeEnabled: true,
   seasonalNoticesEnabled: false,
   badgesEnabled: true,
-  femalePrivacyPreset: false,
   updatedAt: 0,
 };
 const OCCASIONS = new Set(['eid_al_fitr', 'eid_al_adha', 'national_day', 'founding_day']);
@@ -64,15 +57,12 @@ export function riyadhYear(clock = now()): number {
 
 export function memberPreferences(row: Record<string, unknown> | null | undefined): MemberPreferences {
   const value = row ?? {};
-  const gender = GENDERS.includes(value.gender as Gender) ? value.gender as Gender : DEFAULT_MEMBER_PREFERENCES.gender;
   const ageBand = AGE_BANDS.includes(value.age_band as AgeBand) ? value.age_band as AgeBand : DEFAULT_MEMBER_PREFERENCES.ageBand;
   return {
-    gender,
     ageBand,
     seasonalThemeEnabled: value.seasonal_theme_enabled === undefined ? true : Boolean(value.seasonal_theme_enabled),
     seasonalNoticesEnabled: Boolean(value.seasonal_notices_enabled),
     badgesEnabled: value.badges_enabled === undefined ? true : Boolean(value.badges_enabled),
-    femalePrivacyPreset: Boolean(value.female_privacy_preset),
     updatedAt: Number(value.updated_at ?? 0),
   };
 }

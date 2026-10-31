@@ -194,7 +194,7 @@ async function waitForCardAssets(node: HTMLElement) {
   }));
 }
 
-const QR_BRAND_ICON = '/assets/icon-192.png';
+const QR_BRAND_ICON = '/assets/logo-emblem.webp';
 
 function ownedImage(value: string) {
   return value.startsWith('/api/media/') || value.startsWith('/assets/') ? value : QR_BRAND_ICON;

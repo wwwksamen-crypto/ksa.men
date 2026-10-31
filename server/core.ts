@@ -5,7 +5,7 @@ export interface Env {
   DB:D1Database; MEDIA:R2Bucket; AI:Ai; ASSETS:Fetcher;
   AUTH_SECRET:string; RESEND_API_KEY:string; ROOT_DOMAIN:string; OWNER_EMAIL:string;
   /** Optional Cloudflare Email binding used only after a failed Resend delivery. */
-  CLOUDFLARE_EMAIL?:{send:(message:unknown)=>Promise<void>};
+  CLOUDFLARE_EMAIL?:{send:(message:{to:string;from:string;subject:string;html?:string;text?:string})=>Promise<{messageId:string}>};
   /** Optional verified sender for transactional decision mail. */
   DECISION_EMAIL_FROM?:string;
   /** Independent backup secret. Never fall back to AUTH_SECRET. */

@@ -92,7 +92,7 @@ async function brandedQr(url: string, mark: string) {
     try {
       avatar = await loadPublicImage(mark);
     } catch {
-      avatar = await loadPublicImage('/assets/icon-192.png');
+      avatar = await loadPublicImage('/assets/logo-emblem.webp');
     }
 
     const canvas = document.createElement('canvas');

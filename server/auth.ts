@@ -9,7 +9,7 @@ const pinSchema=z.string({error:'أدخل PIN من ٦ أرقام'}).regex(/^\d{6
 const quickSchema=z.object({email:emailSchema,pin:pinSchema});
 const requestSchema=z.object({
  email:emailSchema,name:z.string().trim().max(100,{message:'الاسم أطول من المسموح'}).optional(),whatsapp:z.string().trim().max(30,{message:'رقم واتساب أطول من المسموح'}).optional(),
- consent:z.boolean().optional(),ageConfirmed:z.boolean().optional(),purpose:z.enum(['login','register','recover','reauth']).default('login'),referral:z.string().max(70).optional(),
+ consent:z.boolean().optional(),ageConfirmed:z.boolean().optional(),eligibilityConfirmed:z.boolean().optional(),purpose:z.enum(['login','register','recover','reauth']).default('login'),referral:z.string().max(70).optional(),
 });
 
 export async function mail(c:Ctx,email:string,code:string){
@@ -35,8 +35,8 @@ export function registerAuth(app:App){
  app.get('/api/auth/me',async c=>{const u=c.get('user');const balance=u?await one<any>(c,'SELECT balance FROM wallets WHERE user_id=?',u.id):null;return c.json({user:u?{...safeUser(u),balance:balance?.balance??0}:null,csrf:c.get('session')?.csrf??null,trusted:!!(deviceToken(c)&&await one(c,'SELECT id FROM devices WHERE id=? AND revoked=0 AND expires_at>?',await currentDeviceId(c),now()))});});
  app.post('/api/auth/request',async c=>{
   const data=requestSchema.parse(await c.req.json()); await rate(c,'auth-ip:'+c.req.header('CF-Connecting-IP'),12,3600);
-  if(data.purpose==='register'&&(!data.name||data.name.length<2||!data.whatsapp||data.consent!==true||data.ageConfirmed!==true))throw new HTTPException(400,{message:'أكمل الاسم وواتساب وأقر ببلوغ 18 عاماً والموافقة الصريحة على السياسات'});
-  if(data.purpose!=='register'){delete data.name;delete data.whatsapp;delete data.consent;delete data.ageConfirmed;delete data.referral;}
+  if(data.purpose==='register'&&(!data.name||data.name.length<2||!data.whatsapp||data.consent!==true||data.ageConfirmed!==true||data.eligibilityConfirmed!==true))throw new HTTPException(400,{message:'أكمل الاسم وواتساب وأقر ببلوغ 18 عاماً وانطباق فئة المنصة والموافقة الصريحة على السياسات'});
+  if(data.purpose!=='register'){delete data.name;delete data.whatsapp;delete data.consent;delete data.ageConfirmed;delete data.eligibilityConfirmed;delete data.referral;}
   const exists=await one<User>(c,'SELECT * FROM users WHERE email=?',data.email);const lock:any=await one(c,"SELECT value FROM settings WHERE key='lock'");const lockData=lock?JSON.parse(lock.value):{mode:'open'};
   const rawGate=getCookie(c,'__Host-ksa_gate')||'';const [gateTime,gateSig]=rawGate.split('.');const gateValid=!!lockData.passwordHash&&Number(gateTime)>now()&&(gateSig===await hmac(c.env.AUTH_SECRET,gateTime+':'+lockData.passwordHash)||gateSig===await hmac(c.env.AUTH_SECRET,gateTime+':'+lockData.passwordHash+':'+new URL(c.req.url).hostname));
   const privileged=data.email===c.env.OWNER_EMAIL||['manager','moderator'].includes(exists?.role||'');const blocked=!['open','home'].includes(lockData.mode)&&!privileged&&!gateValid;const requestMessage=data.purpose==='register'?'تم إرسال رمز التحقق إلى بريدك':'إن كان البريد مرتبطًا بحساب، سيصلك رمز الدخول. للزيارة الأولى اختر إنشاء حساب.';

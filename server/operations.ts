@@ -538,7 +538,7 @@ export function registerOperations(app: App): void {
     const user = actor(c);
     const unread = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL", user.id);
     if (user.role === "moderator") {
-      const pending = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)");
+      const pending = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND r.kind<>'redirect' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)");
       const metrics = {
         total_users: null,
         new_registrations: null,
@@ -584,14 +584,13 @@ export function registerOperations(app: App): void {
     const pendingReviews = await one<{ count: number }>(
       c,
       scoped
-        ? `SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id) ${managerReviewScope()}`
+        ? `SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND r.kind<>'redirect' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id) ${managerReviewScope()}`
         : "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)",
       ...(scoped ? [user.id, user.id, user.id] : []),
     );
-    const [trials, subscriptions, transfers, contacts, newRegistrations, serviceActivity, membershipRequests] = await Promise.all([
+    const [trials, subscriptions, contacts, newRegistrations, serviceActivity, membershipRequests] = await Promise.all([
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.trial_until>? AND u.entitlement_until<=u.trial_until` : "SELECT COUNT(*) AS count FROM users WHERE trial_until>? AND entitlement_until<=trial_until", ...(scoped ? [user.id, user.id, user.id, now()] : [now()])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(DISTINCT s.user_id) AS count FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE ${userScope}` : "SELECT COUNT(DISTINCT user_id) AS count FROM subscriptions", ...(scoped ? [user.id, user.id, user.id] : [])),
-      one<{ count: number }>(c, scoped ? "SELECT COUNT(*) AS count FROM transfers t JOIN users u ON u.id=t.from_id WHERE (u.id=? OR u.assigned_to=?)" : "SELECT COUNT(*) AS count FROM transfers", ...(scoped ? [user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? "SELECT COUNT(*) AS count FROM contact_requests r JOIN users u ON u.id=r.to_id WHERE (u.id=? OR u.assigned_to=?)" : "SELECT COUNT(*) AS count FROM contact_requests", ...(scoped ? [user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.created_at>=?` : "SELECT COUNT(*) AS count FROM users WHERE created_at>=?", ...(scoped ? [user.id, user.id, user.id, now() - 30 * DAY] : [now() - 30 * DAY])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM user_services us JOIN users u ON u.id=us.user_id WHERE ${userScope}` : "SELECT COUNT(*) AS count FROM user_services", ...(scoped ? [user.id, user.id, user.id] : [])),
@@ -617,7 +616,6 @@ export function registerOperations(app: App): void {
       membership_requests: membershipRequests?.count ?? null,
       referrals: referrals?.count ?? null,
       treasury_points: treasury?.balance ?? null,
-      transfers: transfers?.count ?? 0,
       resource_usage: null,
       service_activity: serviceActivity?.count ?? 0,
       notifications: unread?.count ?? 0,
@@ -1350,148 +1348,6 @@ export function registerOperations(app: App): void {
     if (!changed(result)) fail(409, "This name is not a releasable active reservation", "not_releasable");
     await audit(c, "name.release", `name:${name}`, "{}");
     return c.json({ name, active: false });
-  });
-
-  app.get("/api/admin/transfers", async (c) => {
-    owner(c);
-    const transfers = await all<Record<string, unknown>>(
-      c,
-      `SELECT t.*,f.name AS from_name,tu.name AS to_name
-       FROM transfers t JOIN users f ON f.id=t.from_id JOIN users tu ON tu.id=t.to_id
-       ORDER BY t.created_at DESC`,
-    );
-    return c.json({ transfers });
-  });
-
-  app.post("/api/admin/transfers/:id/decision", async (c) => {
-    const reviewer = owner(c);
-    fresh(c);
-    const body = await input(c);
-    const decision = decisionValue(body.decision);
-    const transferId = c.req.param("id");
-    const decidedAt = now();
-    const results = await c.env.DB.batch([
-      c.env.DB.prepare(
-        `UPDATE transfers SET status=?,reviewer_id=?,decided_at=?
-         WHERE id=? AND status='accepted'
-           AND EXISTS(SELECT 1 FROM dns_names n WHERE n.name=transfers.name AND n.owner_id=transfers.from_id)`,
-      ).bind(decision, reviewer.id, decidedAt, transferId),
-      c.env.DB.prepare(
-        `UPDATE dns_names SET owner_id=(SELECT to_id FROM transfers WHERE id=?),site_id=NULL
-         WHERE name=(SELECT name FROM transfers WHERE id=?)
-           AND owner_id=(SELECT from_id FROM transfers WHERE id=?)
-           AND EXISTS(SELECT 1 FROM transfers WHERE id=? AND status='approved' AND reviewer_id=?)`,
-      ).bind(transferId, transferId, transferId, transferId, reviewer.id),
-    ]);
-    if (!changed(results[0])) fail(409, "The transfer is not accepted, is stale, or the name ownership changed", "transfer_stale");
-    if (decision === "approved" && !changed(results[1])) fail(409, "The name transfer could not be completed", "transfer_stale");
-    const transfer = await one<Record<string, unknown>>(
-      c,
-      `SELECT t.*,f.name AS from_name,tu.name AS to_name
-       FROM transfers t JOIN users f ON f.id=t.from_id JOIN users tu ON tu.id=t.to_id
-       WHERE t.id=?`,
-      transferId,
-    );
-    if (transfer) {
-      await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)", `notification-${uid()}`, Number(transfer.from_id), "Name transfer decided", decision === "approved" ? "The accepted name transfer was approved. The prior site remains separate from the name." : "The accepted name transfer was not approved.", decidedAt);
-      await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)", `notification-${uid()}`, Number(transfer.to_id), "Name transfer decided", decision === "approved" ? "The accepted name transfer was approved. No prior site content moved with the name." : "The accepted name transfer was not approved.", decidedAt);
-    }
-    await audit(c, "name.transfer.decision", `transfer:${transferId}`, JSON.stringify({ decision }));
-    return c.json({ transfer: transfer ? { ...transfer, from_user: transfer.from_name, to_user: transfer.to_name } : null });
-  });
-
-  app.post("/api/admin/sites", async (c) => {
-    const creator = managerOrOwner(c);
-    fresh(c);
-    const body = await input(c);
-    const email = body.email === undefined || body.email === null || body.email === "" ? "" : text(body.email, "email", { min: 3, max: 320 }).toLowerCase();
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "email is invalid", "invalid_input");
-    const name = body.name === undefined || body.name === null || body.name === "" ? null : nameValue(body.name);
-    const draft = jsonString(body.draft, "draft");
-    const authorization = text(body.authorization, "authorization", { min: 8, max: 4_000 });
-    const mediaIds = proxyMediaIds(draft);
-    const siteId = `site-${uid()}`;
-    const handoverId = email ? `handover-${uid()}` : null;
-    const createdAt = now();
-    const reservationReason = `Proxy reservation for ${siteId}`;
-    if (name) {
-      const unavailable = await one<{ name: string }>(c, "SELECT name FROM dns_names WHERE name=?", name);
-      const activeReservation = await one<{ name: string }>(c, "SELECT name FROM reserved_names WHERE name=? AND active=1", name);
-      if (unavailable || activeReservation) fail(409, "Name is unavailable", "name_unavailable");
-    }
-    if (mediaIds.length) {
-      const media = await all<{ id: string }>(
-        c,
-        `SELECT id FROM media
-         WHERE owner_id=? AND site_id IS NULL AND purpose IN ('photo','cover','skill','work')
-           AND id IN (${mediaIds.map(() => "?").join(",")})`,
-        creator.id,
-        ...mediaIds,
-      );
-      if (media.length !== mediaIds.length) fail(403, "Proxy media must be unassigned images uploaded by the authorized creator", "proxy_media_forbidden");
-    }
-    const mediaGuard = mediaIds.length
-      ? `AND (SELECT COUNT(*) FROM media WHERE owner_id=? AND site_id IS NULL AND purpose IN ('photo','cover','skill','work') AND id IN (${mediaIds.map(() => "?").join(",")}))=?`
-      : "";
-    const mediaGuardArgs: Array<string | number> = mediaIds.length ? [creator.id, ...mediaIds, mediaIds.length] : [];
-    const statements = [
-      ...(name ? [c.env.DB.prepare(
-        `INSERT INTO reserved_names(name,kind,reason,active) VALUES(?,?,?,1)
-         ON CONFLICT(name) DO UPDATE SET kind=excluded.kind,reason=excluded.reason,active=1 WHERE reserved_names.active=0`,
-      ).bind(name, "proxy_pending", reservationReason)] : []),
-      c.env.DB.prepare(
-        `INSERT INTO sites(id,user_id,manager_id,draft,draft_version,status,created_at,updated_at,authorization)
-         SELECT ?,NULL,?,?,0,'proxy_pending',?,?,?
-         WHERE (? IS NULL OR EXISTS(SELECT 1 FROM reserved_names WHERE name=? AND kind='proxy_pending' AND reason=? AND active=1))
-         ${mediaGuard}`,
-      ).bind(siteId, creator.id, draft, createdAt, createdAt, authorization, name, name, reservationReason, ...mediaGuardArgs),
-      c.env.DB.prepare(
-        `INSERT INTO proxy_sites(site_id,pending_name,target_email,authorization,creator_id,created_at)
-         SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM sites WHERE id=?)`,
-      ).bind(siteId, name, email, authorization, creator.id, createdAt, siteId),
-      ...(mediaIds.length ? [c.env.DB.prepare(
-        `UPDATE media SET site_id=?
-         WHERE owner_id=? AND site_id IS NULL AND purpose IN ('photo','cover','skill','work')
-           AND id IN (${mediaIds.map(() => "?").join(",")})`,
-      ).bind(siteId, creator.id, ...mediaIds)] : []),
-      ...(handoverId ? [c.env.DB.prepare(
-        `INSERT INTO handovers(id,site_id,target_email,creator_id,status,created_at)
-         SELECT ?,?,?,?,'pending',? WHERE EXISTS(SELECT 1 FROM sites WHERE id=?)`,
-      ).bind(handoverId, siteId, email, creator.id, createdAt, siteId)] : []),
-      c.env.DB.prepare(
-        `INSERT INTO site_custody(id,site_id,event,actor_id,manager_id,detail,created_at)
-         SELECT ?,?,'proxy_created',?,?,?,? WHERE EXISTS(SELECT 1 FROM sites WHERE id=?)`,
-      ).bind(`custody-create-${uid()}`, siteId, creator.id, creator.id, authorization, createdAt, siteId),
-    ];
-    const results = await c.env.DB.batch(statements);
-    const siteStatementIndex = name ? 1 : 0;
-    if (!changed(results[siteStatementIndex])) fail(409, "The requested name is no longer available", "name_unavailable");
-    await audit(c, "site.proxy.create", `site:${siteId}`, JSON.stringify({ email: email || null, name, authorization }));
-    return c.json({
-      site: { id: siteId, status: "proxy_pending", handoverId, name },
-      handover: handoverId ? { id: handoverId, targetEmail: email, status: "pending" } : null,
-    }, 201);
-  });
-
-  app.post("/api/admin/sites/:id/handover", async (c) => {
-    const user = managerOrOwner(c);
-    fresh(c);
-    const siteId = c.req.param("id");
-    const site = await siteInManagerScope(c, siteId);
-    const proxy = await one<{ creator_id: number; consented_at: number | null }>(c, "SELECT creator_id,consented_at FROM proxy_sites WHERE site_id=?", siteId);
-    if (!proxy || proxy.consented_at !== null || site.user_id !== null) fail(409, "Only an unaccepted proxy site can be delivered by an administrator", "handover_state");
-    if (user.role === "manager" && proxy.creator_id !== user.id) fail(403, "Only the authorized proxy creator can request this handover", "scope_denied");
-    const body = await input(c);
-    const email = text(body.email, "email", { min: 3, max: 320 }).toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail(400, "email is invalid", "invalid_input");
-    const open = await one<{ id: string }>(c, "SELECT id FROM handovers WHERE site_id=? AND status='pending'", siteId);
-    if (open) fail(409, "This site already has a pending handover", "handover_pending");
-    const handoverId = `handover-${uid()}`;
-    const createdAt = now();
-    await run(c, "INSERT INTO handovers(id,site_id,target_email,creator_id,status,created_at) VALUES(?,?,?,?,?,?)", handoverId, siteId, email, user.id, "pending", createdAt);
-    await run(c, "INSERT INTO site_custody(id,site_id,event,actor_id,manager_id,handover_id,detail,created_at) VALUES(?,?,?,?,?,?,?,?)", `custody-handover-${uid()}`, siteId, "handover_requested", user.id, user.id, handoverId, `Handover requested for ${email}`, createdAt);
-    await audit(c, "site.handover.request", `site:${siteId}`, JSON.stringify({ handoverId, email }));
-    return c.json({ handover: { id: handoverId, siteId, targetEmail: email, status: "pending" } }, 201);
   });
 
   app.post("/api/admin/notifications", async (c) => {

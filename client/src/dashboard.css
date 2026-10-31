@@ -1041,3 +1041,47 @@ html[data-season] .dashboard-loyalty { box-shadow: inset 0 1px 0 color-mix(in sr
   .dashboard-community-links > div:last-child { justify-content: flex-start; }
   .dashboard-female-privacy .button { width: 100%; }
 }
+
+
+/* Identity-editor navigation: every section reads as a clear, touch-friendly action. */
+.dashboard-editor-substeps > button {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--dash-border) 82%, transparent);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--dash-surface) 90%, var(--dash-bg));
+  color: var(--dash-text);
+  font: inherit;
+  font-weight: 760;
+  text-align: start;
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+.dashboard-editor-substeps > button > svg:first-child { color: var(--dash-accent); }
+.dashboard-editor-substeps > button > span { min-width: 0; line-height: 1.35; }
+.dashboard-editor-substeps > button > svg:last-child { opacity: .58; }
+.dashboard-editor-substeps > button:hover,
+.dashboard-editor-substeps > button:focus-visible {
+  border-color: color-mix(in srgb, var(--dash-accent) 60%, var(--dash-border));
+  background: color-mix(in srgb, var(--dash-accent) 10%, var(--dash-surface));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--dash-bg) 70%, transparent);
+}
+.dashboard-editor-substeps > button:focus-visible { outline: 3px solid color-mix(in srgb, var(--dash-accent) 35%, transparent); outline-offset: 2px; }
+.dashboard-editor-substeps > button.is-active {
+  border-color: var(--dash-accent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--dash-accent) 20%, var(--dash-surface)), var(--dash-surface));
+  color: var(--dash-accent);
+  box-shadow: inset 3px 0 0 var(--dash-accent), 0 8px 22px color-mix(in srgb, var(--dash-accent) 12%, transparent);
+}
+.dashboard-edit-card { scroll-margin-top: 18px; }
+.dashboard-preview-avatar[src$="logo-emblem.webp"] { object-fit: contain; padding: 12px; background: color-mix(in srgb, var(--dash-surface) 88%, white); }
+@media (max-width: 760px) {
+  .dashboard-editor-substeps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .dashboard-editor-substeps > button { min-height: 58px; padding: 9px; grid-template-columns: 20px minmax(0, 1fr); gap: 7px; font-size: .84rem; }
+  .dashboard-editor-substeps > button > svg:last-child { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .dashboard-editor-substeps > button { transition: none; } }

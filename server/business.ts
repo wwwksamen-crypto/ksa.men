@@ -16,7 +16,7 @@ import {
   withdrawConsent,
 } from './core';
 import { hideMyPublicPresence, requestDeletionLifecycle } from './lifecycle';
-import { AGE_BANDS, GENDERS, buildDailyChallenge, memberPreferences, normalizeChallengeAnswer, publicDailyChallenge, riyadhDay } from './loyalty';
+import { AGE_BANDS, buildDailyChallenge, memberPreferences, normalizeChallengeAnswer, publicDailyChallenge, riyadhDay } from './loyalty';
 
 type Json = Record<string, unknown>;
 type SiteRow = {
@@ -71,7 +71,6 @@ type Profile = {
   hidden: string[];
   searchable: boolean;
   allowContact: boolean;
-  redirect?: string;
   translations?: { ar?: Profile; en?: Profile };
 };
 
@@ -82,19 +81,19 @@ type D1ResultLike = { meta?: { changes?: number } };
 // Consecutive internal hyphens are valid DNS syntax; the legacy database guard is recorded below.
 const NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9_-]{1,160}$/;
-const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/icon-192.png', '/assets/cover-1600.webp']);
+const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/logo-emblem.webp', '/assets/icon-192.png', '/assets/cover-1600.webp']);
 const PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country',
   'photo', 'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
   'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'notes', 'skillImages',
   'workImages', 'socials', 'buttons', 'hidden', 'searchable', 'allowContact',
-  'redirect', 'translations',
+  'translations',
 ]);
 const PUBLIC_PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
   'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills', 'memberships',
   'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'skillImages', 'workImages',
-  'socials', 'buttons', 'redirect',
+  'socials', 'buttons',
 ]);
 const RESUME_LISTS = [
   'experience', 'education', 'training', 'skills', 'memberships', 'languages',
@@ -259,7 +258,7 @@ function defaultProfile(name = ''): Profile {
     whatsapp: '',
     city: '',
     country: 'Saudi Arabia',
-    photo: '/assets/icon-192.png',
+    photo: '/assets/logo-emblem.webp',
     avatarMode: 'photo',
     cover: '/assets/cover-1600.webp',
     youtube: '',
@@ -399,10 +398,6 @@ function normalizeProfile(value: unknown, fallbackName = '', nested = false): Pr
   }
   profile.searchable = asBoolean(value.searchable, 'searchable', profile.searchable);
   profile.allowContact = asBoolean(value.allowContact, 'allowContact', profile.allowContact);
-  if (value.redirect !== undefined) {
-    const redirect = httpUrl(value.redirect, 'redirect');
-    if (redirect) profile.redirect = redirect;
-  }
   if (!nested && value.translations !== undefined) {
     if (!isRecord(value.translations)) apiError(422, 'translations must be an object', 'VALIDATION');
     for (const key of Object.keys(value.translations)) {
@@ -692,7 +687,7 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     const checkedAt = now();
-    const [sites, reviews, wallet, ledger, payments, subscriptionRequests, services, notifications, quickLinks, transfers, handovers, analyticsRows, unboundNames, preferencesRow, dailyActivity, seasonalSetting] = await Promise.all([
+    const [sites, reviews, wallet, ledger, payments, subscriptionRequests, services, notifications, quickLinks, analyticsRows, preferencesRow, dailyActivity, seasonalSetting] = await Promise.all([
       all<SiteRow>(
         c,
         `SELECT s.*,(
@@ -707,7 +702,7 @@ export function registerBusiness(app: App): void {
         String(user.role ?? ''),
         userId,
       ),
-      all<Record<string, unknown>>(c, 'SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.user_id=? ORDER BY r.created_at DESC LIMIT 100', userId),
+      all<Record<string, unknown>>(c, `SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.user_id=? AND r.kind<>'redirect' ORDER BY r.created_at DESC LIMIT 100`, userId),
       one<{ balance: number }>(c, 'SELECT balance FROM wallets WHERE user_id=?', userId),
       all<Record<string, unknown>>(
         c,
@@ -742,16 +737,6 @@ export function registerBusiness(app: App): void {
       ),
       all<Record<string, unknown>>(
         c,
-        "SELECT * FROM transfers WHERE to_id=? AND status='pending' ORDER BY created_at DESC LIMIT 100",
-        userId,
-      ),
-      all<Record<string, unknown>>(
-        c,
-        "SELECT * FROM handovers WHERE lower(target_email)=lower(?) AND status='pending' ORDER BY created_at DESC LIMIT 100",
-        String(user.email),
-      ),
-      all<Record<string, unknown>>(
-        c,
         `SELECT a.site_id,a.event,COUNT(*) AS total,
           SUM(CASE WHEN a.created_at>=? THEN 1 ELSE 0 END) AS last7
          FROM analytics a
@@ -766,11 +751,6 @@ export function registerBusiness(app: App): void {
         String(user.role ?? ''),
         userId,
         checkedAt - 30 * 86_400,
-      ),
-      all<{ name: string }>(
-        c,
-        'SELECT name FROM dns_names WHERE owner_id=? AND site_id IS NULL ORDER BY created_at ASC LIMIT 100',
-        userId,
       ),
       one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId),
       one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, riyadhDay(checkedAt)),
@@ -862,26 +842,6 @@ export function registerBusiness(app: App): void {
       })),
       analytics,
       quickLinks: quickLinks.map((link) => toQuickLink(link, c.env.ROOT_DOMAIN)),
-      transfers: transfers.map((transfer) => ({
-        id: transfer.id,
-        name: transfer.name,
-        from_id: `C${transfer.from_id}`,
-        to_id: `C${transfer.to_id}`,
-        status: transfer.status,
-        created_at: Number(transfer.created_at),
-        accepted_at: transfer.accepted_at ?? null,
-      })),
-      handovers: handovers.map((handover) => ({
-        id: handover.id,
-        site_id: handover.site_id,
-        status: handover.status,
-        creator_id: `C${handover.creator_id}`,
-        created_at: Number(handover.created_at),
-      })),
-      // Ownership of a transferred label is intentionally independent from any prior site/content.
-      unboundNames: unboundNames.map((item) => ({
-        name: item.name,
-      })),
       user: toDashboardUser(user, Number(wallet?.balance ?? 0)),
     });
   });
@@ -897,27 +857,23 @@ export function registerBusiness(app: App): void {
     const userId = Number(user.id);
     const body = await requestBody(c);
     const current = memberPreferences(await one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId));
-    const requestedGender = body.gender === undefined ? current.gender : asString(body.gender, 'gender', 32, true);
-    if (!GENDERS.includes(requestedGender as typeof GENDERS[number])) apiError(422, 'Select a supported gender option', 'LOYALTY_PREFERENCE_INVALID');
     const requestedAgeBand = body.ageBand === undefined ? current.ageBand : asString(body.ageBand, 'ageBand', 32, true);
     if (!AGE_BANDS.includes(requestedAgeBand as typeof AGE_BANDS[number])) {
       apiError(422, 'Select a supported age range', 'LOYALTY_PREFERENCE_INVALID');
     }
     const next = {
-      gender: requestedGender as typeof GENDERS[number],
       ageBand: requestedAgeBand as typeof AGE_BANDS[number],
       seasonalThemeEnabled: asBoolean(body.seasonalThemeEnabled, 'seasonalThemeEnabled', current.seasonalThemeEnabled),
       seasonalNoticesEnabled: asBoolean(body.seasonalNoticesEnabled, 'seasonalNoticesEnabled', current.seasonalNoticesEnabled),
       badgesEnabled: asBoolean(body.badgesEnabled, 'badgesEnabled', current.badgesEnabled),
-      femalePrivacyPreset: asBoolean(body.femalePrivacyPreset, 'femalePrivacyPreset', current.femalePrivacyPreset),
       updatedAt: now(),
     };
     await run(c,
-      `INSERT INTO member_preferences(user_id,gender,age_band,seasonal_theme_enabled,seasonal_notices_enabled,badges_enabled,female_privacy_preset,updated_at)
-       VALUES(?,?,?,?,?,?,?,?)
-       ON CONFLICT(user_id) DO UPDATE SET gender=excluded.gender,age_band=excluded.age_band,seasonal_theme_enabled=excluded.seasonal_theme_enabled,
-         seasonal_notices_enabled=excluded.seasonal_notices_enabled,badges_enabled=excluded.badges_enabled,female_privacy_preset=excluded.female_privacy_preset,updated_at=excluded.updated_at`,
-      userId, next.gender, next.ageBand, Number(next.seasonalThemeEnabled), Number(next.seasonalNoticesEnabled), Number(next.badgesEnabled), Number(next.femalePrivacyPreset), next.updatedAt,
+      `INSERT INTO member_preferences(user_id,age_band,seasonal_theme_enabled,seasonal_notices_enabled,badges_enabled,updated_at)
+       VALUES(?,?,?,?,?,?)
+       ON CONFLICT(user_id) DO UPDATE SET age_band=excluded.age_band,seasonal_theme_enabled=excluded.seasonal_theme_enabled,
+         seasonal_notices_enabled=excluded.seasonal_notices_enabled,badges_enabled=excluded.badges_enabled,updated_at=excluded.updated_at`,
+      userId, next.ageBand, Number(next.seasonalThemeEnabled), Number(next.seasonalNoticesEnabled), Number(next.badgesEnabled), next.updatedAt,
     );
     if (next.seasonalNoticesEnabled !== current.seasonalNoticesEnabled) {
       const changedAt = now();
@@ -930,9 +886,7 @@ export function registerBusiness(app: App): void {
       }
     }
     await audit(c, 'loyalty.preferences.updated', `member:${userId}`, {
-      genderChanged: next.gender !== current.gender,
       ageBandChanged: next.ageBand !== current.ageBand,
-      femalePrivacyPreset: next.femalePrivacyPreset,
       seasonalThemeEnabled: next.seasonalThemeEnabled,
       seasonalNoticesEnabled: next.seasonalNoticesEnabled,
       badgesEnabled: next.badgesEnabled,
@@ -1311,52 +1265,6 @@ export function registerBusiness(app: App): void {
     return c.json({ lock: { enabled, message: enabled ? message : '' }, updatedAt });
   });
 
-  app.post('/api/sites/:id/redirect', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    const body = await requestBody(c);
-    const site = await editableSiteFor(c, c.req.param('id'), user);
-    const redirect = httpUrl(body.url, 'url');
-    if (!redirect) apiError(422, 'url is required', 'VALIDATION');
-    const current = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
-    const draft = normalizeProfile({ ...current, redirect }, current.name || String(user.name ?? ''));
-    const reviewId = uid();
-    const createdAt = now();
-    const nextVersion = Number(site.draft_version) + 1;
-    try {
-      const results = await c.env.DB.batch([
-        c.env.DB.prepare(
-          `UPDATE sites SET draft=?,draft_version=draft_version+1,updated_at=?
-           WHERE id=? AND draft_version=?`,
-        ).bind(JSON.stringify(draft), createdAt, site.id, site.draft_version),
-        c.env.DB.prepare(
-          `INSERT INTO reviews(id,site_id,user_id,snapshot,draft_version,base_version,status,kind,created_at)
-           SELECT ?,id,?,?,?,?,?,'redirect',?
-           FROM sites WHERE id=? AND draft_version=?`,
-        ).bind(
-          reviewId,
-          Number(user.id),
-          JSON.stringify(draft),
-          nextVersion,
-          Number(site.published_version),
-          'pending',
-          createdAt,
-          site.id,
-          nextVersion,
-        ),
-      ]);
-      if (changes(results[0]) !== 1 || changes(results[1]) !== 1) {
-        apiError(409, 'This draft has changed. Reload before requesting redirect.', 'DRAFT_CONFLICT');
-      }
-    } catch (error) {
-      if (error instanceof HTTPException) throw error;
-      apiError(409, 'A redirect request for this draft is already pending', 'REVIEW_PENDING');
-    }
-    const review = await one<Record<string, unknown>>(c, 'SELECT * FROM reviews WHERE id=?', reviewId);
-    if (!review) apiError(500, 'Redirect request could not be created', 'REVIEW_CREATE_FAILED');
-    await audit(c, 'site.redirect.request', site.id, { reviewId, redirect });
-    return c.json({ review: toReview(review), redirect }, 201);
-  });
-
   app.get('/api/services', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
@@ -1522,111 +1430,6 @@ export function registerBusiness(app: App): void {
     }
     await audit(c, 'quick_link.revoke', id, {});
     return c.json({ id, revoked: true });
-  });
-
-  app.post('/api/names/transfer', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    await fresh(c);
-    const userId = Number(user.id);
-    const body = await requestBody(c);
-    const name = safeName(body.name);
-    const recipient = await resolveRecipient(c, body.recipient);
-    if (recipient.id === userId) apiError(422, 'You cannot transfer a name to yourself', 'SELF_TRANSFER');
-    const owned = await one<{ name: string; site_id: string | null }>(c, 'SELECT name,site_id FROM dns_names WHERE name=? AND owner_id=?', name, userId);
-    if (!owned) apiError(404, 'You do not own this name', 'NAME_NOT_OWNED');
-    const pending = await one<{ id: string }>(c, "SELECT id FROM transfers WHERE name=? AND status IN ('pending','accepted')", name);
-    if (pending) apiError(409, 'A transfer for this name is already in progress', 'TRANSFER_PENDING');
-    const id = uid();
-    const createdAt = now();
-    try {
-      await c.env.DB.batch([
-        c.env.DB.prepare('INSERT INTO transfers(id,name,from_id,to_id,status,created_at) VALUES(?,?,?,?,\'pending\',?)').bind(id, name, userId, recipient.id, createdAt),
-        c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-          uid(), recipient.id, 'طلب نقل اسم مميز', `تمت دعوتك لقبول نقل الاسم ${name}. لا ينقل ذلك الموقع أو المحتوى.`, createdAt,
-        ),
-        c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-          uid(), userId, 'تم إرسال طلب نقل الاسم', `ينتظر الاسم ${name} قبول المستفيد ثم قرار الإدارة.`, createdAt,
-        ),
-      ]);
-    } catch {
-      // The partial unique index is the concurrency authority; the preliminary read above is
-      // only a friendly fast-path and must not be relied on for correctness.
-      const active = await one<{ id: string }>(c, "SELECT id FROM transfers WHERE name=? AND status IN ('pending','accepted')", name);
-      if (active) apiError(409, 'A transfer for this name is already in progress', 'TRANSFER_PENDING');
-      apiError(409, 'The transfer request could not be created', 'TRANSFER_CONFLICT');
-    }
-    await audit(c, 'name.transfer.request', name, { transferId: id, to: recipient.id, siteId: owned.site_id });
-    return c.json({ transfer: { id, name, recipient: `C${recipient.id}`, status: 'pending', createdAt } }, 201);
-  });
-
-  app.post('/api/names/transfers/:id/accept', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    await fresh(c);
-    const userId = Number(user.id);
-    const id = c.req.param('id');
-    const transfer = await one<Record<string, unknown>>(c, 'SELECT * FROM transfers WHERE id=? AND to_id=?', id, userId);
-    if (!transfer) apiError(404, 'Transfer not found', 'NOT_FOUND');
-    if (transfer.status !== 'pending') apiError(409, 'This transfer is no longer awaiting acceptance', 'TRANSFER_STATE');
-    const acceptedAt = now();
-    const result = await run(c, "UPDATE transfers SET status='accepted',accepted_at=? WHERE id=? AND to_id=? AND status='pending'", acceptedAt, id, userId);
-    if (changes(result) !== 1) apiError(409, 'This transfer changed before it could be accepted', 'TRANSFER_CONFLICT');
-    await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-        uid(), Number(transfer.from_id), 'تم قبول طلب نقل الاسم', `قُبل نقل الاسم ${String(transfer.name)} وهو بانتظار اعتماد الإدارة.`, acceptedAt,
-      ),
-      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-        uid(), userId, 'تم قبول طلب نقل الاسم', `لن ينتقل أي موقع أو محتوى مع الاسم ${String(transfer.name)}.`, acceptedAt,
-      ),
-    ]);
-    await audit(c, 'name.transfer.accept', id, { name: transfer.name, from: transfer.from_id, to: userId });
-    return c.json({ transfer: { id, name: transfer.name, status: 'accepted', acceptedAt } });
-  });
-
-  app.post('/api/handovers/:id/accept', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    await fresh(c);
-    const userId = Number(user.id);
-    const id = c.req.param('id');
-    const handover = await one<Record<string, unknown>>(c, 'SELECT * FROM handovers WHERE id=?', id);
-    if (!handover) apiError(404, 'Handover not found', 'NOT_FOUND');
-    if (handover.status !== 'pending') apiError(409, 'This handover is no longer awaiting acceptance', 'HANDOVER_STATE');
-    if (String(handover.target_email).trim().toLowerCase() !== String(user.email).trim().toLowerCase()) {
-      apiError(403, 'This handover is addressed to another verified account', 'HANDOVER_FORBIDDEN');
-    }
-    const existing = await primarySite(c, userId);
-    if (existing && existing.id !== handover.site_id) {
-      apiError(409, 'This account already has a primary profile site', 'PRIMARY_SITE_EXISTS');
-    }
-    const acceptedAt = now();
-    let results: D1ResultLike[];
-    try {
-      results = await c.env.DB.batch([
-        c.env.DB.prepare(
-          "UPDATE handovers SET status='accepted',accepted_by=?,accepted_at=? WHERE id=? AND status='pending' AND lower(target_email)=lower(?)",
-        ).bind(userId, acceptedAt, id, String(user.email)),
-        c.env.DB.prepare(
-          `UPDATE sites SET user_id=?,manager_id=?,updated_at=?
-           WHERE id=? AND EXISTS (
-             SELECT 1 FROM handovers WHERE id=? AND status='accepted' AND accepted_by=?
-           )`,
-        ).bind(userId, userId, acceptedAt, String(handover.site_id), id, userId),
-      ]) as D1ResultLike[];
-    } catch {
-      apiError(409, 'The handover could not be completed', 'HANDOVER_CONFLICT');
-    }
-    if (changes(results[0]) !== 1 || changes(results[1]) !== 1) {
-      apiError(409, 'This handover changed before it could be accepted', 'HANDOVER_CONFLICT');
-    }
-    await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-        uid(), Number(handover.creator_id), 'تم قبول تسليم الموقع', `قُبل تسليم إدارة وملكية الموقع ${String(handover.site_id)} بعد تحقق البريد.`, acceptedAt,
-      ),
-      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-        uid(), userId, 'تم استلام إدارة الموقع', 'انتقلت إليك إدارة وملكية الموقع. لا يشمل ذلك نقل الاسم المميز تلقائياً.', acceptedAt,
-      ),
-    ]);
-    await audit(c, 'site.handover.accept', String(handover.site_id), { handoverId: id, from: handover.creator_id, to: userId, acceptedAt });
-    return c.json({ handover: { id, siteId: handover.site_id, status: 'accepted', acceptedAt, owner: `C${userId}`, manager: `C${userId}` } });
   });
 
   app.post('/api/privacy/hide', async (c) => {

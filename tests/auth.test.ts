@@ -116,6 +116,21 @@ describe.sequential('trusted-device quick authentication', () => {
     expect(resend).not.toHaveBeenCalled();
   });
 
+  it('accepts a complete registration affirmation and sends its challenge', async () => {
+    const resend = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => resendFixture());
+    const result = await post('/api/auth/request', { email: 'new-member@unit.invalid', name: 'عضو جديد', whatsapp: '0555000000', consent: true, ageConfirmed: true, eligibilityConfirmed: true, purpose: 'register' });
+    expect(result.response.status).toBe(200);
+    expect(resend).toHaveBeenCalledOnce();
+  });
+
+  it('requires all registration affirmations, not merely visible contact fields', async () => {
+    const resend = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => resendFixture());
+    const result = await post('/api/auth/request', { email: 'missing-affirmation@unit.invalid', name: 'عضو جديد', whatsapp: '0555000000', consent: true, purpose: 'register' });
+    expect(result.response.status).toBe(400);
+    expect(result.data.error).toMatch(/18|فئة المنصة/);
+    expect(resend).not.toHaveBeenCalled();
+  });
+
   it('rejects a guest even with a correctly shaped email and PIN', async () => {
     const result = await post('/api/auth/quick', { email: accounts.alpha.email, pin: accounts.alpha.pin });
     expect(result.response.status).toBe(401);
