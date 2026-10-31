@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Scoped, read-only encrypted production snapshot before a migration; no deletion/billing."""
+"""Scoped, read-only v2 production snapshot before a migration; no deletion or billing.
+Requires BACKUP_ENCRYPTION_KEY; AUTH_SECRET is intentionally never read.
+"""
 import requests,os,json,pathlib,concurrent.futures,hashlib,secrets,time
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 ROOT=pathlib.Path(__file__).resolve().parents[1];CHECK=pathlib.Path('/home/ubuntu/ksa-men-checkpoints');URL='https://api.cloudflare.com/client/v4/accounts/c4bed103a44f2fc99adeb96126a0a9ff/d1/database/dd006d15-8b4c-4469-9809-af08cbb42ad4/query';HEADERS={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']}
+secret=os.environ.get('BACKUP_ENCRYPTION_KEY','').strip()
+if not secret:raise SystemExit('BACKUP_ENCRYPTION_KEY is required for encrypted production checkpoints; AUTH_SECRET cannot be used.')
 def query(sql):
  r=requests.post(URL,headers=HEADERS,json={'sql':sql,'params':[]},timeout=45).json()
  if not r.get('success'):raise RuntimeError('Snapshot read failed')
@@ -13,4 +17,4 @@ def table(name):
  if not name.replace('_','').isalnum():raise RuntimeError('Unsafe table name')
  return name,query('SELECT * FROM '+name)
 with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:tables=dict(ex.map(table,names))
-data={'format':'ksa-men-backup-v1','createdAt':int(time.time()),'reason':'pre-completion','tables':tables,'schema':schema,'excluded':excluded,'mediaImmutable':True};plain=json.dumps(data,ensure_ascii=False).encode();sha=hashlib.sha256(plain).hexdigest();secret=next(line.split('=',1)[1] for line in (ROOT/'.dev.vars').read_text().splitlines() if line.startswith('AUTH_SECRET='));key=hashlib.sha256((secret+':ksa-backup-v1').encode()).digest();iv=secrets.token_bytes(12);stamp=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime());path=CHECK/('snapshot-'+stamp+'.ksab');path.write_bytes(iv+AESGCM(key).encrypt(iv,plain,None));path.chmod(0o600);meta=path.with_suffix('.metadata.json');meta.write_text(json.dumps({'snapshot':str(path),'sha256':sha,'tableCounts':{k:len(v) for k,v in tables.items()}},indent=2)+'\n');meta.chmod(0o600);(CHECK/'snapshot-latest.json').write_text(json.dumps({'snapshot':str(path),'metadata':str(meta)}));(CHECK/'snapshot-latest.json').chmod(0o600);print('Encrypted production checkpoint:',path.name,'tables:',len(tables))
+data={'format':'ksa-men-backup-v2','createdAt':int(time.time()),'reason':'pre-migration','tables':tables,'schema':schema,'excluded':excluded,'mediaImmutable':True,'keyId':hashlib.sha256(secret.encode()).hexdigest()[:16]};plain=json.dumps(data,ensure_ascii=False).encode();sha=hashlib.sha256(plain).hexdigest();key=hashlib.sha256(secret.encode()).digest();iv=secrets.token_bytes(12);stamp=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime());path=CHECK/('snapshot-'+stamp+'.ksab');path.write_bytes(b'KSA2'+iv+AESGCM(key).encrypt(iv,plain,None));path.chmod(0o600);meta=path.with_suffix('.metadata.json');meta.write_text(json.dumps({'snapshot':str(path),'sha256':sha,'tableCounts':{k:len(v) for k,v in tables.items()},'format':'ksa-men-backup-v2','keyId':data['keyId']},indent=2)+'\n');meta.chmod(0o600);(CHECK/'snapshot-latest.json').write_text(json.dumps({'snapshot':str(path),'metadata':str(meta)}));(CHECK/'snapshot-latest.json').chmod(0o600);print('Encrypted production checkpoint:',path.name,'tables:',len(tables))

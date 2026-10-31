@@ -11,6 +11,7 @@ import { registerBusiness } from './business';
 import { registerOperations } from './operations';
 import { registerIntelligence, fetchRadar } from './intelligence';
 import { registerPublic, publishedForHost, personalGate } from './public';
+import { runDataLifecycle } from './lifecycle';
 
 const app = new Hono<Bindings>();
 const escape = (text: string) => text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!));
@@ -143,6 +144,7 @@ export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(fetchRadar(env));
+    ctx.waitUntil(runDataLifecycle(env));
     if (new Date(event.scheduledTime).getUTCHours() === 0) ctx.waitUntil(makeBackup(env));
   },
 };

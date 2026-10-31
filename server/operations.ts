@@ -1,6 +1,6 @@
 import { HTTPException } from "hono/http-exception";
 import type { App, Ctx } from "./core";
-import { all, audit, finance, fresh, hashSecret, me, now, one, role, run, siteFor, uid } from "./core";
+import { all, audit, auditRowHash, finance, fresh, hashSecret, me, now, one, role, run, siteFor, uid } from "./core";
 
 type Actor = {
   id: number;
@@ -633,6 +633,7 @@ export function registerOperations(app: App): void {
 
     if (action === "status") {
       const user = managerOrOwner(c);
+      fresh(c);
       await userInManagerScope(c, targetId);
       const requestedStatus = text(body.status, "status", { max: 16 }).toLowerCase();
       const status = requestedStatus === "approved" || requestedStatus === "published" ? "active" : requestedStatus;
@@ -648,6 +649,7 @@ export function registerOperations(app: App): void {
 
     if (action === "grant") {
       const operator = managerOrOwner(c);
+      fresh(c);
       await userInManagerScope(c, targetId);
       const days = integer(body.days, "days", 1, 36_500);
       const target = await one<{ id: number }>(c, "SELECT id FROM users WHERE id=?", targetId);
@@ -673,6 +675,7 @@ export function registerOperations(app: App): void {
 
     if (action === "service") {
       managerOrOwner(c);
+      fresh(c);
       await userInManagerScope(c, targetId);
       const key = text(body.key, "service key", { max: 96 });
       const requestedMode = text(body.mode, "service mode", { max: 16 }).toLowerCase();
@@ -702,6 +705,7 @@ export function registerOperations(app: App): void {
 
     if (action === "branding") {
       managerOrOwner(c);
+      fresh(c);
       await userInManagerScope(c, targetId);
       if (body.key !== undefined && body.key !== "platform_branding") fail(400, "Branding key is invalid", "invalid_input");
       const suppliedSiteId = body.siteId === undefined || body.siteId === null || body.siteId === "" ? null : text(body.siteId, "siteId", { max: 128 });
@@ -794,6 +798,7 @@ export function registerOperations(app: App): void {
     );
     if (!review) fail(404, "Review not found", "not_found");
     const reviewer = await reviewScope(c, review);
+    fresh(c);
     if (review.user_id === reviewer.id) {
       fail(403, "You cannot decide a review you submitted; an independent owner, manager, or moderator must review it", "reviewer_submitter_conflict");
     }
@@ -1218,6 +1223,8 @@ export function registerOperations(app: App): void {
   });
 
   app.post("/api/admin/notifications", async (c) => {
+    managerOrOwner(c);
+    fresh(c);
     const body = await input(c);
     const recipients = await notificationTargets(c, body.recipient);
     const title = text(body.title, "title", { max: 200 });
@@ -1230,6 +1237,7 @@ export function registerOperations(app: App): void {
 
   app.get("/api/admin/audit", async (c) => {
     owner(c);
+    fresh(c);
     const limit = integer(c.req.query("limit") ?? "100", "limit", 1, 200);
     const before = c.req.query("before") ? integer(c.req.query("before"), "before", 1) : Number.MAX_SAFE_INTEGER;
     const auditRows = await all<Record<string, unknown>>(
@@ -1241,6 +1249,18 @@ export function registerOperations(app: App): void {
       limit,
     );
     return c.json({ audit: auditRows.map((entry) => ({ ...entry, detail: parseJson(String(entry.detail ?? "")) ?? {} })) });
+  });
+
+  app.get("/api/admin/audit/verify", async (c) => {
+    owner(c); fresh(c);
+    const state = await one<{anchor_audit_id:number;last_audit_id:number;last_hash:string}>(c, "SELECT anchor_audit_id,last_audit_id,last_hash FROM audit_chain_state WHERE chain_name='primary'");
+    if (!state) fail(409, "Audit chain is not initialised", "audit_chain_missing");
+    const rows = await all<{id:number;actor_id:number|null;action:string;target:string;detail:string;created_at:number;prev_hash:string;row_hash:string}>(c, "SELECT id,actor_id,action,target,detail,created_at,prev_hash,row_hash FROM audit WHERE id>? ORDER BY id", state.anchor_audit_id);
+    let previous = `legacy-anchor-v1:${state.anchor_audit_id}`; let intact = true;
+    for (const row of rows) { const expected=await auditRowHash(previous,row.actor_id,row.action,row.target,row.detail,row.created_at); if (row.prev_hash !== previous || row.row_hash !== expected) { intact = false; break; } previous = row.row_hash; }
+    if (previous !== state.last_hash) intact = false;
+    await audit(c, "audit.verify", "primary", { rows: rows.length, intact });
+    return c.json({ intact, anchorAuditId: state.anchor_audit_id, verifiedRows: rows.length, lastAuditId: state.last_audit_id });
   });
 
   app.get("/api/admin/economics", async (c) => {

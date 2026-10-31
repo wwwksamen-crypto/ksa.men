@@ -12,7 +12,10 @@ import {
   service,
   serviceState,
   uid,
+  recordConsent,
+  withdrawConsent,
 } from './core';
+import { hideMyPublicPresence, requestDeletionLifecycle } from './lifecycle';
 
 type Json = Record<string, unknown>;
 type SiteRow = {
@@ -1014,6 +1017,8 @@ export function registerBusiness(app: App): void {
       allow_contact: profile.allowContact ? 1 : 0,
       updated_at: updatedAt,
     };
+    if (profile.allowContact) await recordConsent(c, 'contact', 'profile-privacy', true);
+    else await withdrawConsent(c, 'contact', 'profile-privacy');
     await audit(c, 'site.draft.save', site.id, { version: saved.draft_version });
     return c.json({ site: toSite(saved), version: saved.draft_version, savedAt: updatedAt });
   });
@@ -1064,6 +1069,7 @@ export function registerBusiness(app: App): void {
     }
     const review = await one<Record<string, unknown>>(c, 'SELECT * FROM reviews WHERE id=?', reviewId);
     if (!review) apiError(500, 'Review request could not be loaded', 'REVIEW_CREATE_FAILED');
+    await recordConsent(c, 'public_profile', 'review-submission', true);
     await audit(c, 'site.submit', site.id, { reviewId, draftVersion: site.draft_version });
     return c.json({ review: toReview(review) }, 201);
   });
@@ -1504,20 +1510,19 @@ export function registerBusiness(app: App): void {
     return c.json({ handover: { id, siteId: handover.site_id, status: 'accepted', acceptedAt, owner: `C${userId}`, manager: `C${userId}` } });
   });
 
-  app.post('/api/deletion-request', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    const userId = Number(user.id);
-    const body = await requestBody(c);
-    const reason = asString(body.reason, 'reason', 1000);
-    const pending = await one<{ id: string; created_at: number }>(c, "SELECT id,created_at FROM deletion_requests WHERE user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1", userId);
-    if (pending) return c.json({ request: { id: pending.id, status: 'pending', createdAt: Number(pending.created_at) }, idempotent: true });
-    const id = uid();
-    const createdAt = now();
-    await run(c, 'INSERT INTO deletion_requests(id,user_id,reason,status,created_at) VALUES(?,?,?,\'pending\',?)', id, userId, reason, createdAt);
-    await audit(c, 'account.deletion.request', id, { reasonProvided: Boolean(reason) });
-    return c.json({ request: { id, status: 'pending', createdAt }, idempotent: false }, 201);
+  app.post('/api/privacy/hide', async (c) => {
+    const result = await hideMyPublicPresence(c);
+    return c.json({ ok: true, ...result });
   });
 
+  app.post('/api/deletion-request', async (c) => {
+    const body = await requestBody(c);
+    const action = body.action === undefined ? 'archive' : asString(body.action, 'action', 16, true).toLowerCase();
+    if (!['hide','archive','schedule','destroy'].includes(action)) apiError(422, 'Unsupported privacy action', 'INVALID_ACTION');
+    const scheduledFor = body.scheduledFor === undefined || body.scheduledFor === null ? undefined : asInteger(body.scheduledFor, 'scheduledFor', now()+1);
+    const result = await requestDeletionLifecycle(c, action as 'hide'|'archive'|'schedule'|'destroy', asString(body.reason, 'reason', 1000), scheduledFor, body.affirmation === true);
+    return c.json(result, result.idempotent ? 200 : 201);
+  });
   app.get('/api/analytics', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);

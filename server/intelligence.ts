@@ -1,7 +1,7 @@
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
-import { all, audit, me, now, one, role, run, service, siteFor, type App, type Env } from './core';
+import { all, audit, me, now, one, role, run, service, siteFor, recordConsent, type App, type Env } from './core';
 
 const MODEL = '@cf/meta/m2m100-1.2b';
 const WEEK_SECONDS = 7 * 24 * 60 * 60;
@@ -697,6 +697,7 @@ export function registerIntelligence(app: App): void {
     const user = me(c);
     await service(c, 'translation');
     const request = translationRequest.parse(await c.req.json());
+    await recordConsent(c, 'translation', 'translation-request', request.consent);
     const site = await siteFor(c, request.siteId) as { id: string; draft: string; draft_version: number; searchable: number; allow_contact: number };
     let draft: JsonRecord;
     try {
