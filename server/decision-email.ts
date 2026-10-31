@@ -1,9 +1,14 @@
 import type { Env } from './core';
 
-export type DecisionEmailInput = {
+export type TransactionalEmailInput = {
   to: string;
-  name: string;
   subject: string;
+  html: string;
+  text?: string;
+};
+
+export type DecisionEmailInput = Omit<TransactionalEmailInput, 'html' | 'text'> & {
+  name: string;
   title: string;
   message: string;
   actionLabel: string;
@@ -29,11 +34,11 @@ function emailHtml(input: DecisionEmailInput): string {
 }
 
 /**
- * Delivers a decision message after its authoritative DB decision and in-app notice exist.
- * Cloudflare Email is a secondary route: the source never treats either provider as sent until its call succeeds.
+ * Tries Resend first, then the configured native Cloudflare Email binding.
+ * The caller remains responsible for its authoritative database action; a provider
+ * failure is never presented to a member as implementation detail.
  */
-export async function deliverDecisionEmail(env: Env, input: DecisionEmailInput): Promise<DeliveryResult> {
-  const html = emailHtml(input);
+export async function deliverTransactionalEmail(env: Env, input: TransactionalEmailInput): Promise<DeliveryResult> {
   const from = env.DECISION_EMAIL_FROM?.trim() || 'KSA.MEN <auth@ksa.men>';
 
   if (env.RESEND_API_KEY?.trim()) {
@@ -43,25 +48,34 @@ export async function deliverDecisionEmail(env: Env, input: DecisionEmailInput):
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, to: [input.to], subject: input.subject, html }),
+        body: JSON.stringify({ from, to: [input.to], subject: input.subject, html: input.html, text: input.text }),
         signal: controller.signal,
       });
       if (response.ok) return { delivered: true, channel: 'resend' };
     } catch {
-      // The stored in-app notification remains authoritative; try only the configured fallback.
+      // Continue to the native backup route without surfacing provider internals.
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  const fallback = env.CLOUDFLARE_EMAIL;
-  if (fallback) {
+  if (env.CLOUDFLARE_EMAIL) {
     try {
-      await fallback.send({ to: input.to, from, subject: input.subject, html, text: `${input.title}\n\n${input.message}\n\n${input.actionUrl}` });
+      await env.CLOUDFLARE_EMAIL.send({ to: input.to, from, subject: input.subject, html: input.html, text: input.text });
       return { delivered: true, channel: 'cloudflare_email' };
     } catch {
-      // Never surface provider internals to the member or rollback an already-recorded decision.
+      // The caller exposes a clear service-level message only if both routes fail.
     }
   }
   return { delivered: false, channel: 'unavailable' };
+}
+
+/** Delivers a decision after its authoritative DB decision and in-app notice exist. */
+export async function deliverDecisionEmail(env: Env, input: DecisionEmailInput): Promise<DeliveryResult> {
+  return deliverTransactionalEmail(env, {
+    to: input.to,
+    subject: input.subject,
+    html: emailHtml(input),
+    text: `${input.title}\n\n${input.message}\n\n${input.actionUrl}`,
+  });
 }

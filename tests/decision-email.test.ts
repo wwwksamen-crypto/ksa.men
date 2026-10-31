@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mail } from '../server/auth';
 import { deliverDecisionEmail } from '../server/decision-email';
 
 describe('decision email fallback', () => {
@@ -9,5 +10,12 @@ describe('decision email fallback', () => {
     });
     expect(result).toEqual({ delivered: true, channel: 'cloudflare_email' });
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: 'member@example.test', from: 'KSA.MEN <auth@ksa.men>', subject: 'قرار' }));
+  });
+
+  it('uses the same fallback for a verification code', async () => {
+    const send = vi.fn().mockResolvedValue({ messageId: 'cf-auth-code' });
+    const result = await mail({ env: { RESEND_API_KEY: '', CLOUDFLARE_EMAIL: { send } } } as any, 'new-member@example.test', '123456');
+    expect(result).toEqual({ delivered: true, channel: 'cloudflare_email' });
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: 'new-member@example.test', subject: 'رمز الدخول الآمن — KSA.MEN' }));
   });
 });

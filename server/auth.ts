@@ -3,6 +3,7 @@ import {now,uid,one,run,rate,hmac,digest,hashSecret,verifySecret,me,fresh,audit,
 import {HTTPException} from 'hono/http-exception';
 import {getCookie,setCookie,deleteCookie} from 'hono/cookie';
 import {z} from 'zod';
+import {deliverTransactionalEmail} from './decision-email';
 
 const emailSchema=z.string({error:'أدخل بريدك الإلكتروني'}).trim().email({message:'أدخل بريدًا إلكترونيًا صحيحًا'}).max(254,{message:'البريد الإلكتروني أطول من المسموح'}).transform(v=>v.toLowerCase());
 const pinSchema=z.string({error:'أدخل PIN من ٦ أرقام'}).regex(/^\d{6}$/,{message:'يجب أن يتكون PIN من ٦ أرقام'});
@@ -13,8 +14,9 @@ const requestSchema=z.object({
 });
 
 export async function mail(c:Ctx,email:string,code:string){
- const r=await fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:'Bearer '+c.env.RESEND_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({from:'KSA.MEN <auth@ksa.men>',to:[email],subject:'رمز الدخول الآمن — KSA.MEN',html:`<div dir="rtl" style="font-family:Arial;padding:28px;background:#f4f7f5"><h2 style="color:#006837">ظهور رقمي يليق بك</h2><p>رمز التحقق الخاص بك:</p><p style="font-size:32px;letter-spacing:8px;font-weight:bold">${code}</p><p>صالح لعشر دقائق، لمرة واحدة. لا تشاركه مع أحد.</p><p>إذا لم تطلب الدخول فتجاهل الرسالة.</p></div>`})});
- if(!r.ok)throw new HTTPException(503,{message:'تعذر إرسال رمز البريد، حاول بعد قليل'});return r.json();
+	 const html=`<div dir="rtl" style="font-family:Arial;padding:28px;background:#f4f7f5"><h2 style="color:#006837">ظهور رقمي يليق بك</h2><p>رمز التحقق الخاص بك:</p><p style="font-size:32px;letter-spacing:8px;font-weight:bold">${code}</p><p>صالح لعشر دقائق، لمرة واحدة. لا تشاركه مع أحد.</p><p>إذا لم تطلب الدخول فتجاهل الرسالة.</p></div>`;
+	 const result=await deliverTransactionalEmail(c.env,{to:email,subject:'رمز الدخول الآمن — KSA.MEN',html,text:`رمز التحقق الخاص بك: ${code}\nصالح لعشر دقائق، لمرة واحدة. لا تشاركه مع أحد.`});
+	 if(!result.delivered)throw new HTTPException(503,{message:'تعذر إرسال رمز البريد، حاول بعد قليل'});return result;
 }
 function deviceToken(c:Ctx){return getCookie(c,'__Host-ksa_device')||'';}
 async function currentDeviceId(c:Ctx){const token=deviceToken(c);return token?digest(token):'';}
