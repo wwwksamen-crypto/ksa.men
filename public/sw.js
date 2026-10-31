@@ -1,5 +1,6 @@
 /* Cache public application assets only; a storage failure must never break a valid network response. */
-const VERSION='ksa-static-revalidation-20261028-3';
+const VERSION='ksa-static-public-clean-20261031-1';
+const sensitivePublicDocument=pathname=>/(?:^|[-_/])(company|bank|iban|registration|commercial|certificate|document)(?:[-_./]|$)/i.test(pathname);
 self.addEventListener('install',event=>event.waitUntil(caches.open(VERSION).then(cache=>cache.add('/offline.html'))));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key.startsWith('ksa-static-')&&key!==VERSION).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));
 self.addEventListener('message',event=>{
@@ -13,7 +14,7 @@ self.addEventListener('fetch',event=>{
   event.respondWith(fetch(event.request,{cache:'no-store'}).catch(async()=>await caches.match('/offline.html')||new Response('أنت غير متصل. أعد الاتصال للمتابعة.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}})));
   return;
  }
- if(!url.pathname.startsWith('/assets/')||url.pathname.includes('company-')||url.pathname.includes('/media/'))return;
+ if(!url.pathname.startsWith('/assets/')||sensitivePublicDocument(url.pathname)||url.pathname.includes('/media/'))return;
  const immutable=/[-.][A-Za-z0-9_-]{8,}\.(?:js|css)$/.test(url.pathname);
  event.respondWith((async()=>{
   const cache=await caches.open(VERSION).catch(()=>null);

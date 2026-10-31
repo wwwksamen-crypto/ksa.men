@@ -538,3 +538,7 @@
 .admin-console .button:not(.button-quiet):not(.button-secondary){color:#fff}
 
 .admin-review-comparison>summary{cursor:pointer;list-style:revert;min-height:44px}.admin-review-comparison>summary:focus-visible{outline:2px solid var(--admin-accent);outline-offset:3px}.admin-review-comparison:not([open])>summary{margin-bottom:0}
+
+
+/* Phase 1 velvet continuity for the administration workspace. */
+.admin-console .card{background-image:linear-gradient(145deg,color-mix(in srgb,var(--admin-surface) 95%,var(--admin-green)),var(--admin-surface)),repeating-linear-gradient(125deg,color-mix(in srgb,var(--admin-accent) 4%,transparent) 0 1px,transparent 1px 8px)}

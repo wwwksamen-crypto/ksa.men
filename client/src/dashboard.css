@@ -867,3 +867,7 @@
 .dashboard .button:not(.button--quiet){color:#fff}
 
 .dashboard-received-invites{display:grid;gap:16px}.dashboard-received-invites>div{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.dashboard-received-invites strong{overflow-wrap:anywhere;min-width:0}
+
+
+/* Phase 1 velvet continuity for the member workspace. */
+.dashboard .card{background-image:linear-gradient(145deg,color-mix(in srgb,var(--dash-surface) 95%,var(--dash-green)),var(--dash-surface)),repeating-linear-gradient(125deg,color-mix(in srgb,var(--dash-accent) 4%,transparent) 0 1px,transparent 1px 8px)}

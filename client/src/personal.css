@@ -801,3 +801,8 @@ dialog.identity-lightbox::backdrop { background: #031009e8; backdrop-filter: blu
  .identity-hero__location{grid-column:1/-1;grid-row:4;margin:0}
  .identity-hero__actions{grid-column:1/-1;grid-row:5;margin-top:6px}
 }
+
+
+/* Phase 1 velvet continuity for each member-owned professional site. */
+.identity-page{background-image:radial-gradient(ellipse at 80% 0,color-mix(in srgb,var(--identity-green) 14%,transparent),transparent 45%),repeating-linear-gradient(125deg,color-mix(in srgb,var(--identity-accent) 4%,transparent) 0 1px,transparent 1px 8px)}
+.identity-page .identity-card,.identity-page .identity-section{background-image:linear-gradient(145deg,color-mix(in srgb,var(--identity-surface) 95%,var(--identity-green)),var(--identity-surface)),repeating-linear-gradient(125deg,color-mix(in srgb,var(--identity-accent) 4%,transparent) 0 1px,transparent 1px 8px);box-shadow:0 16px 40px color-mix(in srgb,var(--bg) 36%,transparent),inset 0 1px color-mix(in srgb,#fff 16%,transparent)}
