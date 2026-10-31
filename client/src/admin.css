@@ -542,3 +542,42 @@
 
 /* Phase 1 velvet continuity for the administration workspace. */
 .admin-console .card{background-image:linear-gradient(145deg,color-mix(in srgb,var(--admin-surface) 95%,var(--admin-green)),var(--admin-surface)),repeating-linear-gradient(125deg,color-mix(in srgb,var(--admin-accent) 4%,transparent) 0 1px,transparent 1px 8px)}
+
+/* Phase 4: owner decisions, membership governance, and trust centre. */
+.admin-console .admin-request-filter { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .32fr); gap: 13px; padding: 17px; }
+.admin-console .admin-membership-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.admin-console .admin-membership-card { display: grid; gap: 15px; padding: 18px; }
+.admin-console .admin-membership-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.admin-console .admin-membership-card h2 { margin: 2px 0; font-size: 1.08rem; overflow-wrap: anywhere; }
+.admin-console .admin-key-values.compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.admin-console .admin-member-note { margin: 0; padding: 11px 12px; border-inline-start: 2px solid var(--admin-gold); background: color-mix(in srgb, var(--admin-gold) 8%, transparent); line-height: 1.65; overflow-wrap: anywhere; }
+.admin-console .admin-site-decision { display: grid; gap: 11px; padding-top: 13px; border-top: 1px solid var(--admin-border); }
+.admin-console .admin-governance-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.admin-console .admin-governance-report,
+.admin-console .admin-ropa { padding: 19px; }
+.admin-console .admin-report-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 11px; margin: 15px 0 0; }
+.admin-console .admin-report-summary > div { min-width: 0; padding: 12px; border: 1px solid var(--admin-border); border-radius: 12px; background: color-mix(in srgb, var(--admin-surface-2) 58%, transparent); }
+.admin-console .admin-report-summary dt { color: var(--admin-muted); font-size: .76rem; }
+.admin-console .admin-report-summary dd { margin: 5px 0 0; color: var(--admin-text); font-weight: 800; overflow-wrap: anywhere; }
+.admin-console .admin-ropa-list { display: grid; gap: 8px; margin-top: 15px; }
+.admin-console .admin-ropa-list article { display: grid; grid-template-columns: minmax(160px, .55fr) minmax(0, 1fr) minmax(180px, .75fr); gap: 10px; align-items: baseline; padding: 11px 0; border-top: 1px solid var(--admin-border); }
+.admin-console .admin-ropa-list article:first-child { border-top: 0; }
+.admin-console .admin-ropa-list span,
+.admin-console .admin-ropa-list small { color: var(--admin-muted); overflow-wrap: anywhere; }
+
+@media (max-width: 900px) {
+  .admin-console .admin-membership-grid { grid-template-columns: 1fr; }
+  .admin-console .admin-governance-metrics,
+  .admin-console .admin-report-summary { grid-template-columns: 1fr 1fr; }
+  .admin-console .admin-ropa-list article { grid-template-columns: 1fr; gap: 3px; }
+}
+@media (max-width: 639px) {
+  .admin-console .admin-request-filter,
+  .admin-console .admin-governance-metrics,
+  .admin-console .admin-report-summary,
+  .admin-console .admin-key-values.compact { grid-template-columns: 1fr; }
+  .admin-console .admin-membership-card { padding: 15px; }
+  .admin-console .admin-membership-card > header { align-items: stretch; flex-direction: column; }
+  .admin-console .admin-membership-card .admin-actions { display: grid; grid-template-columns: 1fr; }
+  .admin-console .admin-membership-card .admin-actions .button { width: 100%; }
+}

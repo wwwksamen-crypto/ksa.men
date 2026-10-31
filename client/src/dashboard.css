@@ -937,3 +937,20 @@
   .dashboard-dictated-field--textarea .dashboard-voice-control { justify-self: end; margin-top: -48px; margin-inline-end: 6px; padding: 0; }
   .dashboard-voice-control small { max-width: 122px; }
 }
+
+/* Phase 4: member-led membership requests replace self-service payments. */
+.dashboard-membership-request { display: grid; gap: 15px; padding: clamp(18px, 3vw, 24px); }
+.dashboard-membership-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.dashboard-membership-actions .button { flex: 1 1 230px; min-height: 48px; }
+.dashboard-subscription .dashboard-request-history { display: grid; gap: 0; }
+.dashboard-subscription .dashboard-history-row { grid-template-columns: minmax(120px, .55fr) minmax(0, 1fr) auto auto; }
+.dashboard-status.approved { color: var(--dash-accent); }
+.dashboard-status.rejected { color: var(--dash-danger); }
+.dashboard-status.changes_requested { color: var(--dash-gold); }
+@media (max-width: 640px) {
+  .dashboard-membership-actions { display: grid; grid-template-columns: 1fr; }
+  .dashboard-membership-actions .button { width: 100%; }
+  .dashboard-subscription .dashboard-history-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .dashboard-subscription .dashboard-history-row p,
+  .dashboard-subscription .dashboard-history-row time { grid-column: 1 / -1; }
+}

@@ -21,7 +21,7 @@ import { api, useApp } from './lib';
 import './admin.css';
 
 type AdminRole = 'owner' | 'manager' | 'moderator';
-type AdminTab = 'overview' | 'users' | 'reviews' | 'payments' | 'services' | 'names' | 'content' | 'pricing' | 'lock' | 'economics' | 'audit' | 'backup';
+type AdminTab = 'overview' | 'users' | 'reviews' | 'membership' | 'payments' | 'services' | 'names' | 'content' | 'pricing' | 'lock' | 'economics' | 'audit' | 'backup' | 'governance';
 type TabGroup = 'workspace' | 'operations' | 'governance';
 type JsonRecord = Record<string, unknown>;
 type MaybeRecord = JsonRecord | null | undefined;
@@ -66,15 +66,16 @@ const tabs: AdminTabDefinition[] = [
   { id: 'overview', ar: 'نظرة تنفيذية', en: 'Overview', group: 'workspace', icon: LayoutDashboard, roles: ['owner', 'manager', 'moderator'] },
   { id: 'reviews', ar: 'المراجعات', en: 'Reviews', group: 'workspace', icon: ClipboardCheck, roles: ['owner', 'manager', 'moderator'] },
   { id: 'users', ar: 'المستخدمون', en: 'Users', group: 'workspace', icon: UsersRound, roles: ['owner', 'manager'] },
+  { id: 'membership', ar: 'طلبات العضوية', en: 'Membership requests', group: 'workspace', icon: ClipboardCheck, roles: ['owner'] },
   { id: 'payments', ar: 'المدفوعات', en: 'Payments', group: 'operations', icon: Banknote, roles: ['owner', 'manager'] },
   { id: 'services', ar: 'الخدمات', en: 'Services', group: 'operations', icon: Wrench, roles: ['owner', 'manager'] },
   { id: 'names', ar: 'الأسماء', en: 'Names', group: 'operations', icon: FileKey2, roles: ['owner'] },
   { id: 'content', ar: 'المحتوى', en: 'Content', group: 'operations', icon: BookOpen, roles: ['owner'] },
-  { id: 'pricing', ar: 'التسعير الداخلي', en: 'Internal pricing', group: 'operations', icon: Landmark, roles: ['owner'] },
   { id: 'lock', ar: 'قفل المنصة', en: 'Platform lock', group: 'governance', icon: LockKeyhole, roles: ['owner'] },
   { id: 'economics', ar: 'الاقتصاديات', en: 'Economics', group: 'governance', icon: Gauge, roles: ['owner'] },
   { id: 'audit', ar: 'سجل التدقيق', en: 'Audit', group: 'governance', icon: ShieldCheck, roles: ['owner'] },
   { id: 'backup', ar: 'النسخ الاحتياطي', en: 'Backup', group: 'governance', icon: Archive, roles: ['owner'] },
+  { id: 'governance', ar: 'الحوكمة ومؤشرات الجودة', en: 'Governance & quality', group: 'governance', icon: ShieldCheck, roles: ['owner'] },
 ];
 
 const contentSlugs = [
@@ -102,12 +103,12 @@ const overviewMetrics = [
   ['total_users', 'إجمالي المستخدمين', 'Total users'],
   ['published_sites', 'المواقع المنشورة', 'Published sites'],
   ['review_requests', 'طلبات المراجعة', 'Review requests'],
-  ['payment_requests', 'طلبات الدفع', 'Payment requests'],
+  ['membership_requests', 'طلبات العضوية', 'Membership requests'],
 ] as const;
 
 const overviewQueue = [
   ['review_requests', 'طلبات تحتاج مراجعة', 'Review requests awaiting a decision', 'reviews'],
-  ['payment_requests', 'طلبات دفع بانتظار المعالجة', 'Payment requests awaiting handling', 'payments'],
+  ['membership_requests', 'طلبات عضوية بانتظار القرار', 'Membership requests awaiting a decision', 'membership'],
   ['pending_sites', 'مواقع معلقة', 'Sites still pending', 'reviews'],
 ] as const;
 
@@ -142,7 +143,7 @@ function records(value: unknown): JsonRecord[] {
   if (Array.isArray(value)) return value.filter((item): item is JsonRecord => Boolean(record(item)));
   const object = record(value);
   if (!object) return [];
-  for (const key of ['items', 'users', 'reviews', 'payments', 'services', 'names', 'transfers', 'entries', 'audit', 'data', 'backups']) {
+  for (const key of ['items', 'users', 'reviews', 'requests', 'payments', 'services', 'names', 'transfers', 'entries', 'audit', 'data', 'backups']) {
     if (Array.isArray(object[key])) return records(object[key]);
   }
   return [];
@@ -314,6 +315,14 @@ export default function Admin() {
   const [paymentReasons, setPaymentReasons] = useState<Record<string, string>>({});
   const [paymentReversalReasons, setPaymentReversalReasons] = useState<Record<string, string>>({});
   const [reviewReasons, setReviewReasons] = useState<Record<string, string>>({});
+  const [siteReasons, setSiteReasons] = useState<Record<string, string>>({});
+  const [membershipReasons, setMembershipReasons] = useState<Record<string, string>>({});
+  const [membershipQuery, setMembershipQuery] = useState('');
+  const [membershipStatus, setMembershipStatus] = useState('pending');
+  const [governanceReport, setGovernanceReport] = useState<MaybeRecord>();
+  const [userQuery, setUserQuery] = useState('');
+  const [userStatus, setUserStatus] = useState('');
+  const [reviewQuery, setReviewQuery] = useState('');
   const [points, setPoints] = useState('');
   const [grantDays, setGrantDays] = useState('3');
   const [serviceKey, setServiceKey] = useState('');
@@ -390,8 +399,12 @@ export default function Admin() {
       ? [['overview', '/api/admin/overview']]
       : target === 'reviews'
         ? [['reviews', '/api/admin/reviews']]
+        : target === 'membership' && owner
+          ? [['membership', '/api/admin/subscription-requests']]
+          : target === 'governance' && owner
+            ? [['governance', '/api/admin/governance']]
         : target === 'users' && managerOrOwner
-          ? [['users', '/api/admin/users'], ['services', '/api/admin/services']]
+          ? [['users', '/api/admin/users?limit=100'], ['services', '/api/admin/services']]
           : target === 'payments' && financialOperator
             ? [['payments', '/api/admin/payments']]
             : target === 'services' && managerOrOwner
@@ -415,7 +428,7 @@ export default function Admin() {
       });
       if (Object.keys(next).length) setData((current) => ({ ...current, ...next }));
       const rejected = results.find((item): item is PromiseRejectedResult => item.status === 'rejected');
-      if (rejected) handleFailure(rejected.reason, false, target);
+      if (rejected) handleFailure(rejected.reason, target === 'membership' || target === 'governance', target);
     } finally {
       setLoadedTabs((current) => ({ ...current, [target]: true }));
       setLoadingTabs((current) => ({ ...current, [target]: false }));
@@ -462,12 +475,16 @@ export default function Admin() {
   }, [busy, tab]);
 
   const users = useMemo(() => records(data.users), [data.users]);
+  const filteredUsers = useMemo(() => { const query = userQuery.trim().toLowerCase(); return users.filter((item) => { const status = text(field(item, 'status'), '').toLowerCase(); const haystack = [field(item, 'name'), field(item, 'email'), field(item, 'id'), field(item, 'subdomain')].map((value) => text(value, '').toLowerCase()).join(' '); return (!userStatus || status === userStatus) && (!query || haystack.includes(query)); }); }, [userQuery, userStatus, users]);
   const reviews = useMemo(() => records(data.reviews), [data.reviews]);
+  const filteredReviews = useMemo(() => { const query = reviewQuery.trim().toLowerCase(); if (!query) return reviews; return reviews.filter((item) => [field(item, 'site_name'), field(item, 'submitter_name'), field(item, 'submitter_email'), field(item, 'user_id')].some((value) => text(value, '').toLowerCase().includes(query))); }, [reviewQuery, reviews]);
   const payments = useMemo(() => records(data.payments), [data.payments]);
   const services = useMemo(() => records(data.services), [data.services]);
   const names = useMemo(() => records(data.names), [data.names]);
   const transfers = useMemo(() => records(data.transfers), [data.transfers]);
   const audit = useMemo(() => records(data.audit), [data.audit]);
+  const membershipRequests = useMemo(() => records(data.membership), [data.membership]);
+  const governance = useMemo(() => record(data.governance)?.governance ?? record(data.governance), [data.governance]);
 
   useEffect(() => {
     setServicePolicies((current) => {
@@ -560,7 +577,7 @@ export default function Admin() {
     }), { fresh, success: label }).then((result) => { if (result !== undefined) setSelectedUser(null); });
   };
 
-  const decideReview = (review: JsonRecord, decision: 'approve' | 'reject') => {
+  const decideReview = (review: JsonRecord, decision: 'approve' | 'reject' | 'changes') => {
     const id = idOf(review);
     const reviewerId = text(user?.id, '');
     const submitterId = text(field(review, 'user_id', 'userId'), '');
@@ -570,13 +587,13 @@ export default function Admin() {
       return;
     }
     const reason = reviewReasons[id] ?? '';
-    if (decision === 'reject' && !reason.trim()) {
+    if ((decision === 'reject' || decision === 'changes') && !reason.trim()) {
       setError(tr('سبب الرفض مطلوب لحماية مسار المراجعة.', 'A rejection reason is required for the review trail.'));
       return;
     }
     void mutate(`review-${id}-${decision}`, () => api(`/api/admin/reviews/${encodeURIComponent(id)}/decision`, {
-      method: 'POST', body: JSON.stringify({ decision, reason }),
-    }), { fresh: true, success: decision === 'approve' ? tr('تم اعتماد اللقطة عبر قرار الخادم الذري.', 'The snapshot was approved through the server’s atomic decision.') : tr('تم رفض اللقطة مع حفظ السبب.', 'The snapshot was rejected with its reason recorded.') });
+      method: 'POST', body: JSON.stringify({ decision: decision === 'changes' ? 'reject' : decision, reason }),
+    }), { fresh: true, success: decision === 'approve' ? tr('تم اعتماد اللقطة ونشرها.', 'The snapshot was approved and published.') : decision === 'changes' ? tr('أُرسل طلب التعديل مع السبب.', 'The change request was sent with its reason.') : tr('تم رفض اللقطة مع حفظ السبب.', 'The snapshot was rejected with its reason recorded.') });
   };
 
   const decidePayment = (payment: JsonRecord, decision: 'approve' | 'reject') => {
@@ -605,6 +622,31 @@ export default function Admin() {
     void mutate(`payment-${id}-reverse`, () => api(`/api/admin/payments/${encodeURIComponent(id)}/reverse`, {
       method: 'POST', body: JSON.stringify({ justification }),
     }), { fresh: true, success: tr('سُجل الإبطال كتسوية صريحة.', 'The reversal was recorded as an explicit adjustment.') });
+  };
+
+  const decideSite = (review: JsonRecord, action: 'suspend' | 'delete_request') => {
+    const siteId = text(field(review, 'site_id', 'siteId'), '');
+    const reason = siteReasons[siteId] ?? reviewReasons[idOf(review)] ?? '';
+    if (!siteId || !reason.trim()) { setError(tr('اكتب سبب القرار أولاً.', 'Enter a reason for this decision first.')); return; }
+    void mutate(`site-${siteId}-${action}`, () => api(`/api/admin/sites/${encodeURIComponent(siteId)}/action`, { method: 'POST', body: JSON.stringify({ action, reason }) }), { fresh: true, success: action === 'suspend' ? tr('تم تعليق إتاحة الموقع وإبلاغ العضو.', 'Site availability was suspended and the member was notified.') : tr('تم تسجيل طلب معالجة البيانات وإخفاء الموقع.', 'The data-handling request was recorded and the site was hidden.'), reloadTab: 'reviews' });
+  };
+
+  const decideMembership = (request: JsonRecord, decision: 'approve' | 'reject' | 'changes_requested') => {
+    const id = idOf(request);
+    if (!id) return;
+    const reason = membershipReasons[id] ?? '';
+    if (decision !== 'approve' && !reason.trim()) { setError(tr('اكتب سبب القرار أولاً.', 'Enter a reason for this decision first.')); return; }
+    const kind = text(field(request, 'kind'), '');
+    void mutate(`membership-${id}-${decision}`, () => api(`/api/admin/subscription-requests/${encodeURIComponent(id)}/decision`, {
+      method: 'POST', body: JSON.stringify({ decision, reason, ...(kind === 'trial_extension' ? { days: 7 } : {}) }),
+    }), { fresh: true, success: decision === 'approve' ? (kind === 'annual_contact' ? tr('تم تفعيل العضوية السنوية لمدة عام وإبلاغ العضو.', 'The annual membership was activated for one year and the member was notified.') : tr('تم اعتماد تمديد الفترة المجانية وإبلاغ العضو.', 'The free-period extension was approved and the member was notified.')) : decision === 'changes_requested' ? tr('أُرسل طلب التوضيح إلى العضو.', 'The clarification request was sent to the member.') : tr('تم حفظ القرار وإبلاغ العضو.', 'The decision was recorded and the member was notified.'), reloadTab: 'membership' });
+  };
+
+  const generateGovernanceReport = () => {
+    void mutate('governance-report', () => api<unknown>('/api/admin/governance/report', { method: 'POST', body: JSON.stringify({ confirmed: true }) }), { fresh: true, reload: false, success: tr('تم إعداد تقرير الحوكمة وتوثيق إنشائه.', 'The governance report was prepared and its generation recorded.') }).then((result) => {
+      const report = record(result);
+      if (report) setGovernanceReport(record(report.report));
+    });
   };
 
   const switchTab = (next: AdminTab) => {
@@ -708,9 +750,10 @@ export default function Admin() {
   const renderUsers = () => (
     <div className="stack admin-stack">
       <section className="admin-section-intro"><div><h1 className="page-title">{tr('المستخدمون وإدارة التفويض', 'Users & delegation')}</h1><p className="muted">{tr('لا تظهر إلا الحسابات الواقعة في نطاق المشرف المسؤول. تعديل الدور والإسناد محصوران بالمالك، بينما يبقى تحقق الخادم هو الحاسم.', 'Only accounts in a responsible manager’s scope are returned. Role and assignment changes are owner-only; server enforcement remains decisive.')}</p></div><span className="admin-server-note">{tr('العرض لا يمنح صلاحية', 'Visibility does not grant permission')}</span></section>
+      <section className="card admin-request-filter"><label className="field"><span>{tr('البحث بالاسم أو البريد أو C# أو النطاق', 'Search name, email, C#, or subdomain')}</span><input value={userQuery} onChange={(event) => setUserQuery(event.target.value)} /></label><label className="field"><span>{tr('الحالة', 'Status')}</span><select value={userStatus} onChange={(event) => setUserStatus(event.target.value)}><option value="">{tr('كل الحالات', 'All statuses')}</option><option value="active">{tr('نشط', 'Active')}</option><option value="suspended">{tr('معلق', 'Suspended')}</option></select></label></section>
       <div className="admin-user-layout">
         <section className="admin-user-list stack">
-          {users.length ? users.map((item) => {
+          {filteredUsers.length ? filteredUsers.map((item) => {
             const id = idOf(item);
             const active = selectedUser && idOf(selectedUser) === id;
             return <button type="button" className={`card admin-user-card ${active ? 'active' : ''}`} key={id || text(field(item, 'email'))} onClick={() => setSelectedUser(item)}>
@@ -731,7 +774,8 @@ export default function Admin() {
   const renderReviews = () => (
     <div className="stack admin-stack">
       <section className="admin-section-intro"><div><h1 className="page-title">{tr('مراجعة اللقطات', 'Snapshot reviews')}</h1><p className="muted">{tr('تحقق من مقدم اللقطة وإصداراتها، ثم قارن النشر الحالي باللقطة المرسلة وافتح المعاينة المحمية قبل القرار.', 'Verify the submitter and versions, compare the current publication with the submitted snapshot, and open the protected preview before deciding.')}</p></div></section>
-      {reviews.length ? reviews.map((review) => {
+      <section className="card admin-request-filter"><label className="field"><span>{tr('البحث في طلبات المواقع', 'Search site requests')}</span><input value={reviewQuery} onChange={(event) => setReviewQuery(event.target.value)} placeholder={tr('اسم الموقع أو العضو أو البريد أو C#', 'Site, member, email, or C#')} /></label></section>
+      {filteredReviews.length ? filteredReviews.map((review) => {
         const id = idOf(review);
         const expanded = selectedReview && idOf(selectedReview) === id;
         const pending = isPendingReview(review);
@@ -741,8 +785,12 @@ export default function Admin() {
         const baseVersion = field(review, 'baseVersion', 'base_version');
         const currentPublishedVersion = field(review, 'currentPublishedVersion', 'current_published_version', 'publishedVersion', 'published_version');
         const stale = knownBoolean(field(review, 'isStale', 'is_stale'));
-        const reviewBusy = busy === `review-${id}-approve` || busy === `review-${id}-reject`;
+        const reviewBusy = busy === `review-${id}-approve` || busy === `review-${id}-reject` || busy === `review-${id}-changes`;
         const preview = text(field(review, 'preview_url', 'snapshot_url'), id ? `/api/admin/reviews/${encodeURIComponent(id)}/preview` : '');
+        const memberEmail = text(field(review, 'submitter_email', 'email'), '');
+        const memberWhatsapp = text(field(review, 'submitter_whatsapp', 'whatsapp')).replace(/\D/g, '');
+        const siteName = text(field(review, 'site_name'), '');
+        const publicSite = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(siteName) ? `https://${siteName}.ksa.men` : '';
         return <article className="card admin-review" key={id || text(field(review, 'submitted_at'))}>
           <div className="row admin-review-top"><div><h2>{text(field(review, 'site_name', 'name', 'title'))}</h2><p className="muted">{tr('المقدم', 'Submitted by')}: {text(field(review, 'submitter_name', 'user_name', 'email'))} · {asDate(field(review, 'submitted_at', 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(review, 'status'))}`}>{text(field(review, 'status', 'decision'), tr('قيد المراجعة', 'In review'))}</span></div>
           <dl className="admin-review-provenance" aria-label={tr('مصدر اللقطة وحالتها', 'Snapshot provenance and state')}>
@@ -757,35 +805,19 @@ export default function Admin() {
           <div className="admin-actions">
             <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء التفاصيل', 'Hide review details') : pending ? tr('فتح منطقة القرار', 'Open decision area') : tr('عرض تفاصيل القرار', 'View decision details')}</button>
             {preview && <a className="button button-quiet" href={preview} target="_blank" rel="noreferrer">{tr('فتح معاينة اللقطة المحمية', 'Open protected snapshot preview')}</a>}
+            {publicSite && <a className="button button-quiet" href={publicSite} target="_blank" rel="noreferrer">{tr('معاينة الموقع', 'Preview site')}</a>}
+            {memberEmail && <a className="button button-quiet" href={`mailto:${memberEmail}`}>{tr('إرسال بريد', 'Email member')}</a>}
+            {memberWhatsapp && <a className="button button-quiet" href={`https://wa.me/${memberWhatsapp}`} target="_blank" rel="noreferrer">{tr('فتح واتساب', 'Open WhatsApp')}</a>}
           </div>
           {selfSubmitted && <div className="admin-review-guard" role="note"><strong>{tr('يلزم مراجعة مستقلة', 'Independent review required')}</strong><span>{tr('هذه اللقطة مقدمة من حسابك؛ لا يمكنك اعتمادها أو رفضها.', 'This snapshot was submitted by your account, so you cannot approve or reject it.')}</span></div>}
-          {expanded && <div className="admin-review-detail stack">{pending ? <><label className="field"><span>{tr('سبب الرفض أو ملاحظة القرار', 'Rejection reason or decision note')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر ذري', 'Approve & publish atomically')}</button><button className="button button-danger" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div></> : <p className="admin-finality">{tr('لا تظهر أزرار القرار إلا عندما يعيد الخادم حالة «قيد المراجعة».', 'Decision controls are available only while the server returns a pending review.')}</p>}</div>}
+          {expanded && <div className="admin-review-detail stack">{pending ? <><label className="field"><span>{tr('سبب القرار أو طلب التعديل', 'Decision or change-request reason')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر ذري', 'Approve & publish atomically')}</button><button className="button button-secondary" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'changes')}>{tr('طلب تعديل', 'Request changes')}</button><button className="button button-danger" type="button" disabled={!id || selfSubmitted || reviewBusy} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div>{owner && <div className="admin-site-decision"><label className="field"><span>{tr('سبب تعليق الموقع أو طلب معالجة بياناته', 'Reason to suspend the site or request data handling')}</span><textarea rows={2} value={siteReasons[text(field(review, 'site_id', 'siteId'), '')] ?? ''} onChange={(event) => setSiteReasons((current) => ({ ...current, [text(field(review, 'site_id', 'siteId'), '')]: event.target.value }))} /></label><div className="admin-actions"><button className="button button-secondary" type="button" onClick={() => decideSite(review, 'suspend')}>{tr('تعليق الموقع بسبب', 'Suspend with reason')}</button><button className="button button-danger" type="button" onClick={() => decideSite(review, 'delete_request')}>{tr('تسجيل طلب معالجة البيانات', 'Record a data-handling request')}</button></div></div>}</> : <p className="admin-finality">{tr('لا تظهر أزرار القرار إلا عندما يعيد الخادم حالة «قيد المراجعة».', 'Decision controls are available only while the server returns a pending review.')}</p>}</div>}
         </article>;
       }) : <Empty title={tr('لا توجد لقطات قيد المراجعة.', 'No snapshots are awaiting review.')} />}
     </div>
   );
 
   const renderPayments = () => (
-    <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('طلبات الدفع الخاصة', 'Private payment requests')}</h1><p className="muted">{tr('رابط الإيصال يبنى فقط من receiptId الذي أعاده الخادم ويخضع لمسار وسائط مصادق عليه. الاعتماد والإبطال قرارات مالية مسجلة وليسا تعديلاً صامتاً.', 'A receipt link is built only from a server-returned receiptId and is protected by the authenticated media route. Approval and reversal are ledgered financial decisions, not silent edits.')}</p></div></section>
-      <div className="admin-payment-grid">
-        {payments.length ? payments.map((payment) => {
-          const id = idOf(payment);
-          const receiptUrl = text(field(payment, 'receipt_url', 'private_receipt_url'), '');
-          const receiptId = text(field(payment, 'receipt_id', 'receiptId'), '');
-          const protectedReceipt = receiptUrl || (receiptId ? `/api/media/${encodeURIComponent(receiptId)}` : '');
-          const reversed = Boolean(field(payment, 'reversed_at', 'reversal_id'));
-          return <article className="card admin-payment" key={id || text(field(payment, 'created_at'))}>
-            <div className="row"><div><h2>{tr('طلب', 'Request')} #{id}</h2><p className="muted">C{text(field(payment, 'user_id', 'customer_id'))} · {asDate(field(payment, 'created_at', 'submitted_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(payment, 'status', 'decision'))}`}>{text(field(payment, 'status', 'decision'))}</span></div>
-            <div className="admin-key-values compact"><div><span>{tr('المبلغ', 'Amount')}</span><strong>{text(field(payment, 'amount'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('الأيام', 'Days')}</span><strong>{text(field(payment, 'days'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('الملاحظات', 'Notes')}</span><strong>{text(field(payment, 'notes'))}</strong></div></div>
-            <div className="admin-receipt-safe">{protectedReceipt ? <a className="button button-quiet" href={protectedReceipt} target="_blank" rel="noreferrer">{tr('فتح الإيصال الخاص', 'Open private receipt')}</a> : <span className="muted">{tr('لم يعد الخادم receiptId أو رابط إيصال مصادقاً لهذا الطلب.', 'The server did not return a receiptId or authenticated receipt URL for this request.')}</span>}</div>
-            {isPendingPayment(payment) && <><label className="field"><span>{tr('سبب الرفض أو ملاحظة الاعتماد', 'Rejection reason or approval note')}</span><textarea rows={2} value={paymentReasons[id] ?? ''} onChange={(event) => setPaymentReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" disabled={busy === `payment-${id}-approve`} type="button" onClick={() => decidePayment(payment, 'approve')}>{tr('اعتماد مرة واحدة', 'Approve once')}</button><button className="button button-danger" disabled={busy === `payment-${id}-reject`} type="button" onClick={() => decidePayment(payment, 'reject')}>{tr('رفض', 'Reject')}</button></div></>}
-            {isApprovedPayment(payment) && !reversed && <div className="admin-reversal"><label className="field"><span>{tr('مبرر إبطال الاعتماد (٨ أحرف على الأقل)', 'Approval reversal justification (8 characters minimum)')}</span><textarea rows={2} value={paymentReversalReasons[id] ?? ''} onChange={(event) => setPaymentReversalReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><button className="button button-danger" disabled={busy === `payment-${id}-reverse`} type="button" onClick={() => reversePayment(payment)}>{tr('إبطال بتسوية صريحة', 'Reverse with explicit adjustment')}</button></div>}
-            {!isPendingPayment(payment) && <p className="admin-finality">{reversed ? tr('سُجل الإبطال ولا يمكن تكراره.', 'A reversal is recorded and cannot be repeated.') : tr('القرار النهائي لا يعاد من أزرار الاعتماد أو الرفض.', 'A final decision is unavailable from the approval or rejection controls.')}</p>}
-          </article>;
-        }) : <Empty title={tr('لا توجد طلبات دفع ضمن التفويض المالي المتاح.', 'No payment requests were returned in the available financial scope.')} />}
-      </div>
-    </div>
+    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('سجل الدفعات التاريخي', 'Historical payment record')}</h1><p className="muted">{tr('هذه السجلات محفوظة للمراجعة الداخلية فقط. طلبات العضوية الجديدة لا تستقبل سعراً أو دفعة أو إيصالاً داخل المنصة.', 'These records are retained only for internal review. New membership requests do not collect a price, payment, or receipt inside the platform.')}</p></div></section><div className="admin-payment-grid">{payments.length ? payments.map((payment) => <article className="card admin-payment" key={idOf(payment)}><div className="row"><div><h2>{tr('سجل موثق', 'Documented record')} #{idOf(payment)}</h2><p className="muted">C{text(field(payment, 'user_id', 'customer_id'))} · {asDate(field(payment, 'created_at', 'submitted_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(payment, 'status', 'decision'))}`}>{text(field(payment, 'status', 'decision'))}</span></div></article>) : <Empty title={tr('لا توجد سجلات دفعات ضمن التفويض المتاح.', 'No payment records were returned in the available authorization scope.')} />}</div></div>
   );
 
   const renderServices = () => (
@@ -849,6 +881,32 @@ export default function Admin() {
     <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('اقتصاديات المنصة', 'Platform economics')}</h1><p className="muted">{tr('كل مؤشر يأتي من بيانات النظام. التكلفة أو الربحية غير المتاحة تبقى «غير متاح» ولا تتحول إلى تقدير.', 'Every metric comes from system data. An unavailable cost or profitability value remains unavailable and is never turned into an estimate.')}</p></div></section><section className="admin-metrics">{economicMetrics.map(([key, ar, en]) => <article className="admin-metric card" key={key}><span className="muted">{tr(ar, en)}</span><strong>{text(valueAt(data.economics, key), tr('غير متاح', 'Unavailable'))}</strong></article>)}</section><section className="admin-grid admin-grid-2"><div className="card stack"><h2>{tr('تسجيل مصروف يدوي', 'Record a manual expense')}</h2><p className="muted">{tr('الإدخال يضيف سجلاً تدقيقياً ولا يختلق تكلفة استهلاك.', 'This input adds an audit record; it does not fabricate a usage cost.')}</p><form className="stack" onSubmit={(event) => { event.preventDefault(); const amount = Number(expense.amount); if (!expense.label.trim() || !Number.isFinite(amount) || amount <= 0) return; void mutate('expense', () => api('/api/admin/expenses', { method: 'POST', body: JSON.stringify({ label: expense.label, amount, notes: expense.notes }) }), { fresh: true, success: tr('تم تسجيل المصروف.', 'The expense was recorded.') }).then((result) => { if (result !== undefined) setExpense({ label: '', amount: '', notes: '' }); }); }}><label className="field"><span>{tr('الوصف', 'Description')}</span><input value={expense.label} onChange={(event) => setExpense((value) => ({ ...value, label: event.target.value }))} /></label><label className="field"><span>{tr('المبلغ', 'Amount')}</span><input inputMode="decimal" value={expense.amount} onChange={(event) => setExpense((value) => ({ ...value, amount: event.target.value }))} /></label><label className="field"><span>{tr('ملاحظات', 'Notes')}</span><textarea rows={2} value={expense.notes} onChange={(event) => setExpense((value) => ({ ...value, notes: event.target.value }))} /></label><button className="button" disabled={busy === 'expense'}>{tr('تسجيل المصروف', 'Record expense')}</button></form></div><div className="card stack"><h2>{tr('خزينة النقاط', 'Points treasury')}</h2><p className="muted">{tr('إصدار النقاط هدفه مستخدم محدد فقط، يمر عبر دفتر الأستاذ ويتطلب التفويض المالي الفعلي.', 'Point issuance is targeted to one user, passes through the ledger and requires actual financial authorization.')}</p><button className="button" type="button" disabled={!financialOperator} onClick={() => switchTab('users')}>{financialOperator ? tr('فتح إصدار النقاط للمستخدم', 'Open user point issuance') : tr('تفويض مالي مطلوب', 'Financial delegation required')}</button><p className="admin-finality">{tr('لا يوجد إصدار جماعي أو رصيد تخميني في هذه الواجهة.', 'There is no bulk issuance or estimated balance in this console.')}</p></div></section></div>
   );
 
+  const renderMembership = () => {
+    const matching = membershipRequests.filter((request) => {
+      const status = text(field(request, 'status'), '').toLowerCase();
+      const haystack = [field(request, 'name'), field(request, 'email'), field(request, 'user_id'), field(request, 'subdomain'), field(request, 'kind')].map((value) => text(value, '').toLowerCase()).join(' ');
+      return (!membershipStatus || status === membershipStatus) && (!membershipQuery.trim() || haystack.includes(membershipQuery.trim().toLowerCase()));
+    });
+    return <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('طلبات العضوية', 'Membership requests')}</h1><p className="muted">{tr('اعتمد تمديد الفترة المجانية أو فعّل العضوية السنوية بعد تحققك الخارجي. كل قرار يصل للعضو في لوحة حسابه وبريده عند تهيئة قناة الإرسال.', 'Approve a free-period extension or activate annual membership after your external verification. Every decision reaches the member in the account console and by email when delivery is configured.')}</p></div></section><section className="card admin-request-filter"><label className="field"><span>{tr('البحث بالاسم أو البريد أو C# أو النطاق', 'Search name, email, C#, or subdomain')}</span><input value={membershipQuery} onChange={(event) => setMembershipQuery(event.target.value)} /></label><label className="field"><span>{tr('الحالة', 'Status')}</span><select value={membershipStatus} onChange={(event) => setMembershipStatus(event.target.value)}><option value="pending">{tr('قيد المراجعة', 'Pending')}</option><option value="approved">{tr('معتمد', 'Approved')}</option><option value="changes_requested">{tr('مطلوب توضيح', 'Changes requested')}</option><option value="rejected">{tr('مرفوض', 'Rejected')}</option><option value="">{tr('كل الحالات', 'All statuses')}</option></select></label></section><section className="admin-membership-grid">{matching.length ? matching.map((request) => { const id = idOf(request); const pending = text(field(request, 'status'), '').toLowerCase() === 'pending'; const annual = field(request, 'kind') === 'annual_contact'; return <article className="card admin-membership-card" key={id}><header><div><p className="admin-eyebrow">{annual ? tr('عضوية سنوية', 'ANNUAL MEMBERSHIP') : tr('تمديد الفترة المجانية', 'FREE PERIOD EXTENSION')}</p><h2>{text(field(request, 'name', 'email'))}</h2><p className="muted">C{text(field(request, 'user_id'))} · {text(field(request, 'email'))}</p></div><span className={`admin-status ${statusTone(field(request, 'status'))}`}>{text(field(request, 'status'))}</span></header><dl className="admin-key-values compact"><div><span>{tr('النطاق', 'Subdomain')}</span><strong>{text(field(request, 'subdomain'))}</strong></div><div><span>{tr('وقت الطلب', 'Requested')}</span><strong>{asDate(field(request, 'created_at'), lang)}</strong></div><div><span>{tr('نهاية الفترة الحالية', 'Current entitlement ends')}</span><strong>{asDate(field(request, 'entitlement_until', 'trial_until'), lang)}</strong></div></dl>{text(field(request, 'member_note'), '') !== '' && <p className="admin-member-note">{text(field(request, 'member_note'))}</p>}{pending ? <><label className="field"><span>{tr('سبب القرار أو التوضيح', 'Decision or clarification reason')}</span><textarea rows={2} value={membershipReasons[id] ?? ''} onChange={(event) => setMembershipReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={busy === `membership-${id}-approve`} onClick={() => decideMembership(request, 'approve')}>{annual ? tr('تفعيل سنة', 'Activate one year') : tr('اعتماد التمديد', 'Approve extension')}</button><button className="button button-secondary" type="button" disabled={Boolean(busy?.startsWith(`membership-${id}-`))} onClick={() => decideMembership(request, 'changes_requested')}>{tr('طلب توضيح', 'Request clarification')}</button><button className="button button-danger" type="button" disabled={Boolean(busy?.startsWith(`membership-${id}-`))} onClick={() => decideMembership(request, 'reject')}>{tr('رفض', 'Reject')}</button></div></> : <p className="admin-finality">{text(field(request, 'admin_reason'), tr('تم تسجيل القرار.', 'The decision is recorded.'))}</p>}</article>; }) : <Empty title={tr('لا توجد طلبات مطابقة للفلترة الحالية.', 'No requests match the current filter.')} />}</section></div>;
+  };
+
+  const renderGovernance = () => {
+    const summary = (governance ?? {}) as JsonRecord;
+    const backup = record(summary?.backup);
+    const chain = record(summary?.auditChain);
+    const dsar = record(summary?.dsar);
+    const ropa = Array.isArray(summary?.ropa) ? summary?.ropa as JsonRecord[] : [];
+    const averageSeconds = Number(dsar?.averageResolutionSeconds);
+    const averageDuration = Number.isFinite(averageSeconds) && averageSeconds >= 0
+      ? averageSeconds >= 86_400 ? `${(averageSeconds / 86_400).toFixed(1)} ${tr('يوم', 'days')}` : `${Math.max(1, Math.round(averageSeconds / 3_600))} ${tr('ساعة', 'hours')}`
+      : tr('غير متاح', 'Unavailable');
+    const reportSummary = record(governanceReport?.governance);
+    const reportBackup = record(reportSummary?.backup);
+    const reportChain = record(reportSummary?.auditChain);
+    const reportDsar = record(reportSummary?.dsar);
+    return <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('الحوكمة ومؤشرات الجودة', 'Governance & quality')}</h1><p className="muted">{tr('ملخص خاص بالمالك عن سلامة السجل والنسخ وطلبات الحقوق وسجل أنشطة المعالجة. لا يعرض محتوى الملفات أو المحادثات الخاصة.', 'An owner-only summary of trail integrity, backups, rights requests, and processing activities. It does not display private file or conversation content.')}</p></div></section><section className="admin-metrics admin-governance-metrics"><article className="admin-metric card"><span>{tr('سلامة سلسلة السجل', 'Audit-chain integrity')}</span><strong>{chain?.valid === true ? tr('سليمة', 'Valid') : chain?.available === false ? tr('غير متاحة', 'Unavailable') : tr('تحتاج مراجعة', 'Needs review')}</strong><small>{tr('صفوف مفحوصة', 'Rows checked')}: {text(chain?.checkedRows)}</small></article><article className="admin-metric card"><span>{tr('آخر نسخة محفوظة', 'Latest saved backup')}</span><strong>{backup?.ageSeconds === null || backup?.ageSeconds === undefined ? tr('غير متاح', 'Unavailable') : `${Math.floor(Number(backup.ageSeconds) / 3600)} ${tr('ساعة', 'hours')}`}</strong><small>{tr('عدد النسخ', 'Snapshots')}: {text(backup?.count)}</small></article><article className="admin-metric card"><span>{tr('طلبات الحقوق والخصوصية', 'Rights & privacy requests')}</span><strong>{text(dsar?.total, '0')}</strong><small>{tr('متوسط مدة المعالجة', 'Average handling time')}: {averageDuration}</small></article></section><section className="card admin-governance-report"><div className="admin-section-heading"><div><h2>{tr('تقرير امتثال رسمي محدد النطاق', 'Official scoped compliance report')}</h2><p className="muted">{tr('يُنشأ الملخص بعد إعادة التحقق ويُسجل إنشاؤه في سجل الحوكمة.', 'This summary is generated after fresh verification and its creation is recorded in the governance trail.')}</p></div><button className="button" type="button" disabled={busy === 'governance-report'} onClick={generateGovernanceReport}>{tr('إنشاء التقرير', 'Generate report')}</button></div>{governanceReport && <dl className="admin-report-summary"><div><dt>{tr('وقت الإنشاء', 'Generated')}</dt><dd>{asDate(governanceReport.generatedAt, lang)}</dd></div><div><dt>{tr('سلامة السجل', 'Trail integrity')}</dt><dd>{reportChain?.valid === true ? tr('سليمة', 'Valid') : tr('تحتاج مراجعة', 'Needs review')}</dd></div><div><dt>{tr('عمر آخر نسخة', 'Latest backup age')}</dt><dd>{reportBackup?.ageSeconds === null || reportBackup?.ageSeconds === undefined ? tr('غير متاح', 'Unavailable') : `${Math.floor(Number(reportBackup.ageSeconds) / 3600)} ${tr('ساعة', 'hours')}`}</dd></div><div><dt>{tr('إجمالي طلبات الحقوق', 'Total rights requests')}</dt><dd>{text(reportDsar?.total, '0')}</dd></div><div><dt>{tr('متوسط مدة المعالجة', 'Average handling time')}</dt><dd>{averageDuration}</dd></div><div><dt>{tr('نطاق التقرير', 'Report scope')}</dt><dd>{text(governanceReport.scope, tr('الحوكمة والجودة', 'Governance and quality'))}</dd></div></dl>}</section><section className="card admin-ropa"><div className="admin-section-heading"><div><h2>{tr('سجل أنشطة المعالجة', 'Processing-activity register')}</h2><p className="muted">{tr('المسجل في النظام الحالي.', 'Recorded in the current system.')}</p></div></div>{ropa.length ? <div className="admin-ropa-list">{ropa.map((item) => <article key={idOf(item)}><strong>{text(field(item, 'activity'))}</strong><span>{text(field(item, 'purpose'))}</span><small>{text(field(item, 'legal_basis'))} · {text(field(item, 'retention_policy'))}</small></article>)}</div> : <Empty title={tr('لا توجد أنشطة معالجة معادة من السجل.', 'No processing activities were returned from the register.')} />}</section></div>;
+  };
+
   const renderAudit = () => (
     <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('سجل التدقيق', 'Audit trail')}</h1><p className="muted">{tr('سجل للعمليات الحساسة؛ لا يمنح اطلاعاً على الرسائل أو الملفات الخاصة.', 'A trail for sensitive operations; it does not grant access to private messages or files.')}</p></div></section><section className="card admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الوقت', 'Time')}</th><th>{tr('الإجراء', 'Action')}</th><th>{tr('الهدف', 'Target')}</th><th>{tr('بواسطة', 'By')}</th><th>{tr('التفاصيل', 'Details')}</th></tr></thead><tbody>{audit.length ? audit.map((entry, index) => <tr key={`${idOf(entry)}-${index}`}><td>{asDate(field(entry, 'created_at', 'at', 'timestamp'), lang)}</td><td>{text(field(entry, 'action'))}</td><td>{text(field(entry, 'target', 'target_id'))}</td><td>{text(field(entry, 'actor_name', 'actor', 'user_id'))}</td><td><span className="admin-detail-text">{displayJson(field(entry, 'detail', 'details', 'reason'))}</span></td></tr>) : <tr><td colSpan={5}>{tr('لا توجد أحداث تدقيق معروضة.', 'No audit events were returned.')}</td></tr>}</tbody></table></section></div>
   );
@@ -861,6 +919,7 @@ export default function Admin() {
   switch (tab) {
     case 'users': contentView = renderUsers(); break;
     case 'reviews': contentView = renderReviews(); break;
+    case 'membership': contentView = renderMembership(); break;
     case 'payments': contentView = renderPayments(); break;
     case 'services': contentView = renderServices(); break;
     case 'names': contentView = renderNames(); break;
@@ -870,6 +929,7 @@ export default function Admin() {
     case 'economics': contentView = renderEconomics(); break;
     case 'audit': contentView = renderAudit(); break;
     case 'backup': contentView = renderBackup(); break;
+    case 'governance': contentView = renderGovernance(); break;
     default: contentView = renderOverview();
   }
 
@@ -1038,5 +1098,5 @@ function UserDetail(props: UserDetailProps) {
   const managerCandidates = users.filter((entry) => ['owner', 'manager'].includes(text(field(entry, 'role'), '').toLowerCase()));
   const validDays = Number.isInteger(Number(grantDays)) && Number(grantDays) > 0;
   const validPoints = Number.isInteger(Number(points)) && Number(points) > 0;
-  return <div className="stack"><div className="row admin-detail-heading"><div><p className="admin-eyebrow">C{id}</p><h1>{text(field(item, 'name', 'full_name', 'email'))}</h1><p className="muted">{text(field(item, 'email'))}</p></div><span className={`admin-status ${statusTone(field(item, 'status'))}`}>{text(field(item, 'status'))}</span></div><div className="admin-key-values"><div><span>{tr('واتساب', 'WhatsApp')}</span><strong>{whatsapp}</strong></div><div><span>{tr('النطاق', 'Domain')}</span><strong>{text(field(item, 'domain', 'subdomain', 'name'))}</strong></div><div><span>{tr('حالة الموقع', 'Site status')}</span><strong>{text(field(item, 'site_status'))}</strong></div><div><span>{tr('الاشتراك', 'Subscription')}</span><strong>{text(field(item, 'subscription_status', 'entitlement_status'))}</strong></div><div><span>{tr('الاستحقاق', 'Entitlement')}</span><strong>{asDate(field(item, 'entitlement_until', 'expires_at'), lang)}</strong></div><div><span>{tr('الرصيد المتاح', 'Available balance')}</span><strong>{text(field(item, 'balance'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('المشرف المسؤول', 'Assigned administrator')}</span><strong>{text(field(item, 'assigned_to', 'manager_name', 'admin_name'))}</strong></div><div><span>{tr('الدور', 'Role')}</span><strong>{text(field(item, 'role'))}</strong></div></div><div className="admin-user-context"><div><h3>{tr('الخدمات المفعلة أو المعلقة', 'Enabled or paused services')}</h3><pre>{displayJson(activeServices ?? [])}</pre></div><div><h3>{tr('آخر النشاطات', 'Recent activity')}</h3><pre>{displayJson(recent ?? [])}</pre></div></div>{deletionStatus !== undefined && <div className="admin-deletion-note"><strong>{tr('طلب حذف البيانات', 'Data deletion request')}</strong><span>{text(deletionStatus)}</span><p>{tr('سجل الحالة فقط؛ لا يقدم هذا المكوّن حذفاً نهائياً أو وعداً بإزالة فورية.', 'Status only; this component offers neither hard deletion nor an immediate-erasure promise.')}</p></div>}<div className="admin-actions">{siteUrl ? <a className="button button-quiet" href={siteUrl} target="_blank" rel="noreferrer">{tr('معاينة الموقع', 'Preview site')}</a> : <span className="admin-route-note">{tr('لم يعد مسار المستخدم رابط معاينة للموقع.', 'The user route did not return a site preview URL.')}</span>}<button className="button" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'active' }, tr('تم إرسال تفعيل الحساب للتحقق بالخادم.', 'Account activation was sent for server validation.'))}>{tr('تفعيل الحساب', 'Activate account')}</button><button className="button button-danger" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'suspended' }, tr('تم إرسال تعليق الحساب للتحقق بالخادم.', 'Account suspension was sent for server validation.'))}>{tr('تعليق', 'Suspend')}</button>{phoneLink && <a className="button button-quiet" href={`https://wa.me/${phoneLink}`} target="_blank" rel="noreferrer">{tr('فتح واتساب', 'Open WhatsApp')}</a>}<button className="button button-quiet" type="button" onClick={() => onNotify(`C${id}`)}>{tr('إشعار', 'Notify')}</button>{owner && <button className="button button-quiet" type="button" onClick={onAudit}>{tr('مراجعة السجل', 'Review audit')}</button>}</div><div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('تمديد الاستحقاق', 'Extend entitlement')}</h3><input aria-label={tr('الأيام', 'Days')} inputMode="numeric" value={grantDays} onChange={(event) => setGrantDays(event.target.value.replace(/\D/g, ''))} /><button className="button button-small" type="button" disabled={!validDays} onClick={() => onAction('grant', { days: Number(grantDays) }, tr('تم إرسال إضافة أيام الاستحقاق.', 'Entitlement-day grant was sent.'), true)}>{tr('منح أيام', 'Grant days')}</button></div><div className="admin-mini-form"><h3>{tr('إصدار نقاط', 'Issue points')}</h3><input aria-label={tr('عدد النقاط', 'Point amount')} inputMode="numeric" value={points} onChange={(event) => setPoints(event.target.value.replace(/\D/g, ''))} /><button className="button button-small" type="button" disabled={!financialOperator || !validPoints} onClick={() => onAction('points', { amount: Number(points) }, tr('أُرسل إصدار النقاط إلى دفتر الأستاذ.', 'Point issuance was submitted to the ledger.'), true)}>{financialOperator ? tr('إضافة نقاط', 'Add points') : tr('تفويض مالي مطلوب', 'Financial delegation required')}</button></div><div className="admin-mini-form"><h3>{tr('خدمة فردية', 'Individual service')}</h3><select value={serviceKey} onChange={(event) => setServiceKey(event.target.value)}>{services.map((service) => <option key={text(field(service, 'key', 'id'))} value={text(field(service, 'key', 'id'))}>{text(field(service, lang === 'ar' ? 'name_ar' : 'name_en', 'name', 'key', 'id'))}</option>)}</select><div className="admin-actions"><button className="button button-small" type="button" disabled={!serviceKey} onClick={() => onAction('service', { key: serviceKey, mode: 'grant' }, tr('تم إرسال منح الخدمة الفردي.', 'Individual service grant was sent.'))}>{tr('تفعيل', 'Enable')}</button><button className="button button-small button-danger" type="button" disabled={!serviceKey} onClick={() => onAction('service', { key: serviceKey, mode: 'pause' }, tr('تم إرسال تعليق الخدمة الفردي.', 'Individual service pause was sent.'))}>{tr('تعليق', 'Pause')}</button></div></div></div>{owner && <div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('الدور والتفويض المالي', 'Role & financial delegation')}</h3><select value={role} onChange={(event) => setRole(event.target.value)}><option value="moderator">{tr('مشرف عادي', 'Moderator')}</option><option value="manager">{tr('مشرف مسؤول', 'Responsible manager')}</option><option value="owner">{tr('مشرف رئيسي', 'Owner')}</option><option value="user">{tr('عضو بلا إدارة', 'Member without administration')}</option></select><label className="admin-check"><input type="checkbox" disabled={role !== 'manager'} checked={financial} onChange={(event) => setFinancial(event.target.checked)} /><span>{tr('تفويض مالي صريح للمدير فقط', 'Explicit financial delegation for a manager only')}</span></label><button className="button button-small" type="button" onClick={() => onAction('role', { role, financial: role === 'manager' && financial }, tr('تم إرسال تعديل الدور لتدقيق الخادم.', 'Role update was submitted for server enforcement.'), true)}>{tr('حفظ الدور', 'Save role')}</button></div><div className="admin-mini-form"><h3>{tr('إسناد مشرف', 'Assign administrator')}</h3><select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">{tr('إلغاء الإسناد', 'Clear assignment')}</option>{managerCandidates.map((candidate) => <option key={idOf(candidate)} value={idOf(candidate)}>{text(field(candidate, 'name', 'email'))} (C{idOf(candidate)})</option>)}</select><button className="button button-small" type="button" onClick={() => onAction('assign', { managerId: assignedTo }, tr('تم إرسال إسناد المشرف.', 'Administrator assignment was sent.'))}>{tr('حفظ الإسناد', 'Save assignment')}</button></div><div className="admin-mini-form"><h3>{tr('هوية الموقع', 'Site branding')}</h3><p className="muted">{tr('يطبق الخادم إعداد الهوية الموروثة على موقع المستخدم الواقع في النطاق.', 'The server applies inherited branding to the in-scope user site.')}</p><button className="button button-small" type="button" onClick={() => onAction('branding', { key: 'platform_branding', mode: 'inherit' }, tr('تم طلب تطبيق الهوية الافتراضية.', 'Default branding inheritance was requested.'))}>{tr('تطبيق الافتراضي', 'Apply default')}</button></div></div>}</div>;
+  return <div className="stack"><div className="row admin-detail-heading"><div><p className="admin-eyebrow">C{id}</p><h1>{text(field(item, 'name', 'full_name', 'email'))}</h1><p className="muted">{text(field(item, 'email'))}</p></div><span className={`admin-status ${statusTone(field(item, 'status'))}`}>{text(field(item, 'status'))}</span></div><div className="admin-key-values"><div><span>{tr('واتساب', 'WhatsApp')}</span><strong>{whatsapp}</strong></div><div><span>{tr('النطاق', 'Domain')}</span><strong>{text(field(item, 'domain', 'subdomain', 'name'))}</strong></div><div><span>{tr('حالة الموقع', 'Site status')}</span><strong>{text(field(item, 'site_status'))}</strong></div><div><span>{tr('الاشتراك', 'Subscription')}</span><strong>{text(field(item, 'subscription_status', 'entitlement_status'))}</strong></div><div><span>{tr('الاستحقاق', 'Entitlement')}</span><strong>{asDate(field(item, 'entitlement_until', 'expires_at'), lang)}</strong></div><div><span>{tr('الرصيد المتاح', 'Available balance')}</span><strong>{text(field(item, 'balance'), tr('غير متاح', 'Unavailable'))}</strong></div><div><span>{tr('المشرف المسؤول', 'Assigned administrator')}</span><strong>{text(field(item, 'assigned_to', 'manager_name', 'admin_name'))}</strong></div><div><span>{tr('الدور', 'Role')}</span><strong>{text(field(item, 'role'))}</strong></div></div><div className="admin-user-context"><div><h3>{tr('الخدمات المفعلة أو المعلقة', 'Enabled or paused services')}</h3><pre>{displayJson(activeServices ?? [])}</pre></div><div><h3>{tr('آخر النشاطات', 'Recent activity')}</h3><pre>{displayJson(recent ?? [])}</pre></div></div>{deletionStatus !== undefined && <div className="admin-deletion-note"><strong>{tr('طلب حذف البيانات', 'Data deletion request')}</strong><span>{text(deletionStatus)}</span><p>{tr('سجل الحالة فقط؛ لا يقدم هذا المكوّن حذفاً نهائياً أو وعداً بإزالة فورية.', 'Status only; this component offers neither hard deletion nor an immediate-erasure promise.')}</p></div>}<div className="admin-actions">{siteUrl ? <a className="button button-quiet" href={siteUrl} target="_blank" rel="noreferrer">{tr('معاينة الموقع', 'Preview site')}</a> : <span className="admin-route-note">{tr('لم يعد مسار المستخدم رابط معاينة للموقع.', 'The user route did not return a site preview URL.')}</span>}<button className="button" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'active' }, tr('تم إرسال تفعيل الحساب للتحقق بالخادم.', 'Account activation was sent for server validation.'))}>{tr('تفعيل الحساب', 'Activate account')}</button><button className="button button-danger" type="button" disabled={busy === `user-${id}-status`} onClick={() => onAction('status', { status: 'suspended' }, tr('تم إرسال تعليق الحساب للتحقق بالخادم.', 'Account suspension was sent for server validation.'))}>{tr('تعليق', 'Suspend')}</button>{phoneLink && <a className="button button-quiet" href={`https://wa.me/${phoneLink}`} target="_blank" rel="noreferrer">{tr('فتح واتساب', 'Open WhatsApp')}</a>}<button className="button button-quiet" type="button" onClick={() => onNotify(`C${id}`)}>{tr('إشعار', 'Notify')}</button>{owner && <button className="button button-quiet" type="button" onClick={onAudit}>{tr('مراجعة السجل', 'Review audit')}</button>}</div><div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('تمديد الاستحقاق', 'Extend entitlement')}</h3><input aria-label={tr('الأيام', 'Days')} inputMode="numeric" value={grantDays} onChange={(event) => setGrantDays(event.target.value.replace(/\D/g, ''))} /><button className="button button-small" type="button" disabled={!validDays} onClick={() => onAction('grant', { days: Number(grantDays) }, tr('تم إرسال إضافة أيام الاستحقاق.', 'Entitlement-day grant was sent.'), true)}>{tr('منح أيام', 'Grant days')}</button></div><div className="admin-mini-form"><h3>{tr('إصدار نقاط', 'Issue points')}</h3><input aria-label={tr('عدد النقاط', 'Point amount')} inputMode="numeric" value={points} onChange={(event) => setPoints(event.target.value.replace(/\D/g, ''))} /><button className="button button-small" type="button" disabled={!financialOperator || !validPoints} onClick={() => onAction('points', { amount: Number(points) }, tr('أُرسل إصدار النقاط إلى دفتر الأستاذ.', 'Point issuance was submitted to the ledger.'), true)}>{financialOperator ? tr('إضافة نقاط', 'Add points') : tr('تفويض مالي مطلوب', 'Financial delegation required')}</button></div><div className="admin-mini-form"><h3>{tr('خدمة فردية', 'Individual service')}</h3><select value={serviceKey} onChange={(event) => setServiceKey(event.target.value)}>{services.map((service) => <option key={text(field(service, 'key', 'id'))} value={text(field(service, 'key', 'id'))}>{text(field(service, lang === 'ar' ? 'name_ar' : 'name_en', 'name', 'key', 'id'))}</option>)}</select><div className="admin-actions"><button className="button button-small" type="button" disabled={!serviceKey} onClick={() => onAction('service', { key: serviceKey, mode: 'grant' }, tr('تم إرسال منح الخدمة الفردي.', 'Individual service grant was sent.'))}>{tr('تفعيل', 'Enable')}</button><button className="button button-small button-danger" type="button" disabled={!serviceKey} onClick={() => onAction('service', { key: serviceKey, mode: 'pause' }, tr('تم إرسال تعليق الخدمة الفردي.', 'Individual service pause was sent.'))}>{tr('تعليق', 'Pause')}</button></div></div></div>{owner && <div className="admin-detail-forms"><div className="admin-mini-form"><h3>{tr('الدور والتفويض المالي', 'Role & financial delegation')}</h3><select value={role} onChange={(event) => setRole(event.target.value)}><option value="moderator">{tr('مشرف عادي', 'Moderator')}</option><option value="manager">{tr('مشرف مسؤول', 'Responsible manager')}</option><option value="owner">{tr('مشرف رئيسي', 'Owner')}</option><option value="user">{tr('عضو بلا إدارة', 'Member without administration')}</option></select><label className="admin-check"><input type="checkbox" disabled={role !== 'manager'} checked={financial} onChange={(event) => setFinancial(event.target.checked)} /><span>{tr('تفويض مالي صريح للمدير فقط', 'Explicit financial delegation for a manager only')}</span></label><button className="button button-small" type="button" onClick={() => onAction('role', { role, financial: role === 'manager' && financial }, tr('تم إرسال تعديل الدور لتدقيق الخادم.', 'Role update was submitted for server enforcement.'), true)}>{tr('حفظ الدور', 'Save role')}</button>{text(field(item, 'role')) !== 'moderator' && <button className="button button-small button-secondary" type="button" onClick={() => onAction('role', { role: 'moderator', financial: false }, tr('تم إرسال ترقية المستخدم إلى مشرف عادي.', 'User promotion to moderator was submitted.'), true)}>{tr('ترقية إلى مشرف عادي', 'Promote to moderator')}</button>}{text(field(item, 'role')) === 'moderator' && <button className="button button-small button-quiet" type="button" onClick={() => onAction('role', { role: 'user', financial: false }, tr('تم إرسال إلغاء ترقية المشرف.', 'Moderator promotion removal was submitted.'), true)}>{tr('إلغاء ترقية المشرف', 'Remove moderator role')}</button>}</div><div className="admin-mini-form"><h3>{tr('إسناد مشرف', 'Assign administrator')}</h3><select value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">{tr('إلغاء الإسناد', 'Clear assignment')}</option>{managerCandidates.map((candidate) => <option key={idOf(candidate)} value={idOf(candidate)}>{text(field(candidate, 'name', 'email'))} (C{idOf(candidate)})</option>)}</select><button className="button button-small" type="button" onClick={() => onAction('assign', { managerId: assignedTo }, tr('تم إرسال إسناد المشرف.', 'Administrator assignment was sent.'))}>{tr('حفظ الإسناد', 'Save assignment')}</button></div><div className="admin-mini-form"><h3>{tr('هوية الموقع', 'Site branding')}</h3><p className="muted">{tr('يطبق الخادم إعداد الهوية الموروثة على موقع المستخدم الواقع في النطاق.', 'The server applies inherited branding to the in-scope user site.')}</p><button className="button button-small" type="button" onClick={() => onAction('branding', { key: 'platform_branding', mode: 'inherit' }, tr('تم طلب تطبيق الهوية الافتراضية.', 'Default branding inheritance was requested.'))}>{tr('تطبيق الافتراضي', 'Apply default')}</button></div></div>}</div>;
 }

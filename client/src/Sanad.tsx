@@ -46,7 +46,7 @@ export const SANAD_AUDIO_SCRIPTS: Record<string, AudioScript> = {
   'wallet-ar': {
     id: 'wallet-ar',
     src: '/assets/sanad/wallet-ar.mp3',
-    ar: "هذه محفظة نقاط الوسط. تقدر تهدي نقاطك أو تستبدل كل مئة نقطة بيوم من الخدمات الإضافية. راجع المستفيد والعدد قبل التأكيد. النقاط ليست مالًا، وكل حركة تظهر في سجلك.",
+    ar: "هذا رصيد نقاط التميز المهني. يمكنك إهداء نقاط التقدير للحسابات الأخرى بعد مراجعة المستفيد والعدد. النقاط غير نقدية ولا تُشترى أو تُسترد أو تُحوّل إلى نقود أو استحقاق، وكل حركة تظهر في سجلك.",
     en: 'Points recognize your participation and can be used with available services. They are not cash and cannot be converted to cash.',
   },
   'admin-ar': {

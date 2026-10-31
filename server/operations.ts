@@ -1,6 +1,7 @@
 import { HTTPException } from "hono/http-exception";
 import type { App, Ctx } from "./core";
 import { all, audit, auditRowHash, finance, fresh, hashSecret, me, now, one, role, run, siteFor, uid } from "./core";
+import { deliverDecisionEmail } from "./decision-email";
 
 type Actor = {
   id: number;
@@ -104,6 +105,7 @@ const BACKUP_TABLES = [
   "expenses",
   "audit",
   "deletion_requests",
+  "subscription_requests",
 ] as const;
 
 function fail(status: ErrorStatus, error: string, code?: string): never {
@@ -431,6 +433,62 @@ async function notificationTargets(c: Ctx, recipient: unknown): Promise<number[]
   return targets;
 }
 
+type MemberDecisionNotice = {
+  targetId: number;
+  title: string;
+  body: string;
+  actionLabel: string;
+  actionPath: string;
+};
+
+async function notifyMemberDecision(c: Ctx, notice: MemberDecisionNotice) {
+  const target = await one<{ email: string; name: string }>(c, "SELECT email,name FROM users WHERE id=?", notice.targetId);
+  if (!target) return { delivered: false, channel: 'unavailable' as const };
+  await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)", uid(), notice.targetId, notice.title, notice.body, now());
+  return deliverDecisionEmail(c.env, {
+    to: target.email,
+    name: target.name,
+    subject: `${notice.title} — KSA.MEN`,
+    title: notice.title,
+    message: notice.body,
+    actionLabel: notice.actionLabel,
+    actionUrl: `https://${c.env.ROOT_DOMAIN}${notice.actionPath}`,
+  });
+}
+
+async function governanceSnapshot(c: Ctx) {
+  const [chain, rows, rights, ropa, flows, backupList] = await Promise.all([
+    one<{ anchor_audit_id: number; last_audit_id: number; last_hash: string; updated_at: number }>(c, "SELECT anchor_audit_id,last_audit_id,last_hash,updated_at FROM audit_chain_state WHERE chain_name='primary'"),
+    all<{ id: number; actor_id: number | null; action: string; target: string; detail: string; created_at: number; prev_hash: string | null; row_hash: string | null }>(c, "SELECT id,actor_id,action,target,detail,created_at,prev_hash,row_hash FROM audit WHERE row_hash IS NOT NULL ORDER BY id ASC LIMIT 10000"),
+    all<{ status: string; count: number; average_seconds: number | null }>(c, "SELECT status,COUNT(*) AS count,AVG(CASE WHEN executed_at IS NOT NULL THEN executed_at-created_at WHEN archived_at IS NOT NULL THEN archived_at-created_at ELSE NULL END) AS average_seconds FROM deletion_requests GROUP BY status"),
+    all<Record<string, unknown>>(c, "SELECT id,activity,data_categories,data_subjects,purpose,legal_basis,retention_policy,access_roles,updated_at FROM ropa_activities ORDER BY id"),
+    all<Record<string, unknown>>(c, "SELECT id,provider,service,purpose,data_categories,transfer_note,safeguards,updated_at FROM data_flow_map ORDER BY id"),
+    c.env.MEDIA.list({ prefix: "backups/", limit: 100, include: ["customMetadata"] }).catch(() => ({ objects: [], truncated: false })),
+  ]);
+  let chainValid = Boolean(chain);
+  let previous = rows[0]?.prev_hash ?? chain?.last_hash ?? '';
+  for (const row of rows) {
+    const recomputed = await auditRowHash(row.prev_hash ?? '', row.actor_id, row.action, row.target, row.detail, row.created_at);
+    if (!row.row_hash || row.prev_hash !== previous || row.row_hash !== recomputed) { chainValid = false; break; }
+    previous = row.row_hash;
+  }
+  if (chain && rows.length && previous !== chain.last_hash) chainValid = false;
+  const objects = backupList.objects ?? [];
+  const newest = objects.map((object: any) => Number(object.customMetadata?.createdAt ?? 0)).filter(Number.isFinite).sort((a: number, b: number) => b - a)[0] ?? null;
+  const byStatus = Object.fromEntries(rights.map((item) => [item.status, Number(item.count)]));
+  const resolved = rights.filter((item) => ['destroyed', 'archived'].includes(item.status) && item.average_seconds !== null);
+  const resolvedCount = resolved.reduce((total, item) => total + Number(item.count), 0);
+  const averageSeconds = resolvedCount ? resolved.reduce((total, item) => total + Number(item.average_seconds ?? 0) * Number(item.count), 0) / resolvedCount : null;
+  return {
+    generatedAt: now(),
+    backup: { count: objects.length, latestCreatedAt: newest, ageSeconds: newest ? Math.max(0, now() - newest) : null },
+    auditChain: { available: Boolean(chain), valid: chainValid, checkedRows: rows.length, lastAuditId: chain?.last_audit_id ?? null, updatedAt: chain?.updated_at ?? null },
+    dsar: { byStatus, total: rights.reduce((total, item) => total + Number(item.count), 0), resolvedCount, averageResolutionSeconds: averageSeconds },
+    ropa,
+    dataFlows: flows,
+  };
+}
+
 export function registerOperations(app: App): void {
   app.get("/api/admin/overview", async (c) => {
     const user = actor(c);
@@ -446,6 +504,7 @@ export function registerOperations(app: App): void {
         free_trials: null,
         subscriptions: null,
         payment_requests: null,
+        membership_requests: null,
         referrals: null,
         treasury_points: null,
         transfers: null,
@@ -485,13 +544,14 @@ export function registerOperations(app: App): void {
         : "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)",
       ...(scoped ? [user.id, user.id, user.id] : []),
     );
-    const [trials, subscriptions, transfers, contacts, newRegistrations, serviceActivity] = await Promise.all([
+    const [trials, subscriptions, transfers, contacts, newRegistrations, serviceActivity, membershipRequests] = await Promise.all([
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.trial_until>? AND u.entitlement_until<=u.trial_until` : "SELECT COUNT(*) AS count FROM users WHERE trial_until>? AND entitlement_until<=trial_until", ...(scoped ? [user.id, user.id, user.id, now()] : [now()])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(DISTINCT s.user_id) AS count FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE ${userScope}` : "SELECT COUNT(DISTINCT user_id) AS count FROM subscriptions", ...(scoped ? [user.id, user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? "SELECT COUNT(*) AS count FROM transfers t JOIN users u ON u.id=t.from_id WHERE (u.id=? OR u.assigned_to=?)" : "SELECT COUNT(*) AS count FROM transfers", ...(scoped ? [user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? "SELECT COUNT(*) AS count FROM contact_requests r JOIN users u ON u.id=r.to_id WHERE (u.id=? OR u.assigned_to=?)" : "SELECT COUNT(*) AS count FROM contact_requests", ...(scoped ? [user.id, user.id] : [])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM users u WHERE ${userScope} AND u.created_at>=?` : "SELECT COUNT(*) AS count FROM users WHERE created_at>=?", ...(scoped ? [user.id, user.id, user.id, now() - 30 * DAY] : [now() - 30 * DAY])),
       one<{ count: number }>(c, scoped ? `SELECT COUNT(*) AS count FROM user_services us JOIN users u ON u.id=us.user_id WHERE ${userScope}` : "SELECT COUNT(*) AS count FROM user_services", ...(scoped ? [user.id, user.id, user.id] : [])),
+      user.role === 'owner' ? one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM subscription_requests WHERE status='pending'") : Promise.resolve(null),
     ]);
     const financial = user.role === "owner" || Boolean(user.financial);
     const [payments, referrals, treasury] = financial
@@ -510,6 +570,7 @@ export function registerOperations(app: App): void {
       free_trials: trials?.count ?? 0,
       subscriptions: subscriptions?.count ?? 0,
       payment_requests: payments?.count ?? null,
+      membership_requests: membershipRequests?.count ?? null,
       referrals: referrals?.count ?? null,
       treasury_points: treasury?.balance ?? null,
       transfers: transfers?.count ?? 0,
@@ -584,7 +645,14 @@ export function registerOperations(app: App): void {
         ? (typeof body.financial === "boolean" ? (body.financial ? 1 : 0) : target.financial)
         : 0;
       await run(c, "UPDATE users SET role=?,financial=? WHERE id=?", nextRole, financial, targetId);
-      await audit(c, "user.role", `user:${targetId}`, JSON.stringify({ role: nextRole, financial: Boolean(financial) }));
+      const delivery = await notifyMemberDecision(c, {
+        targetId,
+        title: "تحديث صلاحية الحساب",
+        body: "تم تحديث صلاحية حسابك وفق قرار الإدارة.",
+        actionLabel: "فتح حسابي",
+        actionPath: "/dashboard?tab=settings",
+      });
+      await audit(c, "user.role", `user:${targetId}`, { role: nextRole, financial: Boolean(financial), delivery: delivery.channel });
       return c.json({ user: responseUser((await one<Record<string, unknown>>(c, "SELECT id,email,name,role,status,financial,assigned_to FROM users WHERE id=?", targetId)) ?? {}) });
     }
 
@@ -643,7 +711,14 @@ export function registerOperations(app: App): void {
       if (!target) fail(404, "User not found", "not_found");
       if (target.role === "owner" && user.role !== "owner") fail(403, "Owner accounts are outside this scope", "scope_denied");
       await run(c, "UPDATE users SET status=? WHERE id=?", status, targetId);
-      await audit(c, "user.status", `user:${targetId}`, JSON.stringify({ status }));
+      const delivery = await notifyMemberDecision(c, {
+        targetId,
+        title: status === "active" ? "تم تفعيل حسابك" : "تم تعليق حسابك",
+        body: status === "active" ? "أصبح حسابك نشطاً ويمكنك متابعة العمل من لوحة الهوية." : "تم تعليق حسابك بقرار إداري. يمكنك الرجوع إلى رسالة القرار للتواصل مع الإدارة.",
+        actionLabel: "فتح صفحة الدخول",
+        actionPath: "/auth",
+      });
+      await audit(c, "user.status", `user:${targetId}`, { status, delivery: delivery.channel });
       return c.json({ status });
     }
 
@@ -735,9 +810,9 @@ export function registerOperations(app: App): void {
     const scope = user.role === "manager"
       ? managerReviewScope()
       : "";
-    const rows = await all<DecidedReviewRow & { published: string | null; current_published_version: number; site_status: string; submitter_name: string }>(
+    const rows = await all<DecidedReviewRow & { published: string | null; current_published_version: number; site_status: string; submitter_name: string; submitter_email: string; submitter_whatsapp: string }>(
       c,
-      `SELECT r.*,s.published,s.published_version AS current_published_version,s.status AS site_status,u.name AS submitter_name,
+      `SELECT r.*,s.published,s.published_version AS current_published_version,s.status AS site_status,u.name AS submitter_name,u.email AS submitter_email,u.whatsapp AS submitter_whatsapp,
               (SELECT dn.name FROM dns_names dn WHERE dn.site_id=s.id ORDER BY dn.created_at,dn.name LIMIT 1) AS site_name,
               d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
        FROM reviews r JOIN sites s ON s.id=r.site_id JOIN users u ON u.id=r.user_id
@@ -758,6 +833,8 @@ export function registerOperations(app: App): void {
         const currentChanges = shallowChanges(row.published, review.snapshot);
         return {
         ...review,
+        submitter_email: row.submitter_email,
+        submitter_whatsapp: row.submitter_whatsapp,
         base_version: baseVersion,
         baseVersion,
         current_published_version: currentPublishedVersion,
@@ -819,7 +896,16 @@ export function registerOperations(app: App): void {
       // published base. Do not disclose which competing actor caused the conflict.
       fail(409, "This review is no longer pending or its published base is stale", "review_stale");
     }
-    await audit(c, "review.decision", `review:${review.id}`, JSON.stringify({ decision, reason, siteId: review.site_id, baseVersion: review.base_version }));
+    const delivery = await notifyMemberDecision(c, {
+      targetId: review.user_id,
+      title: decision === "approved" ? "تم اعتماد موقعك" : "تحديث بشأن طلب موقعك",
+      body: decision === "approved"
+        ? "تم اعتماد اللقطة التي أرسلتها، وأصبح موقعك متاحاً وفق إعداداتك."
+        : reason || "يحتاج طلبك إلى تعديل قبل إرساله من جديد للمراجعة.",
+      actionLabel: decision === "approved" ? "فتح موقعك" : "تعديل الطلب",
+      actionPath: decision === "approved" ? "/dashboard?tab=editor" : "/dashboard?tab=editor",
+    });
+    await audit(c, "review.decision", `review:${review.id}`, { decision, reason, siteId: review.site_id, baseVersion: review.base_version, delivery: delivery.channel });
     const updated = await one<DecidedReviewRow>(
       c,
       `SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
@@ -962,6 +1048,114 @@ export function registerOperations(app: App): void {
         referralOutstanding: referral ? referral.amount - recoverable : 0,
       },
     });
+  });
+
+  app.post("/api/admin/sites/:id/action", async (c) => {
+    const body = await input(c);
+    const requested = text(body.action, "action", { max: 32 }).toLowerCase();
+    const reason = text(body.reason ?? "", "reason", { min: 1, max: 2_000 });
+    const site = await siteInManagerScope(c, c.req.param("id"));
+    fresh(c);
+    if (!site.user_id) fail(409, "A proxy site without an account owner cannot receive this decision", "invalid_state");
+    if (requested === "suspend") {
+      await run(c, "UPDATE sites SET status='hidden',searchable=0,allow_contact=0,updated_at=? WHERE id=?", now(), site.id);
+      const delivery = await notifyMemberDecision(c, { targetId: site.user_id, title: "تم تعليق إتاحة موقعك", body: reason, actionLabel: "فتح لوحة الهوية", actionPath: "/dashboard?tab=editor" });
+      await audit(c, "site.suspend", `site:${site.id}`, { reason, delivery: delivery.channel });
+      return c.json({ siteId: site.id, status: "hidden" });
+    }
+    if (requested === "delete_request") {
+      owner(c);
+      const existing = await one<{ id: string }>(c, "SELECT id FROM deletion_requests WHERE user_id=? AND status IN ('pending','scheduled','hidden','archived') ORDER BY created_at DESC LIMIT 1", site.user_id);
+      if (existing) fail(409, "An active lifecycle request already exists for this account", "request_pending");
+      const requestId = `admin-deletion-${uid()}`;
+      const at = now();
+      await c.env.DB.batch([
+        c.env.DB.prepare("UPDATE sites SET status='hidden',searchable=0,allow_contact=0,updated_at=? WHERE id=?").bind(at, site.id),
+        c.env.DB.prepare("INSERT INTO deletion_requests(id,user_id,reason,status,created_at,requested_action,hidden_at,notice_version) VALUES(?,?,?,?,?,'destroy',?,?)").bind(requestId, site.user_id, reason, 'pending', at, at, '2026-10-31'),
+      ]);
+      const delivery = await notifyMemberDecision(c, { targetId: site.user_id, title: "تم تسجيل طلب معالجة بيانات موقعك", body: reason, actionLabel: "فتح لوحة الخصوصية", actionPath: "/dashboard?tab=settings" });
+      await audit(c, "privacy.admin_deletion_request", `request:${requestId}`, { siteId: site.id, reason, delivery: delivery.channel });
+      return c.json({ siteId: site.id, requestId, status: "pending" }, 202);
+    }
+    fail(400, "Unsupported site action", "invalid_action");
+  });
+
+  app.get("/api/admin/subscription-requests", async (c) => {
+    owner(c);
+    fresh(c);
+    const status = (c.req.query("status") ?? "").trim();
+    const kind = (c.req.query("kind") ?? "").trim();
+    const query = (c.req.query("q") ?? "").trim().replace(/[%_]/g, "");
+    if (status && !["pending", "approved", "rejected", "changes_requested"].includes(status)) fail(400, "Request status is invalid", "invalid_input");
+    if (kind && !["trial_extension", "annual_contact"].includes(kind)) fail(400, "Request kind is invalid", "invalid_input");
+    const like = `%${query}%`;
+    const rows = await all<Record<string, unknown>>(
+      c,
+      `SELECT r.id,r.user_id,r.kind,r.status,r.member_note,r.admin_reason,r.created_at,r.decided_at,r.applied_until,
+              u.name,u.email,u.whatsapp,u.trial_until,u.entitlement_until,
+              (SELECT n.name FROM dns_names n WHERE n.owner_id=u.id ORDER BY n.created_at LIMIT 1) AS subdomain
+       FROM subscription_requests r JOIN users u ON u.id=r.user_id
+       WHERE r.status LIKE ? ESCAPE '\\' AND r.kind LIKE ? ESCAPE '\\' AND (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR ('C'||u.id) LIKE ? ESCAPE '\\')
+       ORDER BY CASE WHEN r.status='pending' THEN 0 ELSE 1 END,r.created_at ASC LIMIT 100`,
+      status || "%", kind || "%", like, like, like,
+    );
+    return c.json({ requests: rows });
+  });
+
+  app.post("/api/admin/subscription-requests/:id/decision", async (c) => {
+    const operator = owner(c);
+    fresh(c);
+    const body = await input(c);
+    const decision = text(body.decision, "decision", { max: 32 }).toLowerCase();
+    if (!["approve", "reject", "changes_requested"].includes(decision)) fail(400, "Decision is invalid", "invalid_input");
+    const reason = text(body.reason ?? "", "reason", { min: decision === "approve" ? 0 : 1, max: 2_000, optional: decision === "approve" });
+    const request = await one<{ id: string; user_id: number; kind: "trial_extension" | "annual_contact"; status: string }>(c, "SELECT id,user_id,kind,status FROM subscription_requests WHERE id=?", c.req.param("id"));
+    if (!request) fail(404, "Membership request not found", "not_found");
+    if (request.status !== "pending") fail(409, "This membership request is no longer pending", "request_stale");
+    const at = now();
+    let appliedUntil: number | null = null;
+    if (decision === "approve") {
+      const account = await one<{ trial_until: number; entitlement_until: number }>(c, "SELECT trial_until,entitlement_until FROM users WHERE id=? AND status='active'", request.user_id);
+      if (!account) fail(404, "Member account is unavailable", "not_found");
+      const startsAt = Math.max(at, account.trial_until, account.entitlement_until);
+      const days = request.kind === "annual_contact" ? 365 : integer(body.days ?? 7, "extension days", 1, 365);
+      appliedUntil = startsAt + days * DAY;
+      const sourceId = `membership-source-${uid()}`;
+      const statements = [
+        c.env.DB.prepare("UPDATE subscription_requests SET status='approved',admin_reason=?,decided_by=?,decided_at=?,applied_until=? WHERE id=? AND status='pending'").bind(reason, operator.id, at, appliedUntil, request.id),
+        ...(request.kind === "trial_extension" ? [c.env.DB.prepare("INSERT INTO entitlement_sources(id,user_id,source_kind,starts_at,ends_at,reference,detail,created_by,created_at) VALUES(?,?, 'grant', ?,?,?,?, ?,?)").bind(sourceId, request.user_id, startsAt, appliedUntil, `membership-request-${request.id}`, `Approved trial extension of ${days} day(s)`, operator.id, at)] : []),
+        c.env.DB.prepare("UPDATE users SET entitlement_until=? WHERE id=?").bind(appliedUntil, request.user_id),
+        ...(request.kind === "annual_contact" ? [c.env.DB.prepare("INSERT INTO subscriptions(id,user_id,payment_id,kind,start_at,end_at,created_at) VALUES(?,?,NULL,'annual_negotiated',?,?,?)").bind(`annual-${request.id}`, request.user_id, startsAt, appliedUntil, at)] : []),
+      ];
+      const results = await c.env.DB.batch(statements);
+      if (!changed(results[0])) fail(409, "This membership request is no longer pending", "request_stale");
+    } else {
+      const nextStatus = decision === "changes_requested" ? "changes_requested" : "rejected";
+      const result = await run(c, "UPDATE subscription_requests SET status=?,admin_reason=?,decided_by=?,decided_at=? WHERE id=? AND status='pending'", nextStatus, reason, operator.id, at, request.id);
+      if (!changed(result)) fail(409, "This membership request is no longer pending", "request_stale");
+    }
+    const approved = decision === "approve";
+    const title = approved ? (request.kind === "annual_contact" ? "تم تفعيل اشتراكك السنوي" : "تم تمديد الفترة المجانية") : decision === "changes_requested" ? "مطلوب توضيح لطلبك" : "تحديث بشأن طلبك";
+    const bodyCopy = approved ? (request.kind === "annual_contact" ? "تم تفعيل عضويتك السنوية وفق الاتفاق الخارجي الموثق." : "تمت إضافة مدة مجانية إلى استحقاقك.") : reason;
+    const delivery = await notifyMemberDecision(c, { targetId: request.user_id, title, body: bodyCopy, actionLabel: approved ? "فتح لوحة العضوية" : "فتح الطلب", actionPath: "/dashboard?tab=subscription" });
+    await audit(c, "membership.decision", `membership:${request.id}`, { kind: request.kind, decision, appliedUntil, reason, delivery: delivery.channel });
+    return c.json({ requestId: request.id, status: approved ? "approved" : decision, appliedUntil });
+  });
+
+  app.get("/api/admin/governance", async (c) => {
+    owner(c);
+    fresh(c);
+    return c.json({ governance: await governanceSnapshot(c) });
+  });
+
+  app.post("/api/admin/governance/report", async (c) => {
+    owner(c);
+    fresh(c);
+    const body = await input(c);
+    if (body.confirmed !== true) fail(400, "Owner confirmation is required to generate this report", "confirmation_required");
+    const governance = await governanceSnapshot(c);
+    await audit(c, "governance.report.generate", "governance:summary", { scope: "regulatory_summary", generatedAt: governance.generatedAt });
+    return c.json({ report: { scope: "KSA.MEN governance and quality summary", generatedAt: governance.generatedAt, governance } });
   });
 
   app.get("/api/admin/settings", async (c) => {

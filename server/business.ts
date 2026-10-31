@@ -515,26 +515,6 @@ function toDashboardUser(user: Record<string, unknown>, balance: number): Json {
   };
 }
 
-function bankInstructions(value: string | null | undefined): Json | null {
-  const parsed = parseJson<Json>(value, {});
-  const active = parsed.enabled === true || parsed.active === true;
-  const beneficiary = typeof parsed.beneficiary === 'string'
-    ? parsed.beneficiary.trim()
-    : typeof parsed.accountName === 'string'
-      ? parsed.accountName.trim()
-      : typeof parsed.accountHolder === 'string'
-        ? parsed.accountHolder.trim()
-        : '';
-  const iban = typeof parsed.iban === 'string' ? parsed.iban.trim() : '';
-  const account = typeof parsed.account === 'string'
-    ? parsed.account.trim()
-    : typeof parsed.accountNumber === 'string'
-      ? parsed.accountNumber.trim()
-      : '';
-  // A bank name is deliberately not inferred or manufactured: only supplied official details are exposed.
-  if (!active || !beneficiary || !iban || !account) return null;
-  return { beneficiary, iban, account };
-}
 
 async function resolveRecipient(c: any, value: unknown): Promise<NamedUser> {
   if (typeof value !== 'string') apiError(422, 'recipient must be a C identifier, account name, profile name, or email', 'VALIDATION');
@@ -674,7 +654,7 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     const checkedAt = now();
-    const [sites, reviews, wallet, ledger, payments, services, notifications, quickLinks, transfers, handovers, analyticsRows, unboundNames] = await Promise.all([
+    const [sites, reviews, wallet, ledger, payments, subscriptionRequests, services, notifications, quickLinks, transfers, handovers, analyticsRows, unboundNames] = await Promise.all([
       all<SiteRow>(
         c,
         `SELECT s.*,(
@@ -704,6 +684,11 @@ export function registerBusiness(app: App): void {
         userId,
       ),
       all<Record<string, unknown>>(c, 'SELECT * FROM payments WHERE user_id=? ORDER BY created_at DESC LIMIT 100', userId),
+      all<Record<string, unknown>>(
+        c,
+        'SELECT id,kind,status,member_note,admin_reason,created_at,decided_at,applied_until FROM subscription_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 30',
+        userId,
+      ),
       all<Record<string, unknown>>(
         c,
         `SELECT s.*, us.mode AS override_mode, us.until_at AS override_until
@@ -793,18 +778,15 @@ export function registerBusiness(app: App): void {
       })),
       payments: payments.map((payment) => ({
         id: payment.id,
-        amount: Number(payment.amount),
-        days: Number(payment.days),
-        receipt_id: payment.receipt_id ?? null,
-        receiptId: payment.receipt_id ?? null,
         status: payment.status,
-        notes: payment.notes,
         created_at: Number(payment.created_at),
         createdAt: Number(payment.created_at),
-        approved_at: payment.approved_at ?? null,
-        approvedAt: payment.approved_at ?? null,
-        reversed_at: payment.reversed_at ?? null,
-        reversedAt: payment.reversed_at ?? null,
+      })),
+      subscriptionRequests: subscriptionRequests.map((request) => ({
+        id: request.id, kind: request.kind, status: request.status, member_note: request.member_note,
+        admin_reason: request.admin_reason, created_at: Number(request.created_at), createdAt: Number(request.created_at),
+        decided_at: request.decided_at === null ? null : Number(request.decided_at),
+        applied_until: request.applied_until === null ? null : Number(request.applied_until),
       })),
       // This mirrors core.serviceState, while core.service remains the enforcement boundary.
       services: serviceStates,
@@ -1213,10 +1195,10 @@ export function registerBusiness(app: App): void {
           'INSERT INTO ledger(id,from_id,to_id,amount,kind,notes,created_at,reference) VALUES(?,?,?,?,?,?,?,?)',
         ).bind(ledgerId, userId, recipient.id, amount, 'transfer', '', createdAt, reference),
         c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-          uid(), userId, 'تم تحويل نقاط الوسط', `تم تحويل ${amount} نقطة إلى C${recipient.id}.`, createdAt,
+          uid(), userId, 'تم إهداء نقاط التميز المهني', `تم إهداء ${amount} نقطة إلى C${recipient.id}.`, createdAt,
         ),
         c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-          uid(), recipient.id, 'وصلتك نقاط وسط', `تم استلام ${amount} نقطة من C${userId}.`, createdAt,
+          uid(), recipient.id, 'وصلتك نقاط تميز مهنية', `تم استلام ${amount} نقطة من C${userId}.`, createdAt,
         ),
       ]);
     } catch {
@@ -1235,146 +1217,54 @@ export function registerBusiness(app: App): void {
   });
 
   app.post('/api/wallet/redeem', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    const userId = Number(user.id);
-    const body = await requestBody(c);
-    const days = asInteger(body.days, 'days', 1, 1_000_000_000);
-    const idempotencyKey = safeIdempotencyKey(body.idempotencyKey);
-    // The immutable redemption id is user-scoped and is also the ledger's unique reference.
-    const redemptionId = `redeem:${userId}:${idempotencyKey}`;
-    const prior = await one<Record<string, unknown>>(c, 'SELECT * FROM redemptions WHERE id=? AND user_id=?', redemptionId, userId);
-    if (prior) {
-      if (Number(prior.days) !== days) apiError(409, 'idempotencyKey was already used with a different number of days', 'IDEMPOTENCY_CONFLICT');
-      const account = await one<{ entitlement_until: number }>(c, 'SELECT entitlement_until FROM users WHERE id=?', userId);
-      return c.json({ redemption: { id: prior.id, days: Number(prior.days), cost: Number(prior.days) * 100, createdAt: Number(prior.created_at) }, entitlementUntil: Number(account?.entitlement_until ?? 0), idempotent: true });
-    }
-    const createdAt = now();
-    try {
-      await c.env.DB.batch([
-        c.env.DB.prepare('INSERT INTO redemptions(id,user_id,days,created_at) VALUES(?,?,?,?)').bind(redemptionId, userId, days, createdAt),
-        // The redemption trigger moves points and advances the aggregate entitlement first; this
-        // statement records that resulting point-backed window in the same atomic D1 batch.
-        c.env.DB.prepare(
-          `INSERT INTO entitlement_sources(id,user_id,source_kind,starts_at,ends_at,reference,detail,created_by,created_at)
-           SELECT ?,?,'points',?,entitlement_until,?,?,NULL,? FROM users WHERE id=?`,
-        ).bind(
-          `entitlement-points-${redemptionId}`,
-          userId,
-          createdAt,
-          `redemption-${redemptionId}`,
-          `${days} point-redemption day(s)`,
-          createdAt,
-          userId,
-        ),
-        c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(
-          uid(), userId, 'تم استبدال نقاط الوسط', `تم استبدال ${days * 100} نقطة مقابل ${days} يوم.`, createdAt,
-        ),
-      ]);
-    } catch {
-      const completed = await one<Record<string, unknown>>(c, 'SELECT * FROM redemptions WHERE id=? AND user_id=?', redemptionId, userId);
-      if (completed) {
-        if (Number(completed.days) !== days) apiError(409, 'idempotencyKey was already used with a different number of days', 'IDEMPOTENCY_CONFLICT');
-        const account = await one<{ entitlement_until: number }>(c, 'SELECT entitlement_until FROM users WHERE id=?', userId);
-        return c.json({ redemption: { id: completed.id, days: Number(completed.days), cost: Number(completed.days) * 100, createdAt: Number(completed.created_at) }, entitlementUntil: Number(account?.entitlement_until ?? 0), idempotent: true });
-      }
-      apiError(409, 'Redemption could not be completed. Check your available balance.', 'REDEMPTION_FAILED');
-    }
-    const account = await one<{ entitlement_until: number }>(c, 'SELECT entitlement_until FROM users WHERE id=?', userId);
-    await audit(c, 'wallet.redeem', redemptionId, { days, cost: days * 100 });
-    return c.json({
-      redemption: { id: redemptionId, days, cost: days * 100, createdAt },
-      entitlementUntil: Number(account?.entitlement_until ?? 0),
-      idempotent: false,
-    }, 201);
+    me(c);
+    apiError(410, 'رصيد نقاط التميز المهني غير قابل للاسترداد أو التحويل إلى استحقاق.', 'POINTS_REDEMPTION_CLOSED');
   });
 
+  app.get('/api/subscription-requests', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const requests = await all<Record<string, unknown>>(
+      c,
+      'SELECT id,kind,status,member_note,admin_reason,created_at,decided_at,applied_until FROM subscription_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 30',
+      Number(user.id),
+    );
+    return c.json({ requests });
+  });
+
+  app.post('/api/subscription-requests', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const body = await requestBody(c);
+    const kind = asString(body.kind, 'kind', 32, true);
+    if (kind !== 'trial_extension' && kind !== 'annual_contact') {
+      apiError(422, 'kind must be trial_extension or annual_contact', 'VALIDATION');
+    }
+    const memberNote = asString(body.note ?? '', 'note', 800);
+    const userId = Number(user.id);
+    const existing = await one<{ id: string }>(c, "SELECT id FROM subscription_requests WHERE user_id=? AND kind=? AND status='pending' LIMIT 1", userId, kind);
+    if (existing) apiError(409, 'لديك طلب مماثل قيد المعالجة بالفعل.', 'REQUEST_PENDING');
+    const id = `membership-${uid()}`;
+    const createdAt = now();
+    try {
+      await run(c, "INSERT INTO subscription_requests(id,user_id,kind,status,member_note,created_at) VALUES(?,?,?,'pending',?,?)", id, userId, kind, memberNote, createdAt);
+    } catch {
+      apiError(409, 'لديك طلب مماثل قيد المعالجة بالفعل.', 'REQUEST_PENDING');
+    }
+    const title = kind === 'trial_extension' ? 'طلب تمديد الفترة المجانية' : 'طلب تواصل للاشتراك السنوي';
+    await run(c, 'INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)', uid(), userId, title, 'تم استلام طلبك وسيصلك قرار الإدارة داخل المنصة.', createdAt);
+    await audit(c, 'membership.request', id, { kind, userId, noteProvided: Boolean(memberNote) });
+    return c.json({ request: { id, kind, status: 'pending', createdAt } }, 201);
+  });
+
+  // Historical payment records remain reviewable by privileged administration. New member payment
+  // intake is deliberately closed: annual membership is negotiated outside the public interface.
   app.get('/api/payments/instructions', async (c) => {
     me(c);
-    const setting = await one<{ value: string }>(c, "SELECT value FROM settings WHERE key='bank'");
-    const bank = bankInstructions(setting?.value);
-    if (!bank) {
-      return c.json({ available: false, instructions: null, reason: 'Bank transfer intake is not active yet.' });
-    }
-    return c.json({ available: true, instructions: bank });
+    return c.json({ available: false, instructions: null, reason: 'يتم ترتيب الاشتراك السنوي عبر طلب تواصل مع الإدارة.' });
   });
 
   app.post('/api/payments', async (c) => {
-    const user = me(c) as unknown as Record<string, unknown>;
-    const userId = Number(user.id);
-    const body = await requestBody(c);
-    const bankSetting = await one<{ value: string }>(c, "SELECT value FROM settings WHERE key='bank'");
-    if (!bankInstructions(bankSetting?.value)) {
-      apiError(409, 'Bank transfer intake is not active', 'BANK_INTAKE_INACTIVE');
-    }
-    const amount = body.amount;
-    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100) {
-      apiError(422, 'amount must be a positive value with at most two decimal places', 'VALIDATION');
-    }
-    const days = asInteger(body.days, 'days', 1, 1_000_000_000);
-    const notes = asString(body.notes, 'notes', 1000);
-    const receiptId = asString(body.receiptId, 'receiptId', 160, true);
-    const receipt = await one<{ id: string }>(
-      c,
-      `SELECT id FROM media
-       WHERE id=? AND owner_id=? AND purpose='receipt' AND public=0
-         AND mime IN ('application/pdf','image/png','image/jpeg','image/webp')`,
-      receiptId,
-      userId,
-    );
-    if (!receipt) apiError(422, 'receiptId must reference one of your private receipt files', 'INVALID_RECEIPT');
-
-    const previous = await one<Record<string, unknown>>(c, 'SELECT * FROM payments WHERE user_id=? AND receipt_id=?', userId, receiptId);
-    const paymentMatches = (payment: Record<string, unknown>) => Number(payment.amount) === amount
-      && Number(payment.days) === days
-      && String(payment.notes ?? '') === notes;
-    const paymentResponse = (payment: Record<string, unknown>, idempotent: boolean) => ({
-      payment: {
-        id: payment.id,
-        amount: Number(payment.amount),
-        days: Number(payment.days),
-        receipt_id: payment.receipt_id,
-        receiptId: payment.receipt_id,
-        status: payment.status,
-        notes: payment.notes,
-        created_at: Number(payment.created_at),
-        createdAt: Number(payment.created_at),
-      },
-      idempotent,
-    });
-    if (previous) {
-      if (!paymentMatches(previous)) apiError(409, 'receiptId was already used for a different payment request', 'IDEMPOTENCY_CONFLICT');
-      return c.json(paymentResponse(previous, true));
-    }
-
-    const paymentId = uid();
-    const createdAt = now();
-    const status = 'submitted';
-    try {
-      await run(
-        c,
-        `INSERT INTO payments(id,user_id,amount,days,receipt_id,status,notes,referrer_id,created_at)
-         SELECT ?,?,?,?,?,?,?,referrer_id,? FROM users WHERE id=?`,
-        paymentId,
-        userId,
-        amount,
-        days,
-        receiptId,
-        status,
-        notes,
-        createdAt,
-        userId,
-      );
-    } catch {
-      const concurrent = await one<Record<string, unknown>>(c, 'SELECT * FROM payments WHERE user_id=? AND receipt_id=?', userId, receiptId);
-      if (concurrent) {
-        if (!paymentMatches(concurrent)) apiError(409, 'receiptId was already used for a different payment request', 'IDEMPOTENCY_CONFLICT');
-        return c.json(paymentResponse(concurrent, true));
-      }
-      apiError(409, 'Payment request could not be submitted', 'PAYMENT_CREATE_FAILED');
-    }
-    const created = { id: paymentId, amount, days, receipt_id: receiptId, status, notes, created_at: createdAt };
-    await audit(c, 'payment.create', paymentId, { amount, days, status, hasReceipt: true });
-    return c.json(paymentResponse(created, false), 201);
+    me(c);
+    apiError(410, 'إرسال الدفعات من المنصة غير متاح. استخدم طلب التواصل للاشتراك السنوي.', 'PAYMENT_INTAKE_CLOSED');
   });
 
   app.post('/api/quick-links', async (c) => {

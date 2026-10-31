@@ -33,7 +33,6 @@ import {
   PencilLine,
   Plus,
   QrCode,
-  ReceiptText,
   RefreshCw,
   Save,
   Send,
@@ -53,7 +52,7 @@ import './dashboard.css';
 
 type Tab = 'editor' | 'wallet' | 'services' | 'messages' | 'subscription' | 'settings';
 type SaveState = 'saved' | 'unsaved' | 'saving' | 'error';
-type UploadPurpose = 'photo' | 'cover' | 'skill' | 'work' | 'receipt';
+type UploadPurpose = 'photo' | 'cover' | 'skill' | 'work';
 
 type ResumeItem = {
   title: string;
@@ -121,6 +120,7 @@ type DashboardData = {
   wallet?: { balance?: number; [key: string]: unknown };
   ledger?: Record<string, unknown>[];
   payments?: Record<string, unknown>[];
+  subscriptionRequests?: Record<string, unknown>[];
   services?: Service[];
   notifications?: Notification[];
   user?: Record<string, unknown>;
@@ -138,8 +138,7 @@ type UnboundName = {
 };
 type NameAvailability = { name: string; valid: boolean; available: boolean; reason?: string | null; suggestions?: string[] };
 type NameReservation = { name: string; site: Site; createdAt: number };
-type PaymentInstructionsResult = { available?: boolean; instructions?: unknown; reason?: unknown };
-type WalletOperation = 'transfer' | 'redeem';
+type WalletOperation = 'transfer';
 
 type Service = {
   key: string;
@@ -187,10 +186,10 @@ type IdentityInsights = {
 
 const tabs: Array<{ key: Tab; ar: string; en: string; icon: typeof PencilLine }> = [
   { key: 'editor', ar: 'المحرر', en: 'Editor', icon: PencilLine },
-  { key: 'wallet', ar: 'المحفظة', en: 'Wallet', icon: WalletCards },
+  { key: 'wallet', ar: 'رصيد النقاط', en: 'Professional points', icon: WalletCards },
   { key: 'services', ar: 'الخدمات', en: 'Services', icon: Sparkles },
   { key: 'messages', ar: 'الرسائل', en: 'Messages', icon: MessageCircle },
-  { key: 'subscription', ar: 'الاشتراك', en: 'Subscription', icon: ReceiptText },
+  { key: 'subscription', ar: 'العضوية', en: 'Membership', icon: CreditCard },
   { key: 'settings', ar: 'الإعدادات', en: 'Settings', icon: Settings2 },
 ];
 
@@ -395,11 +394,10 @@ export default function Dashboard() {
   const [selectedConversation, setSelectedConversation] = useState<ConversationDetail | null>(null);
   const [messageBody, setMessageBody] = useState('');
   const [messageRecipient, setMessageRecipient] = useState(new URLSearchParams(location.search).get('recipient')||'');
-  const [paymentInstructions, setPaymentInstructions] = useState<PaymentInstructionsResult | null>(null);
-  const [paymentLoading, setPaymentLoading] = useState(false);
   const [quickLink, setQuickLink] = useState<QuickLink | null>(null);
   const [transferForm, setTransferForm] = useState({ recipient: new URLSearchParams(location.search).get('recipient')||'', amount: '' });
-  const [redeemDays, setRedeemDays] = useState('1');
+  const [membershipNote, setMembershipNote] = useState('');
+  const [membershipAction, setMembershipAction] = useState<'trial_extension' | 'annual_contact' | ''>('');
   const [translationConsent, setTranslationConsent] = useState(false);
   const [translationTarget, setTranslationTarget] = useState<TranslationTarget>('en');
   const [nameTransfer, setNameTransfer] = useState({ name: '', recipient: '', confirmed: false });
@@ -409,7 +407,6 @@ export default function Dashboard() {
   const [deletionConfirmed, setDeletionConfirmed] = useState(false);
   const [deletionAction, setDeletionAction] = useState<'archive'|'schedule'|'destroy'>('archive');
   const [deletionSchedule, setDeletionSchedule] = useState('');
-  const [paymentForm, setPaymentForm] = useState({ amount: '', days: '', notes: '', receiptId: '', receiptUrl: '' });
   const [quickFields, setQuickFields] = useState<Record<string, boolean>>({ name: true, title: true, whatsapp: false, email: false, site: true });
   const [quickDays, setQuickDays] = useState('7');
   const [quickMode, setQuickMode] = useState<QuickMode>('professional');
@@ -423,7 +420,6 @@ export default function Dashboard() {
   const [checkingName, setCheckingName] = useState(false);
   const [reservingName, setReservingName] = useState(false);
   const [walletOperation, setWalletOperation] = useState<WalletOperation | ''>('');
-  const [receiptError, setReceiptError] = useState('');
   const [attachingName, setAttachingName] = useState('');
   const [attachTargetId, setAttachTargetId] = useState('');
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
@@ -828,17 +824,14 @@ export default function Dashboard() {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    if (!activeSite && purpose !== 'receipt') {
+    if (!activeSite) {
       notify(tr('احجز أو اختر موقعاً قبل رفع ملفات الهوية.', 'Reserve or choose a site before uploading identity files.'));
       return;
     }
-    if (purpose === 'receipt') setReceiptError('');
     setUploading(purpose);
     try {
-      if (purpose === 'receipt' && !/^application\/pdf$/i.test(file.type) && !file.type.startsWith('image/')) throw new Error(tr('ارفع إيصال PDF أو صورة صالحة.', 'Upload a PDF receipt or valid image.'));
-      const compressed = purpose === 'receipt' && /^application\/pdf$/i.test(file.type)
-        ? file
-        : await compressImage(file, purpose === 'cover' ? 2600 : 1800);
+      if (!file.type.startsWith('image/')) throw new Error(tr('اختر صورة صالحة من جهازك.', 'Choose a valid image from your device.'));
+      const compressed = await compressImage(file, purpose === 'cover' ? 2600 : 1800);
       const body = new FormData();
       body.append('file', compressed);
       body.append('purpose', purpose);
@@ -846,10 +839,9 @@ export default function Dashboard() {
       const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
       if (!result?.id || !result?.url) throw new Error(tr('لم يعُد الخادم بمعرّف وارتباط للملف.', 'The server did not return a file ID and URL.'));
       onUploaded(result);
-      notify(purpose === 'receipt' ? tr('تم رفع الإيصال الخاص بأمان.', 'Private receipt uploaded securely.') : tr('تم تجهيز الصورة ورفعها بصيغة WebP.', 'Your image was prepared and uploaded as WebP.'));
+      notify(tr('تم تجهيز الصورة ورفعها بصيغة WebP.', 'Your image was prepared and uploaded as WebP.'));
     } catch (error) {
       const message = errorMessage(error);
-      if (purpose === 'receipt') setReceiptError(message);
       notify(message);
     }
     finally { setUploading(''); }
@@ -875,25 +867,6 @@ export default function Dashboard() {
     } catch (error) {
       if (ambiguousNetworkFailure(error)) notify(tr('قد يكون التحويل ما زال قيد المعالجة. أعد المحاولة بنفس البيانات فقط؛ سيُعاد استخدام مفتاح الأمان نفسه.', 'The transfer may still be processing. Retry only with the same details; the same safety key will be reused.'));
       else { clearWalletIdempotencyKey('transfer', idempotencyKey); notify(errorMessage(error)); }
-    } finally { setWalletOperation(''); }
-  };
-
-  const redeem = async () => {
-    if (walletOperation) return;
-    const days = Number(redeemDays);
-    if (!Number.isInteger(days) || days < 1) { notify(tr('أدخل عدداً صحيحاً من الأيام.', 'Enter a whole number of days.')); return; }
-    if (!window.confirm(tr(`سيُخصم ${days * 100} نقطة مقابل ${days} يوم استحقاق.`, `${days * 100} points will be redeemed for ${days} entitlement day(s).`))) return;
-    const signature = JSON.stringify({ days });
-    const idempotencyKey = walletIdempotencyKey('redeem', signature);
-    setWalletOperation('redeem');
-    try {
-      await api('/api/wallet/redeem', { method: 'POST', body: JSON.stringify({ days, idempotencyKey }) });
-      clearWalletIdempotencyKey('redeem', idempotencyKey);
-      await loadDashboard();
-      notify(tr('تمت إضافة أيام الاستحقاق ذرّياً.', 'Entitlement days were added atomically.'));
-    } catch (error) {
-      if (ambiguousNetworkFailure(error)) notify(tr('قد يكون الاستبدال ما زال قيد المعالجة. أعد المحاولة بنفس عدد الأيام فقط؛ سيُعاد استخدام مفتاح الأمان نفسه.', 'The redemption may still be processing. Retry only with the same number of days; the same safety key will be reused.'));
-      else { clearWalletIdempotencyKey('redeem', idempotencyKey); notify(errorMessage(error)); }
     } finally { setWalletOperation(''); }
   };
 
@@ -1037,25 +1010,16 @@ export default function Dashboard() {
     catch (error) { notify(errorMessage(error)); }
   };
 
-  const getInstructions = async () => {
-    setPaymentLoading(true);
-    try { const result = await api<PaymentInstructionsResult>('/api/payments/instructions'); setPaymentInstructions(result); }
-    catch (error) { notify(errorMessage(error)); }
-    finally { setPaymentLoading(false); }
-  };
-  const submitPayment = async () => {
-    if (paymentInstructions?.available !== true) {
-      notify(asText(paymentInstructions?.reason) || tr('لا تتوفر تعليمات بنكية نشطة لإرسال الطلب.', 'Active bank instructions are not available for submitting this request.'));
-      return;
-    }
-    const amount = Number(paymentForm.amount); const days = Number(paymentForm.days);
-    if (!paymentForm.receiptId || !Number.isFinite(amount) || amount <= 0 || !Number.isInteger(days) || days <= 0) { notify(tr('أدخل المبلغ والأيام وارفع الإيصال قبل الإرسال.', 'Enter amount and days, then upload the receipt before submitting.')); return; }
+  const requestMembership = async (kind: 'trial_extension' | 'annual_contact') => {
+    if (membershipAction) return;
+    setMembershipAction(kind);
     try {
-      await api('/api/payments', { method: 'POST', body: JSON.stringify({ amount, days, receiptId: paymentForm.receiptId, notes: paymentForm.notes }) });
-      setPaymentForm({ amount: '', days: '', notes: '', receiptId: '', receiptUrl: '' });
+      await api('/api/subscription-requests', { method: 'POST', body: JSON.stringify({ kind, note: membershipNote.trim() }) });
+      setMembershipNote('');
       await loadDashboard();
-      notify(tr('تم إرسال طلب الاشتراك للمراجعة.', 'Subscription request submitted for review.'));
+      notify(kind === 'trial_extension' ? tr('تم إرسال طلب تمديد الفترة المجانية.', 'Your free-period extension request was sent.') : tr('تم إرسال طلب التواصل للاشتراك السنوي.', 'Your annual membership contact request was sent.'));
     } catch (error) { notify(errorMessage(error)); }
+    finally { setMembershipAction(''); }
   };
 
   const saveLock = async () => {
@@ -1144,10 +1108,7 @@ export default function Dashboard() {
   const attachSites = asArray<Site>(dashboard?.sites);
   const attachmentSiteId = attachTargetId || activeSite?.id || attachSites[0]?.id || null;
   const activeSiteUrl = publicSiteUrl(activeSite?.name);
-  const bankIntakeAvailable = paymentInstructions?.available === true;
-  const bankIntakeReason = asText(paymentInstructions?.reason) || (paymentInstructions === null
-    ? tr('اعرض التعليمات الرسمية أولاً قبل إرسال الطلب.', 'Show the official instructions before submitting a request.')
-    : tr('بوابة الحوالة غير نشطة حالياً، لذلك لا يمكن إرسال الطلب.', 'Bank-transfer intake is not active, so this request cannot be submitted.'));
+  const subscriptionRequests = asArray<Record<string, unknown>>(dashboard?.subscriptionRequests);
   const initialReservationFlow = !activeSite && activeTab === 'editor';
   const profileCompletion = useMemo(() => {
     const signals = [draft.name, draft.title, draft.bio, draft.city, draft.photo, draft.experience.length, draft.skills.length, draft.languages.length, draft.socials.length, draft.workImages.length];
@@ -1285,7 +1246,7 @@ export default function Dashboard() {
         </>}
       </section>}
 
-      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} redeemDays={redeemDays} setRedeemDays={setRedeemDays} onTransfer={doTransfer} onRedeem={redeem} onCopyReferral={copyReferral} busyOperation={walletOperation} locale={locale} tr={tr} />}
+      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} onTransfer={doTransfer} onCopyReferral={copyReferral} busyOperation={walletOperation} locale={locale} tr={tr} />}
 
       {activeTab === 'services' && <section className="dashboard-services stack">
         <section className="dashboard-quality-grid dashboard-quality-grid--three">
@@ -1324,9 +1285,9 @@ export default function Dashboard() {
       {activeTab === 'messages' && <MessagesPanel tr={tr} userId={numericId(user?.id)} requests={requests} blocks={asArray<Record<string, unknown>>(messagesData?.blocks)} conversations={conversations} retention={messagesData?.retention} selected={selectedConversation} recipient={messageRecipient} setRecipient={setMessageRecipient} body={messageBody} setBody={setMessageBody} onRequest={requestContact} onDecision={decideContact} onOpen={openConversation} onSend={sendMessage} onEmoji={(emoji) => setMessageBody((current) => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${emoji}`.slice(0, 1_000))} onEnd={endConversation} onBlock={blockConversationUser} onReport={reportConversation} expired={sessionExpired} locale={locale} />}
 
       {activeTab === 'subscription' && <section className="dashboard-subscription stack">
-        <section className="card dashboard-entitlement"><div><p className="dashboard-kicker"><CreditCard size={15}/>{tr('الاستحقاق', 'Entitlement')}</p><h2>{tr('التجربة والاشتراك', 'Trial and subscription')}</h2><p className="muted">{tr('يبقى موقعك الأساسي وبياناته وQR متاحين بعد انتهاء التجربة ما لم تعلّقه الإدارة. الخدمات الإضافية تتبع الاستحقاق الفعلي.', 'Your core site, data, and QR remain available after trial expiration unless administration suspends it. Additional services follow actual entitlement.')}</p></div><dl><div><dt>{tr('نهاية التجربة', 'Trial end')}</dt><dd>{formatDate(Number(user?.trial_until), locale)}</dd></div><div><dt>{tr('نهاية الاستحقاق', 'Entitlement end')}</dt><dd>{formatDate(Number(user?.entitlement_until), locale)}</dd></div></dl></section>
-        <section className="card"><div className="dashboard-section-heading"><div><ReceiptText size={18}/><h2>{tr('طلب اشتراك عبر الحوالة', 'Bank-transfer subscription request')}</h2></div><button className="button button--quiet" onClick={() => void getInstructions()} disabled={paymentLoading}>{paymentLoading ? <RefreshCw className="spin" size={16}/> : <Eye size={16}/>}{tr('عرض التعليمات الرسمية', 'Show official instructions')}</button></div>{paymentInstructions === null ? <p className="muted">{tr('لم تُحمّل تعليمات بنكية رسمية بعد. لا يمكننا اختلاق بيانات تحويل أو الادعاء باستقبال دفعة قبل إعدادها من الإدارة.', 'Official bank instructions have not been loaded. We cannot invent bank details or claim to accept payment before administration configures them.')}</p> : <PaymentInstructions value={paymentInstructions} tr={tr} />}{!bankIntakeAvailable && <p className="dashboard-error" role="status">{bankIntakeReason}</p>}{receiptError && <p className="dashboard-error" role="status">{receiptError}</p>}<div className="dashboard-payment-form"><label><span>{tr('المبلغ المتفق عليه (SAR)', 'Agreed amount (SAR)')}</span><input className="field" type="number" min="0.01" step="0.01" value={paymentForm.amount} onChange={(event) => setPaymentForm({ ...paymentForm, amount: event.target.value })}/></label><label><span>{tr('أيام الاستحقاق', 'Entitlement days')}</span><input className="field" type="number" min="1" step="1" value={paymentForm.days} onChange={(event) => setPaymentForm({ ...paymentForm, days: event.target.value })}/></label><label className="dashboard-payment-note"><span>{tr('ملاحظة اختيارية', 'Optional note')}</span><input className="field" value={paymentForm.notes} onChange={(event) => setPaymentForm({ ...paymentForm, notes: event.target.value })}/></label><UploadControl label={paymentForm.receiptId ? tr('تم رفع الإيصال', 'Receipt uploaded') : tr('رفع إيصال خاص', 'Upload private receipt')} purpose="receipt" uploading={uploading} tr={tr} onChange={(event) => void uploadImage(event, 'receipt', (upload) => setPaymentForm({ ...paymentForm, receiptId: upload.id, receiptUrl: upload.url }))} /><button className="button" disabled={!bankIntakeAvailable} title={!bankIntakeAvailable ? bankIntakeReason : undefined} onClick={() => void submitPayment()}><Send size={17}/>{tr('إرسال الطلب للمراجعة', 'Submit for review')}</button></div></section>
-        {asArray<Record<string, unknown>>(dashboard?.payments).length > 0 && <section className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('طلباتك السابقة', 'Your previous requests')}</h2></div></div>{asArray<Record<string, unknown>>(dashboard?.payments).map((payment, index) => <div className="dashboard-history-row" key={String(payment.id ?? index)}><span>{String(payment.status ?? 'requested')}</span><p>{Number(payment.amount ?? 0).toLocaleString(locale)} SAR · {String(payment.days ?? '')} {tr('يوم', 'day(s)')}</p><time>{formatDate(Number(payment.created_at), locale)}</time></div>)}</section>}
+        <section className="card dashboard-entitlement"><div><p className="dashboard-kicker"><CreditCard size={15}/>{tr('العضوية', 'Membership')}</p><h2>{tr('فترة مجانية ثم عضوية سنوية', 'Free period, then annual membership')}</h2><p className="muted">{tr('تبدأ عضويتك بفترة مجانية مدتها سبعة أيام. يبقى موقعك وبياناته متاحين وفق إعداداتك، وتُرتب العضوية السنوية بتواصل مباشر مع الإدارة.', 'Your membership begins with a seven-day free period. Your site and data remain available under your settings, and annual membership is arranged directly with administration.')}</p></div><dl><div><dt>{tr('نهاية الفترة المجانية', 'Free period ends')}</dt><dd>{formatDate(Number(user?.trial_until), locale)}</dd></div><div><dt>{tr('نهاية الاستحقاق', 'Membership entitlement ends')}</dt><dd>{formatDate(Number(user?.entitlement_until), locale)}</dd></div></dl></section>
+        <section className="card dashboard-membership-request"><div className="dashboard-section-heading"><div><MessageCircle size={18}/><h2>{tr('تواصل مع الإدارة', 'Contact administration')}</h2></div></div><p className="muted">{tr('يمكنك طلب تمديد الفترة المجانية أو بدء تواصل بشأن العضوية السنوية، وسيصلك قرار الإدارة على طلبك.', 'You can request a free-period extension or start a conversation about annual membership, and the administration decision will reach you here.')}</p><label><span>{tr('رسالة اختيارية للإدارة', 'Optional note to administration')}</span><textarea className="field" rows={3} maxLength={800} value={membershipNote} onChange={(event) => setMembershipNote(event.target.value)} placeholder={tr('اكتب ما يلزم لمراجعة طلبك.', 'Add anything useful for reviewing your request.')}/></label><div className="dashboard-membership-actions"><button className="button button--quiet" disabled={Boolean(membershipAction)} onClick={() => void requestMembership('trial_extension')}><Clock3 size={16}/>{membershipAction === 'trial_extension' ? tr('جارٍ الإرسال', 'Sending') : tr('طلب تمديد الفترة المجانية', 'Request a free-period extension')}</button><button className="button" disabled={Boolean(membershipAction)} onClick={() => void requestMembership('annual_contact')}><MessageCircle size={16}/>{membershipAction === 'annual_contact' ? tr('جارٍ الإرسال', 'Sending') : tr('طلب تواصل للاشتراك السنوي', 'Request annual membership contact')}</button></div></section>
+        {subscriptionRequests.length > 0 && <section className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('متابعة طلبات العضوية', 'Membership request updates')}</h2></div></div><div className="dashboard-request-history">{subscriptionRequests.map((request, index) => <div className="dashboard-history-row" key={String(request.id ?? index)}><span>{request.kind === 'trial_extension' ? tr('تمديد الفترة المجانية', 'Free-period extension') : tr('عضوية سنوية', 'Annual membership')}</span><p>{String(request.admin_reason || request.member_note || tr('قيد مراجعة الإدارة.', 'Awaiting administration review.'))}</p><strong className={`dashboard-status ${String(request.status || '')}`}>{String(request.status || 'pending')}</strong><time>{formatDate(Number(request.decided_at ?? request.created_at), locale)}</time></div>)}</div></section>}
       </section>}
 
       {activeTab === 'settings' && <section className="dashboard-settings stack">
@@ -1479,15 +1440,13 @@ function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hi
 }
 function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) { const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]]; const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] }); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div><label><span>{tr('طلب إعادة توجيه خارجي', 'External redirect request')}</span><input className="field" type="url" placeholder="https://" value={draft.redirect} onChange={(event) => onChange({ redirect: event.target.value })}/><small className="muted">{tr('تُنفذ إعادة التوجيه بعد موافقة الإدارة والتحقق من الوجهة.', 'Redirect is applied only after administration approval and destination validation.')}</small></label></>;
 }
-function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept={purpose === 'receipt' ? 'application/pdf,image/*' : 'image/*'} onChange={onChange} disabled={Boolean(uploading)}/></label>; }
-function MidPointMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="MIDPOINT"><Gift size={compact ? 13 : 16}/><span>MIDPOINT</span></span>; }
-function MidPointAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><MidPointMark compact/></span>; }
-function WalletPanel({ balance, ledger, transferForm, setTransferForm, redeemDays, setRedeemDays, onTransfer, onRedeem, onCopyReferral, busyOperation, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; redeemDays: string; setRedeemDays: (value: string) => void; onTransfer: () => void; onRedeem: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; locale: string; tr: (ar: string, en: string) => string }) {
+function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/></label>; }
+function ProfessionalPointsMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="Professional points"><Gift size={compact ? 13 : 16}/><span>{compact ? 'نقاط' : 'نقاط التميز'}</span></span>; }
+function ProfessionalPointsAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><ProfessionalPointsMark compact/></span>; }
+function WalletPanel({ balance, ledger, transferForm, setTransferForm, onTransfer, onCopyReferral, busyOperation, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; onTransfer: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; locale: string; tr: (ar: string, en: string) => string }) {
   const amount = Number(transferForm.amount);
-  const days = Number(redeemDays);
   const transferBusy = busyOperation === 'transfer';
-  const redeemBusy = busyOperation === 'redeem';
-  return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('نقاط الوسط', 'Mid Points')}</p><h2><MidPointAmount value={balance} locale={locale}/></h2><p>{tr('نقاط غير نقدية؛ لا تُسحب أو تُستبدل بالنقد.', 'Non-cash points; they cannot be withdrawn or exchanged for cash.')}</p></div><div className="dashboard-wallet-mark"><MidPointMark/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('تحويل نقاط', 'Transfer points')}</h2></div></div><p className="muted">{tr('من 100 إلى 1,000 MIDPOINT للعملية، بلا رسوم أو حدّ لعدد العمليات. لا يمكن الإرسال إلى حسابك نفسه أو فوق رصيدك.', '100 to 1,000 MIDPOINT per transfer, no fee and no count limit. You cannot send to yourself or above your balance.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} disabled={Boolean(busyOperation)} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} disabled={Boolean(busyOperation)} placeholder="100–1,000"/><MidPointMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><MidPointAmount value={amount} locale={locale}/></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={transferBusy} onClick={onTransfer}>{transferBusy ? <RefreshCw className="spin" size={16}/> : <Send size={16}/>} {transferBusy ? tr('جارٍ التحويل', 'Transferring') : tr('تحويل', 'Transfer')}</button></div></article><article className="card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('استبدال الاستحقاق', 'Redeem entitlement')}</h2></div></div><p className="muted">{tr('كل 100 MIDPOINT تضيف يوماً كاملاً إلى استحقاق الخدمات. تُطبّق العملية ذرّياً لدى الخادم.', 'Every 100 MIDPOINT adds a full entitlement day. The server applies this atomically.')}</p><div className="dashboard-inline-form"><input className="field" type="number" min="1" step="1" value={redeemDays} onChange={(event) => setRedeemDays(event.target.value)} disabled={Boolean(busyOperation)} aria-label={tr('عدد الأيام', 'Number of days')}/>{Number.isInteger(days) && days > 0 && <span className="dashboard-point-preview"><MidPointAmount value={days * 100} locale={locale}/><small>{tr('مقابل', 'for')} {days} {tr('يوم', 'day(s)')}</small></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={redeemBusy} onClick={onRedeem}>{redeemBusy ? <RefreshCw className="spin" size={16}/> : <Gift size={16}/>}<MidPointMark compact/>{redeemBusy ? tr('جارٍ الاستبدال', 'Redeeming') : tr('استبدال', 'Redeem')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('تُضاف', 'A')} <MidPointAmount value={1000} locale={locale}/> {tr('مرة واحدة فقط عند أول اشتراك مدفوع مؤهل ومعتمد للشخص المُحال، وليس عند التسجيل.', 'is added once only when the referred person’s first eligible paid subscription is approved, not at registration.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('دفتر الحركات', 'Ledger')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><MidPointAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed ledger entries to show yet.')} />}</section></section>;
+  return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('رصيد نقاط التميز المهني', 'Professional excellence points')}</p><h2><ProfessionalPointsAmount value={balance} locale={locale}/></h2><p>{tr('رصيد تقديري غير نقدي؛ لا يُشترى ولا يُسترد أو يُحوّل إلى نقود أو استحقاق.', 'A non-cash recognition balance. It is not sold, redeemed, or converted to cash or entitlement.')}</p></div><div className="dashboard-wallet-mark"><ProfessionalPointsMark/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('إهداء نقاط', 'Gift points')}</h2></div></div><p className="muted">{tr('يمكنك إهداء 100 إلى 1,000 نقطة تقدير مهنية للحسابات الأخرى. راجع المستفيد والعدد قبل التأكيد.', 'You may gift 100 to 1,000 professional-recognition points to another account. Review the recipient and amount before confirming.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} disabled={Boolean(busyOperation)} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} disabled={Boolean(busyOperation)} placeholder="100–1,000"/><ProfessionalPointsMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><ProfessionalPointsAmount value={amount} locale={locale}/></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={transferBusy} onClick={onTransfer}>{transferBusy ? <RefreshCw className="spin" size={16}/> : <Send size={16}/>} {transferBusy ? tr('جارٍ الإهداء', 'Gifting') : tr('إهداء', 'Gift')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('شارك الرابط مع من قد يستفيد من بناء حضور مهني مستقل.', 'Share this link with people who may benefit from an independent professional presence.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('سجل النقاط', 'Points history')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><ProfessionalPointsAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed movements to show yet.')} />}</section></section>;
 }
 function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { mode: QuickMode; setMode: (value: QuickMode) => void; fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) {
   const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] };
@@ -1547,15 +1506,6 @@ function TranslationEditor({ target, translation, onChange, tr }: { target: Tran
   ];
   return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
-function PaymentInstructions({ value, tr }: { value: PaymentInstructionsResult; tr: (ar: string, en: string) => string }) {
-  if (value.available !== true) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{asText(value.reason) || tr('لا توجد بيانات بنكية رسمية منشورة حالياً؛ لا يمكن إكمال طلب الحوالة.', 'No official bank details are currently published; a bank-transfer request cannot be completed.')}</div>;
-  if (typeof value.instructions === 'string' && value.instructions.trim()) return <pre className="dashboard-bank-details">{value.instructions}</pre>;
-  const details = value.instructions && typeof value.instructions === 'object' && !Array.isArray(value.instructions) ? value.instructions as Record<string, unknown> : {};
-  const fields = Object.entries(details).filter(([, item]) => typeof item === 'string' || typeof item === 'number');
-  if (!fields.length) return <div className="dashboard-bank-empty"><AlertTriangle size={18}/>{tr('لا توجد بيانات بنكية رسمية مكتملة لإرسال الطلب.', 'No complete official bank details are available for this request.')}</div>;
-  return <dl className="dashboard-bank-details">{fields.map(([key, item]) => <div key={key}><dt>{key}</dt><dd>{String(item)}</dd></div>)}</dl>;
-}
-
 function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
