@@ -38,4 +38,12 @@ describe('public disclosure boundary', () => {
     expect(migration).toContain("'terms'");
     for (const restrictedValue of restricted) expect(migration).not.toContain(restrictedValue);
   });
+
+  it('keeps the current member-only terms copy in the non-destructive cleanup migration', () => {
+    const migration = read('migrations/0015_terms_current_product_scope.sql');
+    expect(migration).toContain('حفظ المسودة أو رفع ملف لا ينشره تلقائياً');
+    expect(migration).toContain('نقاط التميز المهني رصيد خدمات غير نقدي');
+    expect(migration).toContain('Saving a draft or uploading a file does not publish it automatically');
+    expect(migration).toContain('Professional Excellence Points are non-cash service credits');
+  });
 });
