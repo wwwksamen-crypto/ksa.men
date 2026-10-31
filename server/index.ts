@@ -12,6 +12,7 @@ import { registerOperations } from './operations';
 import { registerIntelligence, fetchRadar } from './intelligence';
 import { registerPublic, publishedForHost, personalGate } from './public';
 import { runDataLifecycle } from './lifecycle';
+import { runSeasonalNotices } from './loyalty';
 
 const app = new Hono<Bindings>();
 const escape = (text: string) => text.replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]!));
@@ -92,9 +93,13 @@ app.use('*', async (c, next) => {
 function lockHTML(c: any, lock: any) {
   return `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>KSA.MEN — ${escape(lock.reason || 'صيانة')}</title><style>@font-face{font-family:Tajawal;src:url('/assets/Tajawal-Regular.ttf')}body{margin:0;background:#07120f;color:#f5f7f6;font-family:Tajawal,Arial;min-height:100vh;display:grid;place-items:center}main{padding:30px;text-align:center;width:min(90vw,460px);box-sizing:border-box;border:1px solid #294237;border-radius:24px;background:#0b1b14}img{max-width:190px;width:50%}input,button{font:inherit;border:1px solid #345342;border-radius:12px;padding:14px;box-sizing:border-box;width:100%;margin-top:12px}input{background:#10291c;color:white}button{background:#006837;color:white}a{color:#88e8b2}#error{color:#ffc7b7}</style></head><body><main><img src="/assets/logo.webp" alt="KSA.MEN"><h1>${escape(lock.reason || 'صيانة')}</h1><p>${escape(lock.message || 'ظهور رقمي يليق بك')}</p>${lock.passwordHash ? '<form id="gate"><input id="password" type="password" autocomplete="current-password" aria-label="كلمة مرور الدخول الخاص" placeholder="كلمة مرور الدخول الخاص" required><button>دخول</button><p id="error" role="alert"></p></form><script src="/gate.js" defer></script>' : ''}<p><a href="https://${c.env.ROOT_DOMAIN}/auth">دخول الحساب والإدارة</a></p></main></body></html>`;
 }
+function publicSeason(value: unknown) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return { enabled: source.enabled === true, occasion: typeof source.occasion === 'string' ? source.occasion : '', starts_at: Number(source.starts_at ?? source.startsAt ?? 0), ends_at: Number(source.ends_at ?? source.endsAt ?? 0) };
+}
 app.get('/api/platform', async c => {
   const lock: any = await setting(c, 'lock', { mode: 'private' });
-  return c.json({ lock: { mode: lock.mode, message: lock.message, reason: lock.reason, passwordEnabled: !!lock.passwordHash }, access: lock.mode === 'open' || ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '') || await gate(c, lock), contact: await setting(c, 'contact'), season: await setting(c, 'season') });
+  return c.json({ lock: { mode: lock.mode, message: lock.message, reason: lock.reason, passwordEnabled: !!lock.passwordHash }, access: lock.mode === 'open' || ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '') || await gate(c, lock), contact: await setting(c, 'contact'), season: publicSeason(await setting(c, 'season')) });
 });
 app.post('/api/gate', async c => {
   const lock: any = await setting(c, 'lock');
@@ -145,6 +150,7 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(fetchRadar(env));
     ctx.waitUntil(runDataLifecycle(env));
+    ctx.waitUntil(runSeasonalNotices(env));
     if (new Date(event.scheduledTime).getUTCHours() === 0) ctx.waitUntil(makeBackup(env));
   },
 };

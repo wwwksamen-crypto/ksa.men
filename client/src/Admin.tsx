@@ -39,6 +39,7 @@ type AdminTabDefinition = {
 type AdminData = Partial<Record<Exclude<AdminTab, 'content' | 'pricing' | 'lock' | 'backup'>, unknown>> & {
   settings?: unknown;
   transfers?: unknown;
+  competitionEntries?: unknown;
 };
 
 type ContentDraft = {
@@ -53,6 +54,16 @@ type SeasonalForm = {
   occasion: string;
   startsAt: string;
   endsAt: string;
+  competitionEnabled: boolean;
+  competitionTitle: string;
+  competitionTerms: string;
+  competitionEndsAt: string;
+  competitionUrl: string;
+  telegramUrl: string;
+  whatsappUrl: string;
+  youtubeUrl: string;
+  promotionTitle: string;
+  promotionUrl: string;
 };
 
 type BackupItem = {
@@ -341,7 +352,7 @@ export default function Admin() {
   const [lock, setLock] = useState({ mode: '', reason: '', message: '', password: '' });
   const [bankInstructions, setBankInstructions] = useState('');
   const [prices, setPrices] = useState('');
-  const [seasonal, setSeasonal] = useState<SeasonalForm>({ enabled: false, occasion: 'national_day', startsAt: '', endsAt: '' });
+  const [seasonal, setSeasonal] = useState<SeasonalForm>({ enabled: false, occasion: 'national_day', startsAt: '', endsAt: '', competitionEnabled: false, competitionTitle: '', competitionTerms: '', competitionEndsAt: '', competitionUrl: '', telegramUrl: '', whatsappUrl: '', youtubeUrl: '', promotionTitle: '', promotionUrl: '' });
   const [nightlyBackups, setNightlyBackups] = useState<BackupItem[]>([]);
   const [backupVerification, setBackupVerification] = useState<Record<string, MaybeRecord>>({});
   const [backupsLoaded, setBackupsLoaded] = useState(false);
@@ -411,8 +422,10 @@ export default function Admin() {
               ? [['services', '/api/admin/services']]
               : target === 'names' && owner
                 ? [['names', '/api/admin/names'], ['transfers', '/api/admin/transfers']]
-                : ['content', 'pricing', 'lock'].includes(target) && owner
-                  ? [['settings', '/api/admin/settings']]
+                : target === 'content' && owner
+                  ? [['settings', '/api/admin/settings'], ['competitionEntries', '/api/admin/competition-entries']]
+                  : ['pricing', 'lock'].includes(target) && owner
+                    ? [['settings', '/api/admin/settings']]
                   : target === 'economics' && owner
                     ? [['economics', '/api/admin/economics']]
                     : target === 'audit' && owner
@@ -484,6 +497,7 @@ export default function Admin() {
   const transfers = useMemo(() => records(data.transfers), [data.transfers]);
   const audit = useMemo(() => records(data.audit), [data.audit]);
   const membershipRequests = useMemo(() => records(data.membership), [data.membership]);
+  const competitionEntries = useMemo(() => records(record(data.competitionEntries)?.entries ?? data.competitionEntries), [data.competitionEntries]);
   const governance = useMemo(() => record(data.governance)?.governance ?? record(data.governance), [data.governance]);
 
   useEffect(() => {
@@ -531,11 +545,17 @@ export default function Admin() {
     const seasonalValue = field(settings, 'seasonal', 'season');
     const parsedSeasonal = record(seasonalValue);
     if (parsedSeasonal) {
+      const competition = record(parsedSeasonal.competition) ?? {};
+      const communities = record(parsedSeasonal.communities) ?? {};
+      const promotion = record(parsedSeasonal.promotion) ?? {};
       setSeasonal({
         enabled: Boolean(parsedSeasonal.enabled),
         occasion: text(parsedSeasonal.occasion, 'national_day'),
         startsAt: epochToRiyadhInput(field(parsedSeasonal, 'starts_at', 'startsAt')),
         endsAt: epochToRiyadhInput(field(parsedSeasonal, 'ends_at', 'endsAt')),
+        competitionEnabled: Boolean(competition.enabled), competitionTitle: text(competition.title, ''), competitionTerms: text(competition.terms, ''), competitionEndsAt: epochToRiyadhInput(field(competition, 'ends_at', 'endsAt')), competitionUrl: text(competition.url, ''),
+        telegramUrl: text(communities.telegram, ''), whatsappUrl: text(communities.whatsapp, ''), youtubeUrl: text(communities.youtube, ''),
+        promotionTitle: text(promotion.title, ''), promotionUrl: text(promotion.url, ''),
       });
     }
     const officialBankInfo = field(settings, 'bank_instructions', 'bank', 'payment_instructions');
@@ -640,6 +660,14 @@ export default function Admin() {
     void mutate(`membership-${id}-${decision}`, () => api(`/api/admin/subscription-requests/${encodeURIComponent(id)}/decision`, {
       method: 'POST', body: JSON.stringify({ decision, reason, ...(kind === 'trial_extension' ? { days: 7 } : {}) }),
     }), { fresh: true, success: decision === 'approve' ? (kind === 'annual_contact' ? tr('تم تفعيل العضوية السنوية لمدة عام وإبلاغ العضو.', 'The annual membership was activated for one year and the member was notified.') : tr('تم اعتماد تمديد الفترة المجانية وإبلاغ العضو.', 'The free-period extension was approved and the member was notified.')) : decision === 'changes_requested' ? tr('أُرسل طلب التوضيح إلى العضو.', 'The clarification request was sent to the member.') : tr('تم حفظ القرار وإبلاغ العضو.', 'The decision was recorded and the member was notified.'), reloadTab: 'membership' });
+  };
+
+  const decideCompetition = (entry: JsonRecord, decision: 'winner' | 'not_selected') => {
+    const id = idOf(entry);
+    if (!id || text(field(entry, 'status'), '').toLowerCase() !== 'entered') return;
+    void mutate(`competition-${id}-${decision}`, () => api(`/api/admin/competition-entries/${encodeURIComponent(id)}/decision`, {
+      method: 'POST', body: JSON.stringify({ decision }),
+    }), { fresh: true, success: decision === 'winner' ? tr('تم اعتماد الفائز وإبلاغه داخل مساحته وبريده عند تهيئة القناة.', 'The winner was approved and notified in their space and by email when configured.') : tr('تم تسجيل النتيجة وإبلاغ العضو.', 'The result was recorded and the member was notified.'), reloadTab: 'content' });
   };
 
   const generateGovernanceReport = () => {
@@ -858,12 +886,19 @@ export default function Admin() {
       <SeasonPanel tr={tr} seasonal={seasonal} setSeasonal={setSeasonal} busy={busy} setError={setError} onSave={() => {
         const startsAt = riyadhInputToEpoch(seasonal.startsAt);
         const endsAt = riyadhInputToEpoch(seasonal.endsAt);
+        const competitionEndsAt = riyadhInputToEpoch(seasonal.competitionEndsAt);
         if (seasonal.enabled && (!startsAt || !endsAt || endsAt <= startsAt)) {
           setError(tr('للتفعيل، أدخل نافذة زمنية صحيحة ومتزايدة بتوقيت الرياض.', 'To enable, provide a valid ascending time window in Riyadh time.'));
           return;
         }
-        void mutate('seasonal', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'season', value: { enabled: seasonal.enabled, occasion: seasonal.occasion, starts_at: startsAt, ends_at: endsAt } }) }), { fresh: true, success: tr('حُفظت جدولة المظهر الموسمي بتوقيت الرياض.', 'The seasonal appearance schedule was saved in Riyadh time.') });
+        if (seasonal.competitionEnabled && (!seasonal.competitionTitle.trim() || !competitionEndsAt || competitionEndsAt <= Math.floor(Date.now() / 1000))) {
+          setError(tr('المسابقة المعلنة تحتاج عنواناً وموعد نهاية مستقبلياً.', 'An announced competition needs a title and a future end time.'));
+          return;
+        }
+        const value = { enabled: seasonal.enabled, occasion: seasonal.occasion, starts_at: startsAt, ends_at: endsAt, competition: { enabled: seasonal.competitionEnabled, title: seasonal.competitionTitle, terms: seasonal.competitionTerms, ends_at: competitionEndsAt, url: seasonal.competitionUrl }, communities: { telegram: seasonal.telegramUrl, whatsapp: seasonal.whatsappUrl, youtube: seasonal.youtubeUrl }, promotion: { title: seasonal.promotionTitle, url: seasonal.promotionUrl } };
+        void mutate('seasonal', () => api('/api/admin/settings', { method: 'PUT', body: JSON.stringify({ key: 'season', value }) }), { fresh: true, success: tr('حُفظت جدولة المناسبة والمسابقة والقنوات المعتمدة.', 'The occasion schedule, competition, and approved channels were saved.') });
       }} />
+      <CompetitionEntriesPanel entries={competitionEntries} busy={busy} onDecide={decideCompetition} tr={tr} lang={lang} />
     </div>;
   };
 
@@ -1057,7 +1092,12 @@ function SeasonPanel(props: {
   onSave: () => void;
 }) {
   const { tr, seasonal, setSeasonal, busy, onSave } = props;
-  return <section className="card stack"><div><h2>{tr('المظهر الموسمي', 'Seasonal appearance')}</h2><p className="muted">{tr('المدخلات المرئية تُفسر بتوقيت Asia/Riyadh وتتحول إلى Epoch بالثواني فقط عند الحفظ. لا يُفعّل أي مظهر بلا نافذة صالحة.', 'Visible inputs are interpreted in Asia/Riyadh and converted to epoch seconds only on save. No appearance is enabled without a valid window.')}</p></div><div className="admin-form-pair"><label className="field"><span>{tr('المناسبة', 'Occasion')}</span><select value={seasonal.occasion} onChange={(event) => setSeasonal((value) => ({ ...value, occasion: event.target.value }))}><option value="eid_al_fitr">{tr('عيد الفطر', 'Eid al-Fitr')}</option><option value="eid_al_adha">{tr('عيد الأضحى', 'Eid al-Adha')}</option><option value="national_day">{tr('اليوم الوطني السعودي', 'Saudi National Day')}</option><option value="founding_day">{tr('يوم التأسيس السعودي', 'Founding Day')}</option></select></label><label className="field admin-check"><input type="checkbox" checked={seasonal.enabled} onChange={(event) => setSeasonal((value) => ({ ...value, enabled: event.target.checked }))} /><span>{tr('تفعيل المظهر خلال النافذة', 'Enable appearance within this window')}</span></label><label className="field"><span>{tr('البداية — الرياض', 'Starts — Riyadh')}</span><input type="datetime-local" value={seasonal.startsAt} onChange={(event) => setSeasonal((value) => ({ ...value, startsAt: event.target.value }))} /></label><label className="field"><span>{tr('النهاية — الرياض', 'Ends — Riyadh')}</span><input type="datetime-local" value={seasonal.endsAt} onChange={(event) => setSeasonal((value) => ({ ...value, endsAt: event.target.value }))} /></label></div><button className="button" type="button" disabled={busy === 'seasonal'} onClick={onSave}>{tr('حفظ جدولة المظهر', 'Save appearance schedule')}</button></section>;
+  const update = (patch: Partial<SeasonalForm>) => setSeasonal((value) => ({ ...value, ...patch }));
+  return <section className="card stack"><div><h2>{tr('المناسبة والبرامج الخاصة', 'Occasion and private programmes')}</h2><p className="muted">{tr('تظهر لمسات المناسبة في الواجهة العامة خلال نافذتها. المسابقات والمجتمعات لا تظهر إلا للأعضاء داخل ركن الولاء.', 'Occasion touches appear publicly during their window. Competitions and communities appear only to members in the loyalty corner.')}</p></div><div className="admin-form-pair"><label className="field"><span>{tr('المناسبة', 'Occasion')}</span><select value={seasonal.occasion} onChange={(event) => update({ occasion: event.target.value })}><option value="eid_al_fitr">{tr('عيد الفطر', 'Eid al-Fitr')}</option><option value="eid_al_adha">{tr('عيد الأضحى', 'Eid al-Adha')}</option><option value="national_day">{tr('اليوم الوطني السعودي', 'Saudi National Day')}</option><option value="founding_day">{tr('يوم التأسيس السعودي', 'Founding Day')}</option></select></label><label className="field admin-check"><input type="checkbox" checked={seasonal.enabled} onChange={(event) => update({ enabled: event.target.checked })} /><span>{tr('تفعيل المظهر خلال النافذة', 'Enable appearance within this window')}</span></label><label className="field"><span>{tr('البداية — الرياض', 'Starts — Riyadh')}</span><input type="datetime-local" value={seasonal.startsAt} onChange={(event) => update({ startsAt: event.target.value })} /></label><label className="field"><span>{tr('النهاية — الرياض', 'Ends — Riyadh')}</span><input type="datetime-local" value={seasonal.endsAt} onChange={(event) => update({ endsAt: event.target.value })} /></label></div><fieldset className="admin-season-fieldset"><legend>{tr('مسابقة الأعضاء', 'Member competition')}</legend><div className="admin-form-pair"><label className="field admin-check"><input type="checkbox" checked={seasonal.competitionEnabled} onChange={(event) => update({ competitionEnabled: event.target.checked })} /><span>{tr('إعلان المسابقة في ركن الولاء', 'Announce competition in loyalty corner')}</span></label><label className="field"><span>{tr('عنوان المسابقة', 'Competition title')}</span><input value={seasonal.competitionTitle} maxLength={160} onChange={(event) => update({ competitionTitle: event.target.value })} /></label><label className="field"><span>{tr('نهاية التسجيل — الرياض', 'Entry deadline — Riyadh')}</span><input type="datetime-local" value={seasonal.competitionEndsAt} onChange={(event) => update({ competitionEndsAt: event.target.value })} /></label><label className="field"><span>{tr('رابط الشروط HTTPS', 'Terms HTTPS link')}</span><input dir="ltr" type="url" value={seasonal.competitionUrl} onChange={(event) => update({ competitionUrl: event.target.value })} /></label><label className="field admin-form-wide"><span>{tr('شروط مختصرة تظهر للعضو', 'Brief terms visible to members')}</span><textarea rows={3} maxLength={1500} value={seasonal.competitionTerms} onChange={(event) => update({ competitionTerms: event.target.value })} /></label></div></fieldset><fieldset className="admin-season-fieldset"><legend>{tr('المجتمعات والقنوات المعتمدة', 'Official communities and channels')}</legend><div className="admin-form-pair"><label className="field"><span>Telegram HTTPS</span><input dir="ltr" type="url" value={seasonal.telegramUrl} onChange={(event) => update({ telegramUrl: event.target.value })} /></label><label className="field"><span>WhatsApp HTTPS</span><input dir="ltr" type="url" value={seasonal.whatsappUrl} onChange={(event) => update({ whatsappUrl: event.target.value })} /></label><label className="field"><span>YouTube HTTPS</span><input dir="ltr" type="url" value={seasonal.youtubeUrl} onChange={(event) => update({ youtubeUrl: event.target.value })} /></label><label className="field"><span>{tr('عنوان رابط ترويجي', 'Promotional-link title')}</span><input value={seasonal.promotionTitle} maxLength={120} onChange={(event) => update({ promotionTitle: event.target.value })} /></label><label className="field"><span>{tr('رابط ترويجي HTTPS', 'Promotional HTTPS link')}</span><input dir="ltr" type="url" value={seasonal.promotionUrl} onChange={(event) => update({ promotionUrl: event.target.value })} /></label></div></fieldset><button className="button" type="button" disabled={busy === 'seasonal'} onClick={onSave}>{tr('حفظ البرامج', 'Save programmes')}</button></section>;
+}
+
+function CompetitionEntriesPanel({ entries, busy, onDecide, tr, lang }: { entries: JsonRecord[]; busy: string | null; onDecide: (entry: JsonRecord, decision: 'winner' | 'not_selected') => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) {
+  return <section className="card stack"><div><h2>{tr('مشاركات المسابقة', 'Competition entries')}</h2><p className="muted">{tr('هذه قائمة المشاركِين الخاصة بالمشرف الرئيسي. يعتمد الفائز من هنا ويصل القرار لمساحة العضو.', 'This private list is for the principal administrator. Approve winners here and the decision reaches the member space.')}</p></div>{entries.length ? <div className="admin-membership-grid">{entries.map((entry) => { const id = idOf(entry); const pending = text(field(entry, 'status'), '').toLowerCase() === 'entered'; return <article className="admin-membership-card" key={id}><header><div><p className="admin-eyebrow">{text(field(entry, 'competition_key'))}</p><h3>{text(field(entry, 'name', 'email'))}</h3><p className="muted">{text(field(entry, 'email'))} · {asDate(field(entry, 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(entry, 'status'))}`}>{text(field(entry, 'status'))}</span></header>{pending && <div className="admin-actions"><button className="button" type="button" disabled={Boolean(busy?.startsWith(`competition-${id}-`))} onClick={() => onDecide(entry, 'winner')}>{tr('اعتماد فائز', 'Approve winner')}</button><button className="button button-secondary" type="button" disabled={Boolean(busy?.startsWith(`competition-${id}-`))} onClick={() => onDecide(entry, 'not_selected')}>{tr('إكمال النتيجة', 'Complete result')}</button></div>}</article>; })}</div> : <Empty title={tr('لا توجد مشاركات مسجلة بعد.', 'No entries are recorded yet.')} />}</section>;
 }
 
 type UserDetailProps = {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import {
   AlertTriangle,
   ArrowDownToLine,
+  ArrowUpRight,
   ArrowLeftRight,
   BadgeCheck,
   Ban,
@@ -47,6 +48,7 @@ import {
   X,
   Youtube,
 } from 'lucide-react';
+import QRCode from 'qrcode';
 import { api, useApp } from './lib';
 import './dashboard.css';
 
@@ -75,6 +77,7 @@ type ProfileDraft = {
   city: string;
   country: string;
   photo: string;
+  avatarMode: 'photo' | 'monogram';
   cover: string;
   youtube: string;
   experience: ResumeItem[];
@@ -129,6 +132,8 @@ type DashboardData = {
   transfers?: Record<string, unknown>[];
   nameTransfers?: Record<string, unknown>[];
   handovers?: Record<string, unknown>[];
+  preferences?: MemberPreferences;
+  loyalty?: LoyaltyData;
   [key: string]: unknown;
 };
 
@@ -139,6 +144,23 @@ type UnboundName = {
 type NameAvailability = { name: string; valid: boolean; available: boolean; reason?: string | null; suggestions?: string[] };
 type NameReservation = { name: string; site: Site; createdAt: number };
 type WalletOperation = 'transfer';
+type LoyaltyOperation = 'daily' | 'preferences' | 'competition';
+type MemberPreferences = {
+  gender: 'male' | 'female' | 'prefer_not_to_say';
+  ageBand: 'student' | 'early_career' | 'established' | 'expert' | 'prefer_not_to_say';
+  seasonalThemeEnabled: boolean;
+  seasonalNoticesEnabled: boolean;
+  badgesEnabled: boolean;
+  femalePrivacyPreset: boolean;
+  updatedAt?: number;
+};
+type DailyChallenge = { id: string; kind: 'memory' | 'focus' | 'speed'; title: string; prompt: string; choices: string[]; rewardPoints: number };
+type DailyActivity = { completed: boolean; correct?: boolean; rewardPoints?: number; badge?: string; completedAt?: number; kind?: string; challenge?: DailyChallenge };
+type CompetitionEntry = { id: string; status: 'entered' | 'winner' | 'not_selected'; createdAt?: number; decidedAt?: number | null };
+type LoyaltyCompetition = { key: string; title: string; terms: string; endsAt: number; url?: string; entry?: CompetitionEntry | null };
+type LoyaltyCommunity = { kind: 'telegram' | 'whatsapp' | 'youtube' | 'promotion'; label: string; url: string };
+type LoyaltyData = { daily?: DailyActivity; competition?: LoyaltyCompetition | null; communities?: LoyaltyCommunity[] };
+const defaultMemberPreferences: MemberPreferences = { gender: 'prefer_not_to_say', ageBand: 'prefer_not_to_say', seasonalThemeEnabled: true, seasonalNoticesEnabled: false, badgesEnabled: true, femalePrivacyPreset: false };
 
 type Service = {
   key: string;
@@ -234,7 +256,7 @@ const DEFAULT_PROFILE_IMAGE = '/assets/icon-192.png';
 const DEFAULT_COVER_IMAGE = '/assets/cover-1600.webp';
 const emptyDraft = (): ProfileDraft => ({
   name: '', title: '', bio: '', email: '', phone: '', whatsapp: '', city: '', country: 'المملكة العربية السعودية',
-  photo: DEFAULT_PROFILE_IMAGE, cover: DEFAULT_COVER_IMAGE, youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
+  photo: DEFAULT_PROFILE_IMAGE, avatarMode: 'photo', cover: DEFAULT_COVER_IMAGE, youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
   hobbies: [], achievements: [], timeline: [], skillRadar: { human: [], scientific: [], professional: [] }, blog: '', notes: '', skillImages: [], workImages: [], socials: [], buttons: [], hidden: [],
   searchable: true, allowContact: true, redirect: '',
 });
@@ -266,7 +288,7 @@ function parseDraft(source: unknown): ProfileDraft {
     ...emptyDraft(),
     ...Object.fromEntries(Object.keys(emptyDraft()).map((key) => [key, raw[key] ?? (emptyDraft() as unknown as Record<string, unknown>)[key]])),
     name: asText(raw.name), title: asText(raw.title), bio: asText(raw.bio), email: asText(raw.email), phone: asText(raw.phone), whatsapp: asText(raw.whatsapp),
-    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo) || DEFAULT_PROFILE_IMAGE, cover: asText(raw.cover) || DEFAULT_COVER_IMAGE, youtube: asText(raw.youtube), redirect: asText(raw.redirect), blog: asText(raw.blog), notes: asText(raw.notes),
+    city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo) || DEFAULT_PROFILE_IMAGE, avatarMode: raw.avatarMode === 'monogram' ? 'monogram' : 'photo', cover: asText(raw.cover) || DEFAULT_COVER_IMAGE, youtube: asText(raw.youtube), redirect: asText(raw.redirect), blog: asText(raw.blog), notes: asText(raw.notes),
     experience: normalizeStructured(raw.experience), education: normalizeStructured(raw.education), training: normalizeStructured(raw.training), timeline: normalizeStructured(raw.timeline),
     skills: normalizeStrings(raw.skills), memberships: normalizeStrings(raw.memberships), languages: normalizeStrings(raw.languages), hobbies: normalizeStrings(raw.hobbies), achievements: normalizeStrings(raw.achievements),
     skillRadar: {
@@ -420,6 +442,7 @@ export default function Dashboard() {
   const [checkingName, setCheckingName] = useState(false);
   const [reservingName, setReservingName] = useState(false);
   const [walletOperation, setWalletOperation] = useState<WalletOperation | ''>('');
+  const [loyaltyOperation, setLoyaltyOperation] = useState<LoyaltyOperation | ''>('');
   const [attachingName, setAttachingName] = useState('');
   const [attachTargetId, setAttachTargetId] = useState('');
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useState(() => {
@@ -552,7 +575,7 @@ export default function Dashboard() {
     if (!siteIdRef.current) setLoading(true);
     setLoadError('');
     try {
-      const data = await api<DashboardData>('/api/dashboard');
+      const data = await api<DashboardData>(`/api/dashboard?lang=${lang}`);
       observeNotifications(asArray<Notification>(data.notifications));
       setDashboard(data);
       const receivedServices = asArray<Service>(data.services);
@@ -573,7 +596,7 @@ export default function Dashboard() {
     }
   // openSite is stable enough for initial fetch; its declaration is hoisted in this closure at execution time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [observeNotifications]);
+  }, [lang, observeNotifications]);
 
   const loadServices = useCallback(async () => {
     try {
@@ -1022,6 +1045,54 @@ export default function Dashboard() {
     finally { setMembershipAction(''); }
   };
 
+  const updateLoyaltyPreferences = async (patch: Partial<MemberPreferences>) => {
+    if (loyaltyOperation === 'preferences') return;
+    setLoyaltyOperation('preferences');
+    try {
+      const response = await api<{ preferences: MemberPreferences }>('/api/loyalty/preferences', { method: 'PUT', body: JSON.stringify(patch) });
+      const next = response.preferences;
+      setDashboard((current) => current ? { ...current, preferences: next } : current);
+      if ('seasonalThemeEnabled' in patch) {
+        try { window.localStorage.setItem('ksa-men:seasonal-theme', next.seasonalThemeEnabled ? 'on' : 'off'); } catch { /* This visual preference remains optional. */ }
+        window.dispatchEvent(new CustomEvent('ksa:seasonal-theme', { detail: next.seasonalThemeEnabled }));
+      }
+      notify(tr('تم حفظ تفضيلات ركنك الخاص.', 'Your private-space preferences were saved.'));
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setLoyaltyOperation(''); }
+  };
+
+  const submitDailyChallenge = async (challenge: DailyChallenge, answer: string) => {
+    if (!answer || loyaltyOperation === 'daily') return;
+    setLoyaltyOperation('daily');
+    try {
+      const response = await api<{ loyalty?: LoyaltyData; alreadySubmitted?: boolean }>('/api/loyalty/daily', {
+        method: 'POST', body: JSON.stringify({ challengeId: challenge.id, answer, lang }),
+      });
+      if (response.loyalty) setDashboard((current) => current ? { ...current, loyalty: response.loyalty } : current);
+      notify(response.alreadySubmitted
+        ? tr('اكتمل تمرين اليوم مسبقاً.', 'Today’s exercise was already completed.')
+        : tr('تم تسجيل نتيجة تمرين اليوم.', 'Today’s exercise result was recorded.'));
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setLoyaltyOperation(''); }
+  };
+
+  const applyFemalePrivacyPreset = () => {
+    changeDraft((current) => ({ ...current, avatarMode: 'monogram', allowContact: true, hidden: [...new Set([...current.hidden, 'phone'])] }));
+    void updateLoyaltyPreferences({ femalePrivacyPreset: true });
+    notify(tr('فُعّل بديل الأحرف الأولى وأُخفي رقم الهاتف المباشر. تبقى مراسلة الموقع متاحة بموافقتك.', 'Initials mode is on and the direct phone number is hidden. Contact requests remain available with your approval.'));
+  };
+
+  const enterCompetition = async () => {
+    if (loyaltyOperation === 'competition') return;
+    setLoyaltyOperation('competition');
+    try {
+      const response = await api<{ competition?: LoyaltyCompetition; alreadyEntered?: boolean }>('/api/loyalty/competition/enter', { method: 'POST', body: JSON.stringify({}) });
+      if (response.competition) setDashboard((current) => current ? { ...current, loyalty: { ...current.loyalty, competition: response.competition } } : current);
+      notify(response.alreadyEntered ? tr('مشاركتك مسجلة بالفعل.', 'Your entry is already recorded.') : tr('تم تسجيل مشاركتك في المسابقة.', 'Your competition entry was recorded.'));
+    } catch (error) { notify(errorMessage(error)); }
+    finally { setLoyaltyOperation(''); }
+  };
+
   const saveLock = async () => {
     if (!activeSite) return;
     if (lockForm.enabled && lockForm.password.length < 8) { notify(tr('استخدم كلمة مرور منفصلة للموقع من 8 أحرف على الأقل.', 'Use a separate site password with at least 8 characters.')); return; }
@@ -1094,6 +1165,8 @@ export default function Dashboard() {
   };
 
   const balance = Number(dashboard?.wallet?.balance ?? (user as { balance?: number }).balance ?? 0);
+  const memberPreferences = dashboard?.preferences ?? defaultMemberPreferences;
+  const loyalty = dashboard?.loyalty;
   const siteAnalytics = (activeSite?.analytics ?? (dashboard?.analytics && activeSite ? (dashboard.analytics as Record<string, unknown>)[activeSite.id] : null)) as Record<string, unknown> | unknown[] | null;
   const analyticsEntries = siteAnalytics && typeof siteAnalytics === 'object' && !Array.isArray(siteAnalytics) ? Object.entries(siteAnalytics) : [];
   const reviews = asArray<Record<string, unknown>>(dashboard?.reviews).filter((review) => !activeSite || review.site_id === activeSite.id);
@@ -1246,7 +1319,7 @@ export default function Dashboard() {
         </>}
       </section>}
 
-      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} onTransfer={doTransfer} onCopyReferral={copyReferral} busyOperation={walletOperation} locale={locale} tr={tr} />}
+      {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} onTransfer={doTransfer} onCopyReferral={copyReferral} busyOperation={walletOperation} loyalty={loyalty} loyaltyBusy={loyaltyOperation === 'daily'} competitionBusy={loyaltyOperation === 'competition'} activeSiteUrl={activeSiteUrl} onDailySubmit={submitDailyChallenge} onCompetitionEnter={enterCompetition} locale={locale} tr={tr} notify={notify} />}
 
       {activeTab === 'services' && <section className="dashboard-services stack">
         <section className="dashboard-quality-grid dashboard-quality-grid--three">
@@ -1291,6 +1364,7 @@ export default function Dashboard() {
       </section>}
 
       {activeTab === 'settings' && <section className="dashboard-settings stack">
+        <LoyaltyPreferencesPanel preferences={memberPreferences} busy={loyaltyOperation === 'preferences'} canApplyFemalePrivacy={Boolean(activeSite)} onChange={updateLoyaltyPreferences} onApplyFemalePrivacy={applyFemalePrivacyPreset} tr={tr}/>
         <section className="card dashboard-notification-sound"><div className="dashboard-section-heading"><div><Bell size={18}/><h2>{tr('صوت التنبيهات', 'Notification sound')}</h2></div></div><p className="muted">{tr('خيار محلي لهذا المتصفح، متوقف افتراضياً. يتطلب التفعيل تفاعلك لتهيئة الصوت؛ لا يُرسل هذا التفضيل إلى الخادم.', 'A local preference for this browser, off by default. Enabling requires your interaction to initialize audio; this preference is not sent to the server.')}</p><label className="dashboard-check"><input type="checkbox" checked={notificationSoundEnabled} onChange={(event) => void setNotificationSound(event.target.checked)}/>{tr('تشغيل نغمة للتنبيهات الجديدة فقط', 'Play a chime only for newly observed notifications')}</label></section>
         <section className="card"><div className="dashboard-section-heading"><div><Lock size={18}/><h2>{tr('قفل الموقع', 'Site lock')}</h2></div></div><p className="muted">{tr('القفل خدمة استحقاقية يطبقها الخادم. كلمة المرور هنا منفصلة تماماً عن دخول حسابك.', 'Locking is entitlement-controlled and enforced by the server. This password is entirely separate from account sign-in.')}</p><label className="dashboard-check"><input type="checkbox" checked={lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, enabled: event.target.checked })}/>{tr('تفعيل كلمة مرور لزوار الموقع', 'Require a password from site visitors')}</label><div className="dashboard-settings-grid"><label><span>{tr('كلمة مرور الموقع', 'Site password')}</span><input className="field" type="password" autoComplete="new-password" value={lockForm.password} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, password: event.target.value })}/></label><label><span>{tr('رسالة الزوار', 'Visitor message')}</span><input className="field" value={lockForm.message} disabled={!lockForm.enabled} onChange={(event) => setLockForm({ ...lockForm, message: event.target.value })}/></label></div><button className="button" disabled={!activeSite} onClick={() => void saveLock()}><Lock size={16}/>{tr('حفظ القفل', 'Save lock')}</button></section>
         <section className="card"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('PIN والجهاز الموثوق', 'PIN and trusted device')}</h2></div><a className="button button--quiet" href="/auth?return=%2Fdashboard%3Ftab%3Dsettings">{tr('إعادة التحقق بالبريد', 'Verify again by email')}</a></div><p className="muted">{tr('أنشئ أو غيّر PIN من ستة أرقام للدخول السريع على هذا الجهاز الموثوق فقط. يرفض الخادم الإجراء حتى تعيد التحقق حديثاً من البريد.', 'Create or change a six-digit PIN for quick entry on this trusted device only. The server rejects the action until you have freshly verified by email.')}</p><div className="dashboard-inline-form dashboard-pin-form"><label><span>{tr('PIN جديد', 'New PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pin} onChange={(event) => setPinValue(event.target.value.replace(/[٠-٩۰-۹]/g, (character) => String(character.charCodeAt(0) - (character.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660))).replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><label><span>{tr('تأكيد PIN', 'Confirm PIN')}</span><input className="field" inputMode="numeric" maxLength={6} autoComplete="new-password" value={pinConfirm} onChange={(event) => setPinConfirm(event.target.value.replace(/[٠-٩۰-۹]/g, (character) => String(character.charCodeAt(0) - (character.charCodeAt(0) >= 0x6F0 ? 0x6F0 : 0x660))).replace(/\D/g, '').slice(0, 6))} placeholder="000000"/></label><button className="button" onClick={() => void savePin()}><ShieldCheck size={16}/>{tr('إنشاء أو تغيير PIN', 'Create or change PIN')}</button></div></section>
@@ -1443,11 +1517,102 @@ function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar:
 function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/></label>; }
 function ProfessionalPointsMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="Professional points"><Gift size={compact ? 13 : 16}/><span>{compact ? 'نقاط' : 'نقاط التميز'}</span></span>; }
 function ProfessionalPointsAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><ProfessionalPointsMark compact/></span>; }
-function WalletPanel({ balance, ledger, transferForm, setTransferForm, onTransfer, onCopyReferral, busyOperation, locale, tr }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; onTransfer: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; locale: string; tr: (ar: string, en: string) => string }) {
+function WalletPanel({ balance, ledger, transferForm, setTransferForm, onTransfer, onCopyReferral, busyOperation, loyalty, loyaltyBusy, competitionBusy, activeSiteUrl, onDailySubmit, onCompetitionEnter, locale, tr, notify }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; onTransfer: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; loyalty?: LoyaltyData; loyaltyBusy: boolean; competitionBusy: boolean; activeSiteUrl: string; onDailySubmit: (challenge: DailyChallenge, answer: string) => void; onCompetitionEnter: () => void; locale: string; tr: (ar: string, en: string) => string; notify: (message: string) => void }) {
   const amount = Number(transferForm.amount);
   const transferBusy = busyOperation === 'transfer';
-  return <section className="dashboard-wallet stack"><section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('رصيد نقاط التميز المهني', 'Professional excellence points')}</p><h2><ProfessionalPointsAmount value={balance} locale={locale}/></h2><p>{tr('رصيد تقديري غير نقدي؛ لا يُشترى ولا يُسترد أو يُحوّل إلى نقود أو استحقاق.', 'A non-cash recognition balance. It is not sold, redeemed, or converted to cash or entitlement.')}</p></div><div className="dashboard-wallet-mark"><ProfessionalPointsMark/></div></section><section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('إهداء نقاط', 'Gift points')}</h2></div></div><p className="muted">{tr('يمكنك إهداء 100 إلى 1,000 نقطة تقدير مهنية للحسابات الأخرى. راجع المستفيد والعدد قبل التأكيد.', 'You may gift 100 to 1,000 professional-recognition points to another account. Review the recipient and amount before confirming.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} disabled={Boolean(busyOperation)} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} disabled={Boolean(busyOperation)} placeholder="100–1,000"/><ProfessionalPointsMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><ProfessionalPointsAmount value={amount} locale={locale}/></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={transferBusy} onClick={onTransfer}>{transferBusy ? <RefreshCw className="spin" size={16}/> : <Send size={16}/>} {transferBusy ? tr('جارٍ الإهداء', 'Gifting') : tr('إهداء', 'Gift')}</button></div></article></section><section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('شارك الرابط مع من قد يستفيد من بناء حضور مهني مستقل.', 'Share this link with people who may benefit from an independent professional presence.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section><section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('سجل النقاط', 'Points history')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><ProfessionalPointsAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed movements to show yet.')} />}</section></section>;
+  return <section className="dashboard-wallet stack">
+    <section className="dashboard-wallet-hero card"><div><p className="dashboard-kicker"><WalletCards size={16}/>{tr('رصيد نقاط التميز المهني', 'Professional excellence points')}</p><h2><ProfessionalPointsAmount value={balance} locale={locale}/></h2><p>{tr('رصيد تقديري غير نقدي؛ لا يُشترى ولا يُسترد أو يُحوّل إلى نقود أو استحقاق.', 'A non-cash recognition balance. It is not sold, redeemed, or converted to cash or entitlement.')}</p></div><div className="dashboard-wallet-mark"><ProfessionalPointsMark/></div></section>
+    <section className="dashboard-wallet-grid"><article className="card"><div className="dashboard-section-heading"><div><ArrowLeftRight size={18}/><h2>{tr('إهداء نقاط', 'Gift points')}</h2></div></div><p className="muted">{tr('يمكنك إهداء 100 إلى 1,000 نقطة تقدير مهنية للحسابات الأخرى. راجع المستفيد والعدد قبل التأكيد.', 'You may gift 100 to 1,000 professional-recognition points to another account. Review the recipient and amount before confirming.')}</p><div className="dashboard-inline-form"><input className="field" value={transferForm.recipient} onChange={(event) => setTransferForm({ ...transferForm, recipient: event.target.value })} disabled={Boolean(busyOperation)} placeholder={tr('المستفيد: C2 أو اسم', 'Recipient: C2 or name')}/><label className="dashboard-point-input"><input className="field" type="number" min="100" max="1000" step="1" value={transferForm.amount} onChange={(event) => setTransferForm({ ...transferForm, amount: event.target.value })} disabled={Boolean(busyOperation)} placeholder="100–1,000"/><ProfessionalPointsMark compact/></label>{Number.isInteger(amount) && <span className="dashboard-point-preview"><ProfessionalPointsAmount value={amount} locale={locale}/></span>}<button className="button" disabled={Boolean(busyOperation)} aria-busy={transferBusy} onClick={onTransfer}>{transferBusy ? <RefreshCw className="spin" size={16}/> : <Send size={16}/>} {transferBusy ? tr('جارٍ الإهداء', 'Gifting') : tr('إهداء', 'Gift')}</button></div></article></section>
+    <LoyaltyPanel daily={loyalty?.daily} competition={loyalty?.competition} communities={loyalty?.communities ?? []} busy={loyaltyBusy} competitionBusy={competitionBusy} activeSiteUrl={activeSiteUrl} onSubmit={onDailySubmit} onCompetitionEnter={onCompetitionEnter} tr={tr} notify={notify}/>
+    <section className="card dashboard-referral"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('الإحالة', 'Referral')}</p><h2>{tr('رابط إحالتك الخاص', 'Your referral link')}</h2><p className="muted">{tr('شارك الرابط مع من قد يستفيد من بناء حضور مهني مستقل.', 'Share this link with people who may benefit from an independent professional presence.')}</p></div><button className="button button--quiet" onClick={onCopyReferral}><Copy size={16}/>{tr('نسخ الرابط', 'Copy link')}</button></section>
+    <section className="card"><div className="dashboard-section-heading"><div><FileText size={18}/><h2>{tr('سجل النقاط', 'Points history')}</h2></div></div>{ledger.length ? <div className="dashboard-ledger">{ledger.slice(0, 20).map((entry, index) => <div key={String(entry.id ?? index)}><span>{String(entry.kind ?? 'movement')}</span><ProfessionalPointsAmount value={Number(entry.amount ?? 0)} locale={locale}/><small>{String(entry.notes ?? '')}</small><time>{formatDate(Number(entry.created_at), locale)}</time></div>)}</div> : <EmptyInline text={tr('لا توجد حركات مؤكدة لعرضها بعد.', 'No confirmed movements to show yet.')} />}</section>
+  </section>;
 }
+
+function LoyaltyPreferencesPanel({ preferences, busy, canApplyFemalePrivacy, onChange, onApplyFemalePrivacy, tr }: { preferences: MemberPreferences; busy: boolean; canApplyFemalePrivacy: boolean; onChange: (patch: Partial<MemberPreferences>) => void; onApplyFemalePrivacy: () => void; tr: (ar: string, en: string) => string }) {
+  const ageOptions: Array<[MemberPreferences['ageBand'], string, string, string, string]> = [
+    ['student', 'طالب أو في بداية التعلّم', 'Student or learning stage', 'اجعل ركنك مركزاً على بناء المهارات وعرض إنجازات التعلّم.', 'Focus your private space on skills and learning achievements.'],
+    ['early_career', 'بداية المسيرة المهنية', 'Early career', 'رتّب أولوياتك حول الخبرات والمشروعات والمهارات القابلة للعرض.', 'Prioritise experience, projects, and showcase-ready skills.'],
+    ['established', 'مسيرة مهنية مستقرة', 'Established career', 'ركّز على أثر الخبرة والقيادة ومحطات المسيرة الأساسية.', 'Focus on career impact, leadership, and key milestones.'],
+    ['expert', 'خبرة متقدمة أو قيادية', 'Senior or leadership experience', 'أظهر رؤيتك المهنية والعضويات والإنجازات البارزة عند تحرير هويتك.', 'Highlight professional vision, memberships, and significant achievements.'],
+    ['prefer_not_to_say', 'أفضل عدم التحديد', 'Prefer not to say', 'ستبقى الإرشادات عامة ويمكنك تغيير هذا الاختيار في أي وقت.', 'Guidance remains general and you can change this at any time.'],
+  ];
+  const current = ageOptions.find(([value]) => value === preferences.ageBand) ?? ageOptions[4];
+  const genderCopy = preferences.gender === 'female'
+    ? tr('يمكنك تفعيل بديل الأحرف الأولى وإخفاء الهاتف المباشر بضغطة واحدة.', 'You can enable initials mode and hide the direct phone number in one step.')
+    : preferences.gender === 'male'
+      ? tr('نقترح ترتيب المحتوى حول المسيرة والمهارات التي تختارها أنت.', 'We suggest arranging content around the journey and skills you choose.')
+      : tr('نقترح محتوى عاماً دون افتراضات شخصية.', 'We keep suggestions general without personal assumptions.');
+  return <section className="card dashboard-loyalty-preferences"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('تخصيص مساحتك', 'Personalise your space')}</h2></div></div><p className="muted">{tr('هذه الخيارات خاصة بحسابك ولا تظهر في موقعك أو ملفك العام.', 'These choices stay private to your account and never appear on your public site or profile.')}</p><div className="dashboard-settings-grid"><label><span>{tr('الخيار الشخصي', 'Personal option')}</span><select className="field" value={preferences.gender} disabled={busy} onChange={(event) => onChange({ gender: event.target.value as MemberPreferences['gender'] })}><option value="male">{tr('ذكر', 'Male')}</option><option value="female">{tr('أنثى', 'Female')}</option><option value="prefer_not_to_say">{tr('أفضل عدم التحديد', 'Prefer not to say')}</option></select></label><label><span>{tr('المرحلة المهنية التقريبية', 'Approximate career stage')}</span><select className="field" value={preferences.ageBand} disabled={busy} onChange={(event) => onChange({ ageBand: event.target.value as MemberPreferences['ageBand'] })}>{ageOptions.map(([value, ar, en]) => <option key={value} value={value}>{tr(ar, en)}</option>)}</select></label><div className="dashboard-personalisation-note"><strong>{tr('اقتراح لمساحتك', 'A suggestion for your space')}</strong><p>{tr(current[3], current[4])}<br/>{genderCopy}</p></div></div>{preferences.gender === 'female' && <div className="dashboard-female-privacy"><div><strong>{tr('خصوصية موسعة اختيارية', 'Optional enhanced privacy')}</strong><p>{tr('تستبدل الصورة بأحرف الاسم الأولى، وتخفي رقم الهاتف المباشر، وتبقي نموذج المراسلة المهني متاحاً بموافقتك.', 'It uses initials instead of the photo, hides the direct phone number, and keeps professional contact requests available with your approval.')}</p></div><button className="button button--quiet" type="button" disabled={busy || !canApplyFemalePrivacy || preferences.femalePrivacyPreset} onClick={onApplyFemalePrivacy}>{preferences.femalePrivacyPreset ? tr('الخصوصية الموسعة مفعلة', 'Enhanced privacy is enabled') : tr('تفعيل الخصوصية الموسعة', 'Enable enhanced privacy')}</button>{!canApplyFemalePrivacy && <small>{tr('احجزي نطاقك أولاً لتطبيق هذا الاختيار على هويتك.', 'Reserve your site first to apply this choice to your identity.')}</small>}</div>}<div className="dashboard-loyalty-options"><label className="dashboard-check"><input type="checkbox" checked={preferences.seasonalThemeEnabled} disabled={busy} onChange={(event) => onChange({ seasonalThemeEnabled: event.target.checked })}/>{tr('إظهار لمسات المناسبات في مساحتي وعلى الرئيسية لهذا المتصفح', 'Show occasion touches in my space and homepage on this browser')}</label><label className="dashboard-check"><input type="checkbox" checked={preferences.seasonalNoticesEnabled} disabled={busy} onChange={(event) => onChange({ seasonalNoticesEnabled: event.target.checked })}/>{tr('تلقي تنبيه المناسبة داخل المساحة وعبر البريد', 'Receive occasion notice in my space and by email')}</label><label className="dashboard-check"><input type="checkbox" checked={preferences.badgesEnabled} disabled={busy} onChange={(event) => onChange({ badgesEnabled: event.target.checked })}/>{tr('إظهار أوسمة تمارين اليوم في ركني الخاص', 'Show daily-exercise badges in my private corner')}</label></div></section>;
+}
+
+function LoyaltyPanel({ daily, competition, communities, busy, competitionBusy, activeSiteUrl, onSubmit, onCompetitionEnter, tr, notify }: { daily?: DailyActivity; competition?: LoyaltyCompetition | null; communities: LoyaltyCommunity[]; busy: boolean; competitionBusy: boolean; activeSiteUrl: string; onSubmit: (challenge: DailyChallenge, answer: string) => void; onCompetitionEnter: () => void; tr: (ar: string, en: string) => string; notify: (message: string) => void }) {
+  const [answer, setAnswer] = useState('');
+  const challenge = daily?.challenge;
+  useEffect(() => { setAnswer(''); }, [challenge?.id]);
+  return <details className="card dashboard-loyalty" open={false}><summary><span><Sparkles size={18}/><b>{tr('ركن العطاء والنمو', 'Giving & growth corner')}</b></span><span>{tr('اختياري وخاص بك', 'Optional and private')}</span><ChevronDown size={18}/></summary><div className="dashboard-loyalty__body"><section className="dashboard-daily-exercise"><div><p className="dashboard-kicker"><BadgeCheck size={15}/>{tr('تمرين اليوم', 'Today’s exercise')}</p><h2>{daily?.completed ? (daily.correct ? tr('أحسنت، اكتمل تمرين اليوم', 'Well done, today’s exercise is complete') : tr('اكتمل تمرين اليوم', 'Today’s exercise is complete')) : challenge?.title ?? tr('تمرين يومي', 'Daily exercise')}</h2>{daily?.completed ? <p className="muted">{daily.correct ? tr(`أضفت ${daily.rewardPoints ?? 0} نقطة تميز إلى رصيدك.${daily.badge ? ` ${daily.badge}` : ''}`, `${daily.rewardPoints ?? 0} excellence points were added to your balance.${daily.badge ? ` ${daily.badge}` : ''}`) : tr('شكراً لمشاركتك. يعود تمرين جديد غداً.', 'Thank you for taking part. A new exercise returns tomorrow.')}</p> : <p className="muted">{challenge?.prompt}</p>}</div>{!daily?.completed && challenge && <div className="dashboard-daily-choices" role="group" aria-label={tr('خيارات الإجابة', 'Answer choices')}>{challenge.choices.map((choice) => <button key={choice} type="button" className={`button button--quiet ${answer === choice ? 'is-active' : ''}`} aria-pressed={answer === choice} onClick={() => setAnswer(choice)}>{choice}</button>)}<button className="button" type="button" disabled={!answer || busy} onClick={() => onSubmit(challenge, answer)}>{busy ? <RefreshCw className="spin" size={16}/> : <Check size={16}/>} {tr('تسجيل الإجابة', 'Submit answer')}</button></div>}</section><CompetitionPanel competition={competition} busy={competitionBusy} onEnter={onCompetitionEnter} tr={tr}/><CommunityPanel communities={communities} tr={tr}/><GiftQrPanel activeSiteUrl={activeSiteUrl} tr={tr} notify={notify}/></div></details>;
+}
+
+function CompetitionPanel({ competition, busy, onEnter, tr }: { competition?: LoyaltyCompetition | null; busy: boolean; onEnter: () => void; tr: (ar: string, en: string) => string }) {
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => { if (!competition?.endsAt) return undefined; const timer = window.setInterval(() => setClock(Date.now()), 1_000); return () => window.clearInterval(timer); }, [competition?.endsAt]);
+  if (!competition) return null;
+  const seconds = Math.max(0, competition.endsAt - Math.floor(clock / 1000));
+  const days = Math.floor(seconds / 86_400); const hours = Math.floor((seconds % 86_400) / 3_600); const minutes = Math.floor((seconds % 3_600) / 60); const remain = seconds % 60;
+  const entry = competition.entry;
+  const label = entry?.status === 'winner' ? tr('تم اعتمادك فائزاً', 'You were approved as a winner') : entry?.status === 'not_selected' ? tr('اكتملت النتيجة', 'Result complete') : entry?.status === 'entered' ? tr('مشاركتك مسجلة', 'Your entry is recorded') : tr('سجل مشاركتك', 'Enter competition');
+  return <section className="dashboard-competition"><div><p className="dashboard-kicker"><BadgeCheck size={15}/>{tr('مسابقة معلنة', 'Announced competition')}</p><h2>{competition.title}</h2>{competition.terms && <p className="muted">{competition.terms}</p>}{competition.url && <a className="dashboard-competition-link" href={competition.url} target="_blank" rel="noreferrer">{tr('الشروط والتفاصيل', 'Terms and details')}<ArrowUpRight size={15}/></a>}</div><div className="dashboard-competition-side"><div className="dashboard-countdown" aria-label={tr('الوقت المتبقي', 'Time remaining')}><span>{days}<small>{tr('يوم', 'd')}</small></span><span>{String(hours).padStart(2, '0')}<small>{tr('ساعة', 'h')}</small></span><span>{String(minutes).padStart(2, '0')}<small>{tr('دقيقة', 'm')}</small></span><span>{String(remain).padStart(2, '0')}<small>{tr('ثانية', 's')}</small></span></div><button className={`button ${entry?.status === 'winner' ? 'button--quiet' : ''}`} type="button" disabled={busy || Boolean(entry) || seconds === 0} onClick={onEnter}>{busy ? <RefreshCw size={16} className="spin"/> : <BadgeCheck size={16}/>} {label}</button></div></section>;
+}
+
+function CommunityPanel({ communities, tr }: { communities: LoyaltyCommunity[]; tr: (ar: string, en: string) => string }) {
+  if (!communities.length) return null;
+  const iconFor = (kind: LoyaltyCommunity['kind']) => kind === 'youtube' ? <Youtube size={17}/> : kind === 'promotion' ? <Globe2 size={17}/> : <Send size={17}/>;
+  return <section className="dashboard-community-links"><div><p className="dashboard-kicker"><UsersRound size={15}/>{tr('المجتمعات', 'Communities')}</p><h2>{tr('قنوات المنصة وروابطها المعتمدة', 'Official platform channels and approved links')}</h2></div><div>{communities.map((community) => <a className="button button--quiet" key={`${community.kind}-${community.url}`} href={community.url} target="_blank" rel="noreferrer">{iconFor(community.kind)}{community.label}<ArrowUpRight size={14}/></a>)}</div></section>;
+}
+
+function vCardText(value: string): string { return value.replace(/[\r\n;,]/g, ' ').trim().slice(0, 120); }
+function GiftQrPanel({ activeSiteUrl, tr, notify }: { activeSiteUrl: string; tr: (ar: string, en: string) => string; notify: (message: string) => void }) {
+  const [friend, setFriend] = useState({ name: '', phone: '', email: '' });
+  const [mode, setMode] = useState<'site' | 'vcard'>('site');
+  const [qr, setQr] = useState('');
+  const [sharing, setSharing] = useState(false);
+  const hasContact = Boolean(friend.phone.trim() || friend.email.trim());
+  const sitePayload = activeSiteUrl || 'https://ksa.men/auth?register=1&source=gift-qr';
+  const payload = useMemo(() => mode === 'vcard'
+    ? `BEGIN:VCARD\nVERSION:3.0\nFN:${vCardText(friend.name)}\n${friend.phone.trim() ? `TEL;TYPE=CELL:${vCardText(friend.phone)}\n` : ''}${friend.email.trim() ? `EMAIL:${vCardText(friend.email)}\n` : ''}END:VCARD`
+    : sitePayload, [friend.email, friend.name, friend.phone, mode, sitePayload]);
+  useEffect(() => {
+    if (!friend.name.trim() || (mode === 'vcard' && !hasContact)) { setQr(''); return; }
+    let active = true;
+    void QRCode.toDataURL(payload, { width: 360, margin: 2, color: { dark: '#004422', light: '#ffffff' }, errorCorrectionLevel: 'M' })
+      .then((value) => { if (active) setQr(value); })
+      .catch(() => { if (active) setQr(''); });
+    return () => { active = false; };
+  }, [friend.name, hasContact, mode, payload]);
+  const share = async () => {
+    if (!qr || sharing) return;
+    setSharing(true);
+    const recipient = vCardText(friend.name) || tr('صديقك', 'your friend');
+    const text = mode === 'site'
+      ? tr(`هذه بطاقة QR مهداه لك يا ${recipient}. امسح الرمز لاكتشاف هوية مهنية مستقلة: ${sitePayload}`, `A QR card for you, ${recipient}. Scan it to discover an independent professional identity: ${sitePayload}`)
+      : tr(`هذه بطاقة QR مهداه لك يا ${recipient}. امسح الرمز لإضافة بيانات التواصل التي اختارها مُهديك.`, `A QR card for you, ${recipient}. Scan it to add the contact details chosen for you.`);
+    try {
+      const image = await fetch(qr).then((response) => response.blob());
+      const file = new File([image], 'ksa-men-gift-qr.png', { type: 'image/png' });
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ title: tr('بطاقة QR مهداه', 'Gift QR card'), text, files: [file] });
+        return;
+      }
+      const phone = friend.phone.replace(/\D/g, '');
+      const url = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      if ((error as { name?: string }).name !== 'AbortError') notify(tr('تعذر فتح المشاركة الآن. يمكنك تنزيل الرمز ومشاركته من جهازك.', 'Sharing could not open. You can download the code and share it from your device.'));
+    } finally { setSharing(false); }
+  };
+  return <section className="dashboard-gift-qr"><div><p className="dashboard-kicker"><Gift size={15}/>{tr('إهداء بسيط', 'A simple gift')}</p><h2>{tr('أريد إهداء بطاقة QR لصديق', 'I want to gift a QR card')}</h2><p className="muted">{tr('تبقى بيانات الصديق داخل هذه الصفحة على جهازك فقط.', 'Your friend’s details remain only in this page on your device.')}</p></div><div className="dashboard-gift-form"><label><span>{tr('اسم الصديق', 'Friend’s name')}</span><input className="field" value={friend.name} maxLength={80} onChange={(event) => setFriend({ ...friend, name: event.target.value })}/></label><label><span>{tr('واتساب أو هاتف اختياري', 'Optional WhatsApp or phone')}</span><input className="field" type="tel" value={friend.phone} maxLength={32} onChange={(event) => setFriend({ ...friend, phone: event.target.value })}/></label><label><span>{tr('بريد اختياري', 'Optional email')}</span><input className="field" type="email" value={friend.email} maxLength={120} onChange={(event) => setFriend({ ...friend, email: event.target.value })}/></label></div><div className="dashboard-gift-modes" role="group" aria-label={tr('محتوى رمز QR', 'QR code content')}><button type="button" className={`button button--quiet ${mode === 'site' ? 'is-active' : ''}`} aria-pressed={mode === 'site'} onClick={() => setMode('site')}><Globe2 size={16}/>{tr('رابط الهوية', 'Identity link')}</button><button type="button" className={`button button--quiet ${mode === 'vcard' ? 'is-active' : ''}`} aria-pressed={mode === 'vcard'} disabled={!hasContact} onClick={() => setMode('vcard')}><QrCode size={16}/>{tr('بطاقة تواصل', 'Contact card')}</button></div>{qr && <div className="dashboard-gift-card"><div><span>KSA.MEN</span><strong>{friend.name.trim()}</strong><small>{tr('بطاقة QR مهداه لك', 'A QR card made for you')}</small></div><img src={qr} alt={tr('رمز QR مهدى', 'Gift QR code')}/><div className="dashboard-gift-actions"><button type="button" className="button" disabled={sharing} onClick={() => void share()}>{sharing ? <RefreshCw className="spin" size={16}/> : <Send size={16}/>} {tr('مشاركة عبر واتساب أو التطبيقات', 'Share to WhatsApp or apps')}</button><a className="button button--quiet" href={qr} download="ksa-men-gift-qr.png"><ArrowDownToLine size={16}/>{tr('تنزيل الرمز', 'Download code')}</a></div></div>}</section>;
+}
+
 function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { mode: QuickMode; setMode: (value: QuickMode) => void; fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) {
   const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] };
   const modes: Array<{ key: QuickMode; ar: string; en: string; fields: string[] }> = [

@@ -8,5 +8,5 @@
  "d1_databases":[{"binding":"DB","database_name":"ksa-men-prod-db","database_id":"dd006d15-8b4c-4469-9809-af08cbb42ad4","migrations_dir":"migrations"}],
  "r2_buckets":[{"binding":"MEDIA","bucket_name":"ksa-men-prod-media"}],
  "ai":{"binding":"AI"},
- "triggers":{"crons":["0 */6 * * *"]},"observability":{"enabled":true}
+ "triggers":{"crons":["0 * * * *"]},"observability":{"enabled":true}
 }

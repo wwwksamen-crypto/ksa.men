@@ -255,9 +255,11 @@ export default function Personal() {
   const siteName = stringValue(data?.name);
   const profileUrl = siteName ? `https://${siteName}.ksa.men` : '';
   const staticImage = (value: string) => value.startsWith('/assets/') && !value.includes('?') ? value + '?rev=launch20261028' : value;
-  const profilePhoto = staticImage(stringValue(profile.photo) || '/assets/icon-192.png');
-  const profileCover = staticImage(stringValue(profile.cover) || '/assets/cover-1600.webp');
   const displayName = stringValue(profile.name) || siteName;
+  const initials = displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => Array.from(part)[0] || '').join('').toLocaleUpperCase(lang === 'ar' ? 'ar-SA' : 'en-US');
+  const useInitials = profile.avatarMode === 'monogram';
+  const profilePhoto = staticImage(useInitials ? '/assets/icon-192.png' : stringValue(profile.photo) || '/assets/icon-192.png');
+  const profileCover = staticImage(stringValue(profile.cover) || '/assets/cover-1600.webp');
   const location = [stringValue(profile.city), stringValue(profile.country)].filter(Boolean).join(lang === 'ar' ? '، ' : ', ');
 
   const load = useCallback(() => {
@@ -410,7 +412,7 @@ export default function Personal() {
       </picture>
       <div className="identity-hero__wash" aria-hidden="true"/>
       <div className="identity-hero__content">
-        <div className="identity-hero__portrait"><img src={profilePhoto} alt={displayName}/></div>
+        <div className={`identity-hero__portrait ${useInitials ? 'identity-hero__portrait--initials' : ''}`}>{useInitials ? <span aria-label={displayName}>{initials || 'K'}</span> : <img src={profilePhoto} alt={displayName}/>}</div>
         <div className="identity-hero__copy">
           <div className="identity-hero__meta">
             <span>KSA.MEN / {t('هوية مهنية', 'PROFESSIONAL IDENTITY')}</span>

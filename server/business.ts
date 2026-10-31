@@ -16,6 +16,7 @@ import {
   withdrawConsent,
 } from './core';
 import { hideMyPublicPresence, requestDeletionLifecycle } from './lifecycle';
+import { AGE_BANDS, GENDERS, buildDailyChallenge, memberPreferences, normalizeChallengeAnswer, publicDailyChallenge, riyadhDay } from './loyalty';
 
 type Json = Record<string, unknown>;
 type SiteRow = {
@@ -48,6 +49,7 @@ type Profile = {
   city: string;
   country: string;
   photo: string;
+  avatarMode: 'photo' | 'monogram';
   cover: string;
   youtube: string;
   experience: Array<string | Json>;
@@ -83,14 +85,14 @@ const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9_-]{1,160}$/;
 const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/icon-192.png', '/assets/cover-1600.webp']);
 const PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country',
-  'photo', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
+  'photo', 'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
   'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'notes', 'skillImages',
   'workImages', 'socials', 'buttons', 'hidden', 'searchable', 'allowContact',
   'redirect', 'translations',
 ]);
 const PUBLIC_PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
-  'cover', 'youtube', 'experience', 'education', 'training', 'skills', 'memberships',
+  'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills', 'memberships',
   'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'skillImages', 'workImages',
   'socials', 'buttons', 'redirect',
 ]);
@@ -133,6 +135,39 @@ function parseJson<T>(value: unknown, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+type LoyaltyCompetition = { key: string; title: string; terms: string; endsAt: number; url: string };
+type LoyaltyCommunity = { kind: 'telegram' | 'whatsapp' | 'youtube' | 'promotion'; label: string; url: string };
+function safeLoyaltyUrl(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 500) return '';
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'https:' && !url.username && !url.password ? url.href : '';
+  } catch { return ''; }
+}
+function loyaltyProgramme(value: unknown, clock: number): { competition: LoyaltyCompetition | null; communities: LoyaltyCommunity[] } {
+  const season = isRecord(value) ? value : {};
+  const competitionSource = isRecord(season.competition) ? season.competition : {};
+  const title = typeof competitionSource.title === 'string' ? competitionSource.title.trim().slice(0, 160) : '';
+  const terms = typeof competitionSource.terms === 'string' ? competitionSource.terms.trim().slice(0, 1500) : '';
+  const endsAt = Number(competitionSource.ends_at ?? competitionSource.endsAt ?? 0);
+  const occasion = typeof season.occasion === 'string' ? season.occasion : 'programme';
+  const competition = competitionSource.enabled === true && title && Number.isSafeInteger(endsAt) && endsAt > clock
+    ? { key: `${occasion}:${endsAt}`, title, terms, endsAt, url: safeLoyaltyUrl(competitionSource.url) }
+    : null;
+  const communitySource = isRecord(season.communities) ? season.communities : {};
+  const labels: Record<string, LoyaltyCommunity['kind']> = { telegram: 'telegram', whatsapp: 'whatsapp', youtube: 'youtube' };
+  const communities = Object.entries(labels).flatMap(([source, kind]) => {
+    const url = safeLoyaltyUrl(communitySource[source]);
+    if (!url) return [];
+    return [{ kind, url, label: kind === 'telegram' ? 'قناة المنصة على تلجرام' : kind === 'whatsapp' ? 'قناة المنصة على واتساب' : 'قناة المنصة على YouTube' }];
+  });
+  const promotion = isRecord(season.promotion) ? season.promotion : {};
+  const promotionUrl = safeLoyaltyUrl(promotion.url);
+  const promotionTitle = typeof promotion.title === 'string' ? promotion.title.trim().slice(0, 120) : '';
+  if (promotionUrl && promotionTitle) communities.push({ kind: 'promotion', label: promotionTitle, url: promotionUrl });
+  return { competition, communities };
 }
 
 function changes(result: unknown): number {
@@ -225,6 +260,7 @@ function defaultProfile(name = ''): Profile {
     city: '',
     country: 'Saudi Arabia',
     photo: '/assets/icon-192.png',
+    avatarMode: 'photo',
     cover: '/assets/cover-1600.webp',
     youtube: '',
     experience: [],
@@ -336,6 +372,8 @@ function normalizeProfile(value: unknown, fallbackName = '', nested = false): Pr
   profile.city = asString(value.city, 'city', 120);
   profile.country = asString(value.country ?? profile.country, 'country', 120);
   profile.photo = mediaUrl(value.photo ?? profile.photo, 'photo');
+  if (value.avatarMode !== undefined && value.avatarMode !== 'photo' && value.avatarMode !== 'monogram') apiError(422, 'avatarMode must be photo or monogram', 'VALIDATION');
+  profile.avatarMode = value.avatarMode === 'monogram' ? 'monogram' : 'photo';
   profile.cover = mediaUrl(value.cover ?? profile.cover, 'cover');
   profile.youtube = youtubeUrl(value.youtube);
   for (const field of RESUME_LISTS) profile[field] = profileList(value[field], field);
@@ -654,7 +692,7 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     const checkedAt = now();
-    const [sites, reviews, wallet, ledger, payments, subscriptionRequests, services, notifications, quickLinks, transfers, handovers, analyticsRows, unboundNames] = await Promise.all([
+    const [sites, reviews, wallet, ledger, payments, subscriptionRequests, services, notifications, quickLinks, transfers, handovers, analyticsRows, unboundNames, preferencesRow, dailyActivity, seasonalSetting] = await Promise.all([
       all<SiteRow>(
         c,
         `SELECT s.*,(
@@ -734,7 +772,28 @@ export function registerBusiness(app: App): void {
         'SELECT name FROM dns_names WHERE owner_id=? AND site_id IS NULL ORDER BY created_at ASC LIMIT 100',
         userId,
       ),
+      one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId),
+      one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, riyadhDay(checkedAt)),
+      one<{ value: string }>(c, "SELECT value FROM settings WHERE key='season'"),
     ]);
+
+    const preferences = memberPreferences(preferencesRow);
+    const challengeLocale = c.req.query('lang') === 'en' ? 'en' : 'ar';
+    const challenge = buildDailyChallenge(userId, checkedAt, challengeLocale);
+    const daily = dailyActivity
+      ? {
+          completed: true,
+          correct: Boolean(dailyActivity.answer_correct),
+          rewardPoints: Number(dailyActivity.reward_points ?? 0),
+          badge: preferences.badgesEnabled ? String(dailyActivity.badge ?? '') : '',
+          completedAt: Number(dailyActivity.created_at ?? 0),
+          kind: String(dailyActivity.challenge_kind ?? ''),
+        }
+      : { completed: false, challenge: publicDailyChallenge(challenge) };
+    const programme = loyaltyProgramme(parseJson(seasonalSetting?.value, {}), checkedAt);
+    const competitionEntry = programme.competition
+      ? await one<Record<string, unknown>>(c, 'SELECT id,status,created_at,decided_at FROM competition_entries WHERE user_id=? AND competition_key=?', userId, programme.competition.key)
+      : null;
 
     const analytics: Record<string, Record<string, number>> = {};
     for (const site of sites) {
@@ -790,6 +849,8 @@ export function registerBusiness(app: App): void {
       })),
       // This mirrors core.serviceState, while core.service remains the enforcement boundary.
       services: serviceStates,
+      preferences,
+      loyalty: { daily, competition: programme.competition ? { ...programme.competition, entry: competitionEntry ? { id: competitionEntry.id, status: competitionEntry.status, createdAt: Number(competitionEntry.created_at ?? 0), decidedAt: competitionEntry.decided_at === null ? null : Number(competitionEntry.decided_at) } : null } : null, communities: programme.communities },
       notifications: notifications.map((notification) => ({
         id: notification.id,
         title: notification.title,
@@ -823,6 +884,148 @@ export function registerBusiness(app: App): void {
       })),
       user: toDashboardUser(user, Number(wallet?.balance ?? 0)),
     });
+  });
+
+  app.get('/api/loyalty/preferences', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const preference = await one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', Number(user.id));
+    return c.json({ preferences: memberPreferences(preference) });
+  });
+
+  app.put('/api/loyalty/preferences', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const userId = Number(user.id);
+    const body = await requestBody(c);
+    const current = memberPreferences(await one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId));
+    const requestedGender = body.gender === undefined ? current.gender : asString(body.gender, 'gender', 32, true);
+    if (!GENDERS.includes(requestedGender as typeof GENDERS[number])) apiError(422, 'Select a supported gender option', 'LOYALTY_PREFERENCE_INVALID');
+    const requestedAgeBand = body.ageBand === undefined ? current.ageBand : asString(body.ageBand, 'ageBand', 32, true);
+    if (!AGE_BANDS.includes(requestedAgeBand as typeof AGE_BANDS[number])) {
+      apiError(422, 'Select a supported age range', 'LOYALTY_PREFERENCE_INVALID');
+    }
+    const next = {
+      gender: requestedGender as typeof GENDERS[number],
+      ageBand: requestedAgeBand as typeof AGE_BANDS[number],
+      seasonalThemeEnabled: asBoolean(body.seasonalThemeEnabled, 'seasonalThemeEnabled', current.seasonalThemeEnabled),
+      seasonalNoticesEnabled: asBoolean(body.seasonalNoticesEnabled, 'seasonalNoticesEnabled', current.seasonalNoticesEnabled),
+      badgesEnabled: asBoolean(body.badgesEnabled, 'badgesEnabled', current.badgesEnabled),
+      femalePrivacyPreset: asBoolean(body.femalePrivacyPreset, 'femalePrivacyPreset', current.femalePrivacyPreset),
+      updatedAt: now(),
+    };
+    await run(c,
+      `INSERT INTO member_preferences(user_id,gender,age_band,seasonal_theme_enabled,seasonal_notices_enabled,badges_enabled,female_privacy_preset,updated_at)
+       VALUES(?,?,?,?,?,?,?,?)
+       ON CONFLICT(user_id) DO UPDATE SET gender=excluded.gender,age_band=excluded.age_band,seasonal_theme_enabled=excluded.seasonal_theme_enabled,
+         seasonal_notices_enabled=excluded.seasonal_notices_enabled,badges_enabled=excluded.badges_enabled,female_privacy_preset=excluded.female_privacy_preset,updated_at=excluded.updated_at`,
+      userId, next.gender, next.ageBand, Number(next.seasonalThemeEnabled), Number(next.seasonalNoticesEnabled), Number(next.badgesEnabled), Number(next.femalePrivacyPreset), next.updatedAt,
+    );
+    if (next.seasonalNoticesEnabled !== current.seasonalNoticesEnabled) {
+      const changedAt = now();
+      if (next.seasonalNoticesEnabled) {
+        await run(c, `INSERT INTO loyalty_notification_consents(user_id,status,granted_at,withdrawn_at,updated_at) VALUES(?,?,?,?,?)
+          ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,granted_at=excluded.granted_at,withdrawn_at=NULL,updated_at=excluded.updated_at`, userId, 'granted', changedAt, null, changedAt);
+      } else {
+        await run(c, `INSERT INTO loyalty_notification_consents(user_id,status,granted_at,withdrawn_at,updated_at) VALUES(?,?,?,?,?)
+          ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,withdrawn_at=excluded.withdrawn_at,updated_at=excluded.updated_at`, userId, 'withdrawn', null, changedAt, changedAt);
+      }
+    }
+    await audit(c, 'loyalty.preferences.updated', `member:${userId}`, {
+      genderChanged: next.gender !== current.gender,
+      ageBandChanged: next.ageBand !== current.ageBand,
+      femalePrivacyPreset: next.femalePrivacyPreset,
+      seasonalThemeEnabled: next.seasonalThemeEnabled,
+      seasonalNoticesEnabled: next.seasonalNoticesEnabled,
+      badgesEnabled: next.badgesEnabled,
+    });
+    return c.json({ preferences: next });
+  });
+
+  app.get('/api/loyalty/daily', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const userId = Number(user.id);
+    const clock = now();
+    const activity = await one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, riyadhDay(clock));
+    const preferences = memberPreferences(await one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId));
+    if (activity) {
+      return c.json({ daily: {
+        completed: true, correct: Boolean(activity.answer_correct), rewardPoints: Number(activity.reward_points ?? 0),
+        badge: preferences.badgesEnabled ? String(activity.badge ?? '') : '', completedAt: Number(activity.created_at ?? 0), kind: String(activity.challenge_kind ?? ''),
+      } });
+    }
+    const locale = c.req.query('lang') === 'en' ? 'en' : 'ar';
+    return c.json({ daily: { completed: false, challenge: publicDailyChallenge(buildDailyChallenge(userId, clock, locale)) } });
+  });
+
+  app.post('/api/loyalty/daily', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const userId = Number(user.id);
+    const body = await requestBody(c);
+    const clock = now();
+    const challengeId = asString(body.challengeId, 'challengeId', 32, true);
+    const locale = body.lang === 'en' ? 'en' : 'ar';
+    const challenge = buildDailyChallenge(userId, clock, locale);
+    if (challengeId !== challenge.id) apiError(409, 'The daily activity has changed. Refresh and try again.', 'LOYALTY_CHALLENGE_STALE');
+    const answer = asString(body.answer, 'answer', 120, true);
+    const previous = await one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, challenge.day);
+    const preferences = memberPreferences(await one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId));
+    if (previous) {
+      return c.json({ loyalty: { daily: {
+        completed: true, correct: Boolean(previous.answer_correct), rewardPoints: Number(previous.reward_points ?? 0),
+        badge: preferences.badgesEnabled ? String(previous.badge ?? '') : '', completedAt: Number(previous.created_at ?? 0), kind: String(previous.challenge_kind ?? ''),
+      } }, alreadySubmitted: true });
+    }
+    const correct = normalizeChallengeAnswer(answer) === normalizeChallengeAnswer(challenge.answer);
+    const activityId = `loyalty-${userId}-${challenge.day}`;
+    const statements = [
+      c.env.DB.prepare('INSERT INTO loyalty_daily_activities(id,user_id,activity_day,challenge_kind,answer_correct,reward_points,badge,created_at) VALUES(?,?,?,?,?,?,?,?)')
+        .bind(activityId, userId, challenge.day, challenge.kind, Number(correct), correct ? challenge.rewardPoints : 0, correct ? challenge.badge : '', clock),
+      c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)')
+        .bind(`loyalty-notice-${userId}-${challenge.day}`, userId, correct ? 'أحسنت في تمرين اليوم' : 'اكتمل تمرين اليوم', correct ? `أضفنا ${challenge.rewardPoints} نقطة تميز إلى رصيدك.` : 'تعود غداً بتمرين جديد.' , clock),
+    ];
+    if (correct) {
+      statements.splice(1, 0, c.env.DB.prepare('INSERT INTO ledger(id,from_id,to_id,amount,kind,notes,created_at,reference) VALUES(?,?,?,?,?,?,?,?)')
+        .bind(`loyalty-ledger-${userId}-${challenge.day}`, 0, userId, challenge.rewardPoints, 'loyalty_daily', challenge.kind, clock, `loyalty:${userId}:${challenge.day}`));
+    }
+    try {
+      await c.env.DB.batch(statements);
+    } catch {
+      const completed = await one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, challenge.day);
+      if (!completed) apiError(409, 'The daily activity could not be saved. Please try again.', 'LOYALTY_ACTIVITY_CONFLICT');
+      return c.json({ loyalty: { daily: {
+        completed: true, correct: Boolean(completed.answer_correct), rewardPoints: Number(completed.reward_points ?? 0),
+        badge: preferences.badgesEnabled ? String(completed.badge ?? '') : '', completedAt: Number(completed.created_at ?? 0), kind: String(completed.challenge_kind ?? ''),
+      } }, alreadySubmitted: true });
+    }
+    await audit(c, 'loyalty.daily.completed', activityId, { kind: challenge.kind, correct, rewardPoints: correct ? challenge.rewardPoints : 0 });
+    return c.json({ loyalty: { daily: {
+      completed: true, correct, rewardPoints: correct ? challenge.rewardPoints : 0,
+      badge: correct && preferences.badgesEnabled ? challenge.badge : '', completedAt: clock, kind: challenge.kind,
+    } }, alreadySubmitted: false }, 201);
+  });
+
+  app.post('/api/loyalty/competition/enter', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const userId = Number(user.id);
+    const clock = now();
+    const settingRow = await one<{ value: string }>(c, "SELECT value FROM settings WHERE key='season'");
+    const programme = loyaltyProgramme(parseJson(settingRow?.value, {}), clock);
+    const competition = programme.competition;
+    if (!competition) apiError(404, 'There is no announced competition available right now.', 'COMPETITION_UNAVAILABLE');
+    const existing = await one<Record<string, unknown>>(c, 'SELECT id,status,created_at,decided_at FROM competition_entries WHERE user_id=? AND competition_key=?', userId, competition.key);
+    if (existing) return c.json({ competition: { ...competition, entry: { id: existing.id, status: existing.status, createdAt: Number(existing.created_at ?? 0), decidedAt: existing.decided_at === null ? null : Number(existing.decided_at) } }, alreadyEntered: true });
+    const entryId = `competition-${uid()}`;
+    try {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO competition_entries(id,competition_key,user_id,status,created_at) VALUES(?,?,?,?,?)').bind(entryId, competition.key, userId, 'entered', clock),
+        c.env.DB.prepare('INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)').bind(`competition-notice-${entryId}`, userId, 'تم تسجيل مشاركتك', `تم تسجيل مشاركتك في ${competition.title}.`, clock),
+      ]);
+    } catch {
+      const saved = await one<Record<string, unknown>>(c, 'SELECT id,status,created_at,decided_at FROM competition_entries WHERE user_id=? AND competition_key=?', userId, competition.key);
+      if (!saved) apiError(409, 'Your participation could not be recorded. Please try again.', 'COMPETITION_CONFLICT');
+      return c.json({ competition: { ...competition, entry: { id: saved.id, status: saved.status, createdAt: Number(saved.created_at ?? 0), decidedAt: saved.decided_at === null ? null : Number(saved.decided_at) } }, alreadyEntered: true });
+    }
+    await audit(c, 'loyalty.competition.enter', entryId, { competitionKey: competition.key });
+    return c.json({ competition: { ...competition, entry: { id: entryId, status: 'entered', createdAt: clock, decidedAt: null } }, alreadyEntered: false }, 201);
   });
 
   app.get('/api/names/check', async (c) => {

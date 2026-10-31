@@ -23,6 +23,7 @@ const features=[{icon:Globe,ar:'اسم يعبّر عنك',en:'An address of your
 function App(){
  const [lang,setLang]=useState<'ar'|'en'>((localStorage.getItem('ksa-lang') as 'ar'|'en')||'ar');
  const [theme,setTheme]=useState(localStorage.getItem('ksa-theme')||'dark');
+ const [seasonalThemeEnabled,setSeasonalThemeEnabled]=useState(()=>localStorage.getItem('ksa-men:seasonal-theme')!=='off');
  const [user,setUser]=useState<User|null>(null),[platform,setPlatform]=useState<any>(null);
  const [toast,setToast]=useState(''),[menu,setMenu]=useState(false),[loading,setLoading]=useState(true);
  const [install,setInstall]=useState<any>(null),[update,setUpdate]=useState<ServiceWorker|null>(null),[error,setError]=useState('');
@@ -30,11 +31,12 @@ function App(){
 	 const path=location.pathname,sub=location.hostname.endsWith('.ksa.men')&&location.hostname!=='www.ksa.men';
 	 const publicExport=path.startsWith('/export/')&&new URLSearchParams(location.search).has('public');
  const workspace=path==='/dashboard'||path==='/admin'||path.startsWith('/export/');
- const season=activeSeason(platform?.season);
+ const season=seasonalThemeEnabled?activeSeason(platform?.season):'';
  const refresh=async()=>{if(sub)return;const d:any=await api('/api/auth/me');setUser(d.user);setCSRF(d.csrf||'');};
  useEffect(()=>{document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';localStorage.setItem('ksa-lang',lang);},[lang]);
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('ksa-theme',theme);},[theme]);
  useEffect(()=>{if(season)document.documentElement.dataset.season=season;else delete document.documentElement.dataset.season;},[season]);
+ useEffect(()=>{const sync=(event:Event)=>{const enabled=(event as CustomEvent<boolean>).detail;if(typeof enabled==='boolean')setSeasonalThemeEnabled(enabled);};window.addEventListener('ksa:seasonal-theme',sync);return()=>window.removeEventListener('ksa:seasonal-theme',sync);},[]);
 	 useEffect(()=>{
 	  if(sub||publicExport)setLoading(false);else Promise.all([api('/api/platform').then(setPlatform),refresh()]).catch(e=>setError(e.message)).finally(()=>setLoading(false));
   if(!sub&&'serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(r=>{if(r.waiting)setUpdate(r.waiting);r.addEventListener('updatefound',()=>{const w=r.installing;w?.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)setUpdate(w);});});}).catch(()=>{});}
@@ -43,7 +45,7 @@ function App(){
  },[]);
  useEffect(()=>{if(!toast)return;const id=setTimeout(()=>setToast(''),4500);return()=>clearTimeout(id);},[toast]);
  useEffect(()=>{const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setMenu(false);};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);},[]);
- const logout=async()=>{try{await api('/api/auth/logout',{method:'POST'});navigator.serviceWorker?.controller?.postMessage('CLEAR_PRIVATE');sessionStorage.clear();['ksa-men:wallet-idempotency:transfer'].forEach(key=>localStorage.removeItem(key));await refresh();location.href='/';}catch(e:any){setToast(e.message);}};
+ const logout=async()=>{try{await api('/api/auth/logout',{method:'POST'});navigator.serviceWorker?.controller?.postMessage('CLEAR_PRIVATE');sessionStorage.clear();['ksa-men:wallet-idempotency:transfer','ksa-men:seasonal-theme'].forEach(key=>localStorage.removeItem(key));await refresh();location.href='/';}catch(e:any){setToast(e.message);}};
  const ctx={user,lang,t,refresh,notify:setToast};
  let page:React.ReactNode;
  if(sub)page=<Personal/>;
@@ -62,7 +64,7 @@ function App(){
  else if(path.startsWith('/quick/'))page=<Quick/>;
  else if(path==='/contact')page=<Contact/>;
  else if(path==='/blog')page=<Journal/>;else if(['/privacy','/terms'].includes(path))page=<Content slug={path.slice(1)}/>;
- else if(path==='/')page=<Home/>;
+ else if(path==='/')page=<Home season={season}/>;
  else page=<div className="page empty-state"><h1>{t('هذه الصفحة غير موجودة','This page isn’t here')}</h1><a href="/" className="button primary">{t('إلى الرئيسية','Back home')}</a></div>;
  const prefix=sub?'https://ksa.men':'';
  return <AppContext.Provider value={ctx}><div className={'app-shell '+(workspace?'workspace-shell':'')+(sub?' identity-shell':'')}>
@@ -101,9 +103,10 @@ function Footer({sub,platform}:{sub:boolean,platform:any}){
 function useManagedContent(slug:string){const[data,setData]=useState<any>(null);useEffect(()=>{let active=true;api('/api/content/'+slug).then(value=>{if(active)setData(value);}).catch(()=>{});return()=>{active=false;};},[slug]);return data;}
 function ManagedText({slug,fallback}:{slug:string,fallback:React.ReactNode}){const{lang}=useApp();const[data,setData]=useState<any>(null);useEffect(()=>{let current=true;api('/api/content/'+slug).then(value=>{if(current)setData(value);}).catch(()=>{if(current)setData(null);});return()=>{current=false;};},[slug]);const body=data?.['body_'+lang];if(typeof body!=='string'||!body.trim())return <>{fallback}</>;return <>{body.split(/\n\n/).filter(Boolean).map((paragraph:string,index:number)=><p key={index}>{paragraph}</p>)}</>;}
 function PageTitle({title,subtitle}:{title:string,subtitle?:string}){return <div className="page-title"><div className="eyebrow"><span className="section-mark"/>KSA.MEN</div><h1>{title}</h1>{subtitle&&<p>{subtitle}</p>}</div>;}
-function Home(){
- const {t,lang,user}=useApp();const [q,setQ]=useState('');const homeCopy=useManagedContent('home');
- return <div className="home-page"><section className="hero" aria-labelledby="home-title">
+function seasonLabel(season:string,lang:'ar'|'en'){const labels:Record<string,[string,string]>={eid_al_fitr:['عيد الفطر','Eid al-Fitr'],eid_al_adha:['عيد الأضحى','Eid al-Adha'],national_day:['اليوم الوطني السعودي','Saudi National Day'],founding_day:['يوم التأسيس السعودي','Founding Day']};return labels[season]?.[lang==='ar'?0:1]||'';}
+function Home({season}:{season:string}){
+ const {t,lang,user}=useApp();const [q,setQ]=useState('');const homeCopy=useManagedContent('home');const occasion=seasonLabel(season,lang);
+ return <div className="home-page">{occasion&&<div className="seasonal-ribbon" role="status"><span>{t('بكل فخر نحتفي بـ','Proudly celebrating')}</span><strong>{occasion}</strong><Sparkles size={16}/></div>}<section className="hero" aria-labelledby="home-title">
   <div className="primary-brand"><img className="primary-brand-logo" src="/assets/ksa-primary-independent-20261028.webp" alt={t("شعار KSA.MEN الأساسي","KSA.MEN original logo")} width="720" height="829" fetchPriority="high" decoding="async"/></div>
   <div className="hero-content"><span className="eyebrow hero-eyebrow">KSA.MEN <span/> {t('مساحة للجدارة السعودية','A PLACE FOR SAUDI CAPABILITY')}</span><h1 id="home-title">{t('ظهور رقمي','A digital presence')} <span>{t('يليق بك.','worthy of you.')}</span></h1><p className="hero-description">{homeCopy?.['body_'+lang]||t('اسمك عنوانك. وخبرتك قصة تستحق أن تُرى.','Your name is your address. Your expertise deserves to be seen.')}</p>
    <form className="hero-search" action="/search" role="search"><Search size={21}/><label className="sr-only" htmlFor="home-search">{t('ابحث عن هوية','Find an identity')}</label><input id="home-search" type="search" name="q" value={q} onChange={e=>setQ(e.target.value)} placeholder={t('اسم، تخصص، مدينة أو معرّف','Name, expertise, city or ID')}/><button className="hero-search-submit" aria-label={t('بحث','Search')}><ArrowUpLeft size={23}/></button></form>

@@ -41,15 +41,20 @@ export async function deliverDecisionEmail(env: Env, input: DecisionEmailInput):
   const from = env.DECISION_EMAIL_FROM?.trim() || 'KSA.MEN <auth@ksa.men>';
 
   if (env.RESEND_API_KEY?.trim()) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 2_000);
     try {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ from, to: [input.to], subject: input.subject, html }),
+        signal: controller.signal,
       });
       if (response.ok) return { delivered: true, channel: 'resend' };
     } catch {
       // The stored in-app notification remains authoritative; try only the configured fallback.
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

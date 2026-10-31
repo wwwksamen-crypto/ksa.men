@@ -77,6 +77,7 @@ const consentCopy:Record<string,{question:string;affirmation:string}>={
  public_profile:{question:'هل تريد إرسال موقعك للمراجعة تمهيداً للنشر العام؟',affirmation:'نعم، أريد طلب نشر موقعي للعامة بعد الاعتماد.'},
  translation:{question:'هل تريد معالجة النصوص التي اخترتها للترجمة؟',affirmation:'نعم، أريد ترجمة النصوص المحددة.'},
  contact:{question:'هل تريد إتاحة طلبات التواصل عبر موقعك؟',affirmation:'نعم، أريد إتاحة طلبات التواصل.'},
+ seasonal_notices:{question:'هل تريد تلقي تنبيهات المناسبات الوطنية داخل مساحتك وعبر البريد؟',affirmation:'نعم، أريد تلقي تنبيهات المناسبات الوطنية.'},
 };
 export async function recordConsent(c:Ctx,purpose:keyof typeof consentCopy,source:string,affirmative=true):Promise<void>{
  const user=me(c); const wording=consentCopy[purpose];

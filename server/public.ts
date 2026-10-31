@@ -45,7 +45,7 @@ export function visibleProfile(raw:Record<string,unknown>,lang:string,includeVis
     ?(raw.translations as Record<string,unknown>).en
     :undefined;
   const localized=translation&&typeof translation==='object'
-    ?{...raw,...translation,hidden:visibility(raw)}
+    ?{...raw,...translation,avatarMode:raw.avatarMode,hidden:visibility(raw)}
     :{...raw,hidden:visibility(raw)};
   const profile=publicProfile(localized) as Record<string,unknown>;
   return includeVisibility?{...profile,hidden:visibility(raw)}:profile;

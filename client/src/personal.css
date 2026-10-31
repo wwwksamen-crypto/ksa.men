@@ -103,6 +103,9 @@
   width: 122px;
 }
 
+.identity-hero__portrait--initials { align-items: center; background: linear-gradient(145deg, #08553b, #0b1b14 72%); display: flex; justify-content: center; }
+.identity-hero__portrait--initials span { color: #f7efd3; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(32px, 5vw, 48px); font-weight: 700; letter-spacing: .06em; line-height: 1; }
+
 .identity-hero__portrait img {
   border-radius: 22px 22px 4px 4px;
   display: block;

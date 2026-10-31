@@ -250,3 +250,14 @@ body{background-color:var(--bg);background-image:radial-gradient(ellipse 80% 46%
 .dashboard .card,.admin-console .card,.identity-page .identity-card,.identity-page .identity-section{background-color:var(--surface);background-image:linear-gradient(145deg,color-mix(in srgb,var(--surface) 96%,var(--green)),var(--surface)),repeating-linear-gradient(125deg,var(--velvet-thread) 0 1px,transparent 1px 8px)}.identity-page{background-color:var(--bg);background-image:radial-gradient(ellipse at 78% 0,color-mix(in srgb,var(--green) 17%,transparent),transparent 44%),repeating-linear-gradient(125deg,var(--velvet-thread) 0 1px,transparent 1px 8px)}
 @media(max-width:760px){.hero-actions{grid-template-columns:1fr}.hero-actions>.primary{grid-column:auto}.hero-actions .button,.purpose-banner .button,.trial-card .button,.empty-state .button,.contact-card .button,.quick-card .button,.journal-actions .button,.legal-actions .button{inline-size:100%}.journal-actions,.legal-actions{display:grid;grid-template-columns:1fr}.ownership-card{grid-template-columns:1fr;gap:14px;max-width:calc(100% - 2*var(--gutter));padding:22px}.ownership-mark{inline-size:50px;block-size:50px}.journal-hero,.legal-banner{grid-template-columns:1fr;padding:23px}.journal-hero__mark{inline-size:62px;block-size:62px;border-radius:18px}.journal-hero__mark img{inline-size:44px;block-size:44px}.legal-banner__seal{justify-self:start;inline-size:52px;block-size:52px}}
 @media(prefers-reduced-motion:reduce){.primary-brand-logo,.primary-brand::before{animation:none!important}}
+
+/* Phase 5: subtle, schedule-driven Saudi occasion touches on the public shell. */
+html[data-season="national_day"] { --seasonal-glow: #006c35; }
+html[data-season="founding_day"] { --seasonal-glow: #8b6b2b; }
+html[data-season="eid_al_fitr"] { --seasonal-glow: #16855e; }
+html[data-season="eid_al_adha"] { --seasonal-glow: #0c5c45; }
+html[data-season] .header { box-shadow: 0 1px 0 color-mix(in srgb, var(--seasonal-glow) 42%, transparent); }
+.seasonal-ribbon { display: flex; justify-content: center; align-items: center; gap: 9px; min-height: 34px; padding: 7px var(--gutter); border-bottom: 1px solid color-mix(in srgb, var(--seasonal-glow) 36%, var(--border)); background: color-mix(in srgb, var(--seasonal-glow) 13%, var(--surface)); color: var(--text); font-size: .76rem; }
+.seasonal-ribbon strong { color: var(--seasonal-glow); }
+.seasonal-ribbon svg { color: var(--gold); }
+@media(max-width:640px){.seasonal-ribbon{min-height:31px;font-size:.69rem;gap:6px}.seasonal-ribbon svg{width:14px;height:14px}}

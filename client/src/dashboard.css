@@ -954,3 +954,90 @@
   .dashboard-subscription .dashboard-history-row p,
   .dashboard-subscription .dashboard-history-row time { grid-column: 1 / -1; }
 }
+
+/* Phase 5: the private loyalty corner intentionally stays within the member console. */
+.dashboard-loyalty-preferences { display: grid; gap: 16px; }
+.dashboard-personalisation-note { min-height: 44px; padding: 11px 13px; border-inline-start: 3px solid var(--dash-gold); border-radius: 0 11px 11px 0; background: color-mix(in srgb, var(--dash-gold) 9%, transparent); }
+.dashboard-personalisation-note strong { color: var(--dash-accent); font-size: .84rem; }
+.dashboard-personalisation-note p { margin: 4px 0 0; color: var(--dash-muted); font-size: .81rem; line-height: 1.65; }
+.dashboard-loyalty-options { display: grid; gap: 10px; padding-top: 3px; }
+.dashboard-loyalty-options .dashboard-check { align-items: flex-start; }
+.dashboard-loyalty { padding: 0; overflow: clip; border-color: color-mix(in srgb, var(--dash-gold) 38%, var(--dash-border)); background: linear-gradient(135deg, color-mix(in srgb, var(--dash-green) 13%, var(--dash-surface)), var(--dash-surface)); }
+.dashboard-loyalty > summary { min-height: 58px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 15px clamp(18px, 3vw, 26px); cursor: pointer; list-style: none; }
+.dashboard-loyalty > summary::-webkit-details-marker { display: none; }
+.dashboard-loyalty > summary > span:first-child { display: inline-flex; align-items: center; gap: 9px; color: var(--dash-accent); }
+.dashboard-loyalty > summary > span:nth-child(2) { color: var(--dash-muted); font-size: .75rem; }
+.dashboard-loyalty > summary > svg { color: var(--dash-accent); transition: transform 180ms ease; }
+.dashboard-loyalty:not([open]) > summary > svg { transform: rotate(-90deg); }
+.dashboard-loyalty__body { display: grid; gap: 20px; padding: 0 clamp(18px, 3vw, 26px) clamp(20px, 3vw, 28px); border-top: 1px solid var(--dash-border); }
+.dashboard-daily-exercise { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, .9fr); align-items: center; gap: 18px; padding-top: 20px; }
+.dashboard-daily-exercise h2, .dashboard-gift-qr h2 { margin: 3px 0 7px; color: var(--dash-text); font-size: 1.08rem; }
+.dashboard-daily-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.dashboard-daily-choices .button { min-width: 0; min-height: 42px; justify-content: center; }
+.dashboard-daily-choices .button:last-child { grid-column: 1 / -1; }
+.dashboard-gift-qr { display: grid; gap: 14px; padding-top: 18px; border-top: 1px solid var(--dash-border); }
+.dashboard-gift-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.dashboard-gift-form label { display: grid; gap: 6px; min-width: 0; color: var(--dash-muted); font-size: .78rem; }
+.dashboard-gift-modes, .dashboard-gift-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.dashboard-gift-modes .button { min-height: 40px; }
+.dashboard-gift-card { display: grid; grid-template-columns: minmax(0, 1fr) 156px; gap: 14px; align-items: center; padding: 16px; border: 1px solid color-mix(in srgb, var(--dash-gold) 36%, var(--dash-border)); border-radius: 16px; background: linear-gradient(135deg, color-mix(in srgb, var(--dash-green) 18%, var(--dash-surface)), var(--dash-surface)); }
+.dashboard-gift-card > div:first-child { display: grid; gap: 6px; }
+.dashboard-gift-card > div:first-child span { color: var(--dash-gold); font-weight: 800; font-size: .75rem; letter-spacing: .08em; }
+.dashboard-gift-card > div:first-child strong { color: var(--dash-text); font-size: 1.15rem; overflow-wrap: anywhere; }
+.dashboard-gift-card > div:first-child small { color: var(--dash-muted); }
+.dashboard-gift-card > img { width: 156px; height: 156px; padding: 7px; border-radius: 12px; background: #fff; }
+.dashboard-gift-actions { grid-column: 1 / -1; }
+.dashboard-gift-actions .button { min-height: 42px; }
+html[data-season] .dashboard-loyalty { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--dash-gold) 42%, transparent); }
+@media (max-width: 760px) {
+  .dashboard-daily-exercise { grid-template-columns: 1fr; }
+  .dashboard-gift-form { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .dashboard-loyalty > summary { grid-template-columns: minmax(0, 1fr) auto; min-height: 56px; padding: 14px 17px; }
+  .dashboard-loyalty > summary > span:nth-child(2) { grid-column: 1; font-size: .69rem; }
+  .dashboard-loyalty > summary > svg { grid-column: 2; grid-row: 1 / span 2; }
+  .dashboard-loyalty__body { padding: 0 17px 18px; }
+  .dashboard-daily-choices { grid-template-columns: 1fr; }
+  .dashboard-daily-choices .button:last-child { grid-column: auto; }
+  .dashboard-gift-card { grid-template-columns: minmax(0, 1fr) 108px; padding: 13px; }
+  .dashboard-gift-card > img { width: 108px; height: 108px; }
+  .dashboard-gift-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr; }
+  .dashboard-gift-actions .button { width: 100%; justify-content: center; }
+}
+
+
+/* Phase 5 — private loyalty, wellbeing, and community corner. */
+.dashboard-female-privacy,
+.dashboard-competition,
+.dashboard-community-links {
+  align-items: center;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--green, #006837) 16%, var(--surface, #102018)), var(--surface, #102018));
+  border: 1px solid color-mix(in srgb, var(--accent, #78dca7) 28%, transparent);
+  border-radius: 18px;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 18px;
+}
+.dashboard-female-privacy p,
+.dashboard-competition p { margin: 6px 0 0; }
+.dashboard-female-privacy small { color: var(--muted); grid-column: 1 / -1; }
+.dashboard-competition { align-items: stretch; }
+.dashboard-competition h2,
+.dashboard-community-links h2 { font-size: 18px; margin: 2px 0 0; }
+.dashboard-competition-side { display: grid; align-content: space-between; gap: 12px; min-width: 230px; }
+.dashboard-countdown { display: grid; gap: 7px; grid-template-columns: repeat(4, minmax(42px, 1fr)); text-align: center; }
+.dashboard-countdown span { background: color-mix(in srgb, var(--bg, #07120f) 66%, transparent); border: 1px solid var(--border); border-radius: 10px; font-variant-numeric: tabular-nums; font-weight: 800; padding: 7px 4px; }
+.dashboard-countdown small { color: var(--muted); display: block; font-size: 10px; font-weight: 600; margin-top: 2px; }
+.dashboard-competition-link { align-items: center; color: var(--accent); display: inline-flex; font-size: 13px; font-weight: 700; gap: 5px; margin-top: 9px; }
+.dashboard-community-links > div:last-child { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.dashboard-community-links .button { align-items: center; display: inline-flex; font-size: 12px; gap: 6px; padding: 9px 11px; }
+@media (max-width: 680px) {
+  .dashboard-female-privacy,
+  .dashboard-competition,
+  .dashboard-community-links { grid-template-columns: 1fr; }
+  .dashboard-competition-side { min-width: 0; }
+  .dashboard-community-links > div:last-child { justify-content: flex-start; }
+  .dashboard-female-privacy .button { width: 100%; }
+}

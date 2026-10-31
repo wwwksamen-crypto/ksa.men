@@ -581,3 +581,10 @@
   .admin-console .admin-membership-card .admin-actions { display: grid; grid-template-columns: 1fr; }
   .admin-console .admin-membership-card .admin-actions .button { width: 100%; }
 }
+
+
+/* Phase 5 — principal-administrator programme controls. */
+.admin-season-fieldset { border: 1px solid var(--border); border-radius: 16px; display: grid; gap: 14px; margin: 0; min-inline: 0; padding: 16px; }
+.admin-season-fieldset legend { color: var(--accent); font-size: 13px; font-weight: 800; padding-inline: 6px; }
+.admin-form-wide { grid-column: 1 / -1; }
+@media (max-width: 680px) { .admin-form-wide { grid-column: auto; } }

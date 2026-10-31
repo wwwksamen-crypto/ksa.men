@@ -379,6 +379,50 @@ async function storedSetting(c: Ctx, key: string): Promise<{ key: string; value:
   return setting;
 }
 
+function seasonUrl(value: unknown, label: string): string {
+  const raw = text(value ?? '', label, { max: 500, optional: true });
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username || url.password) throw new Error('unsafe');
+    return url.href;
+  } catch { fail(400, `${label} must be a safe HTTPS URL`, 'invalid_input'); }
+}
+
+function seasonObject(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(400, `${label} must be an object`, 'invalid_input');
+  return value as Record<string, unknown>;
+}
+
+function normalizeSeason(value: unknown): string {
+  const source = seasonObject(value, 'season');
+  for (const key of Object.keys(source)) if (!['enabled', 'occasion', 'starts_at', 'ends_at', 'competition', 'communities', 'promotion'].includes(key)) fail(400, 'Season includes an unsupported field', 'invalid_input');
+  const enabled = source.enabled === true;
+  const occasion = text(source.occasion, 'occasion', { min: 1, max: 32 });
+  if (!['eid_al_fitr', 'eid_al_adha', 'national_day', 'founding_day'].includes(occasion)) fail(400, 'Occasion is invalid', 'invalid_input');
+  const startsAt = source.starts_at === undefined || source.starts_at === null ? 0 : integer(source.starts_at, 'starts_at', 0);
+  const endsAt = source.ends_at === undefined || source.ends_at === null ? 0 : integer(source.ends_at, 'ends_at', 0);
+  if (enabled && (!startsAt || !endsAt || endsAt <= startsAt)) fail(400, 'A valid season window is required', 'invalid_input');
+  const competitionSource = source.competition === undefined ? {} : seasonObject(source.competition, 'competition');
+  for (const key of Object.keys(competitionSource)) if (!['enabled', 'title', 'terms', 'ends_at', 'url'].includes(key)) fail(400, 'Competition includes an unsupported field', 'invalid_input');
+  const competition = {
+    enabled: competitionSource.enabled === true,
+    title: text(competitionSource.title ?? '', 'competition title', { max: 160, optional: true }),
+    terms: text(competitionSource.terms ?? '', 'competition terms', { max: 1500, optional: true }),
+    ends_at: competitionSource.ends_at === undefined || competitionSource.ends_at === null ? 0 : integer(competitionSource.ends_at, 'competition ends_at', 0),
+    url: seasonUrl(competitionSource.url, 'competition URL'),
+  };
+  if (competition.enabled && (!competition.title || !competition.ends_at || competition.ends_at <= now())) fail(400, 'An announced competition needs a title and future end time', 'invalid_input');
+  const communitiesSource = source.communities === undefined ? {} : seasonObject(source.communities, 'communities');
+  for (const key of Object.keys(communitiesSource)) if (!['telegram', 'whatsapp', 'youtube'].includes(key)) fail(400, 'Communities include an unsupported field', 'invalid_input');
+  const communities = { telegram: seasonUrl(communitiesSource.telegram, 'Telegram URL'), whatsapp: seasonUrl(communitiesSource.whatsapp, 'WhatsApp URL'), youtube: seasonUrl(communitiesSource.youtube, 'YouTube URL') };
+  const promotionSource = source.promotion === undefined ? {} : seasonObject(source.promotion, 'promotion');
+  for (const key of Object.keys(promotionSource)) if (!['title', 'url'].includes(key)) fail(400, 'Promotion includes an unsupported field', 'invalid_input');
+  const promotion = { title: text(promotionSource.title ?? '', 'promotion title', { max: 120, optional: true }), url: seasonUrl(promotionSource.url, 'promotion URL') };
+  if ((promotion.title && !promotion.url) || (!promotion.title && promotion.url)) fail(400, 'Promotion requires a title and HTTPS URL together', 'invalid_input');
+  return JSON.stringify({ enabled, occasion, starts_at: startsAt, ends_at: endsAt, competition, communities, promotion });
+}
+
 async function contactAllowed(c: Ctx, recipient: number): Promise<void> {
   const allowed = await one<{ id: number }>(
     c,
@@ -1142,6 +1186,38 @@ export function registerOperations(app: App): void {
     return c.json({ requestId: request.id, status: approved ? "approved" : decision, appliedUntil });
   });
 
+  app.get('/api/admin/competition-entries', async (c) => {
+    owner(c);
+    fresh(c);
+    const entries = await all<Record<string, unknown>>(
+      c,
+      `SELECT ce.id,ce.competition_key,ce.status,ce.decided_by,ce.decided_at,ce.created_at,u.name,u.email
+       FROM competition_entries ce JOIN users u ON u.id=ce.user_id
+       ORDER BY ce.created_at DESC LIMIT 200`,
+    );
+    return c.json({ entries });
+  });
+
+  app.post('/api/admin/competition-entries/:id/decision', async (c) => {
+    const reviewer = owner(c);
+    fresh(c);
+    const body = await input(c);
+    const decision = text(body.decision, 'decision', { min: 1, max: 32 }).toLowerCase();
+    if (!['winner', 'not_selected'].includes(decision)) fail(400, 'Competition decision is invalid', 'invalid_input');
+    const entry = await one<Record<string, unknown>>(c, 'SELECT * FROM competition_entries WHERE id=?', c.req.param('id'));
+    if (!entry) fail(404, 'Competition entry not found', 'not_found');
+    const result = await run(c, "UPDATE competition_entries SET status=?,decided_by=?,decided_at=? WHERE id=? AND status='entered'", decision, reviewer.id, now(), entry.id);
+    if (!changed(result)) fail(409, 'This competition entry already has a decision', 'competition_stale');
+    const winner = decision === 'winner';
+    const delivery = await notifyMemberDecision(c, {
+      targetId: Number(entry.user_id), title: winner ? 'تهانينا، تم اعتمادك فائزاً' : 'تحديث بشأن المسابقة',
+      body: winner ? 'تم اعتماد نتيجتك من المشرف الرئيسي. نتواصل معك عبر مساحتك عند وجود أي خطوة تالية.' : 'اكتملت مراجعة المسابقة ولم يقع عليك الاختيار هذه المرة. نشكرك على مشاركتك.',
+      actionLabel: 'فتح ركن الولاء', actionPath: '/dashboard?tab=wallet',
+    });
+    await audit(c, 'loyalty.competition.decision', `competition:${entry.id}`, { decision, delivery: delivery.channel });
+    return c.json({ entryId: entry.id, status: decision });
+  });
+
   app.get("/api/admin/governance", async (c) => {
     owner(c);
     fresh(c);
@@ -1188,6 +1264,8 @@ export function registerOperations(app: App): void {
       const decoded = parseJson(normalized) as Record<string, unknown>;
       if (typeof password === "string" && password.trim()) decoded.passwordHash = await hashSecret(password.trim());
       value = JSON.stringify(decoded);
+    } else if (key === 'season') {
+      value = normalizeSeason(body.value);
     } else {
       value = JSON.stringify(key === "bank" && body.value === undefined ? body.instructions ?? {} : body.value ?? {});
       if (value.length > 20_000) fail(400, "Setting value is too large", "invalid_input");
