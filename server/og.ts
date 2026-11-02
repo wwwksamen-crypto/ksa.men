@@ -51,3 +51,12 @@ export async function personalizedHTML(c:Ctx,html:string){
  const crawler=`<section id="public-summary" aria-label="${lang==='ar'?'الهوية المهنية':'Professional identity'}"><h1>${escape(String(profile.name||'KSA.MEN'))}</h1>${profile.title?'<p>'+escape(String(profile.title))+'</p>':''}${profile.bio?'<p>'+escape(String(profile.bio))+'</p>':''}</section>`;
  return html.replace(/<title>[\s\S]*?<\/title>/,'<title>'+escape(title)+'</title>').replace(/<meta name="description"[^>]*>/,'').replace('</head>',metadata+'</head>').replace('<body>','<body>'+'<noscript>'+crawler+'</noscript>');
 }
+
+export function unavailableSiteHTML(c: Ctx): string {
+ const english = c.req.query('lang') === 'en';
+ const title = english ? 'This identity is not available' : 'هذه الهوية غير متاحة الآن';
+ const message = english ? 'Please check the address or return to KSA.MEN.' : 'تحقق من الرابط أو عُد إلى منصة KSA.MEN.';
+ const home = english ? 'Discover KSA.MEN' : 'العودة إلى KSA.MEN';
+ const root = escape(c.env.ROOT_DOMAIN);
+ return `<!doctype html><html lang="${english ? 'en' : 'ar'}" dir="${english ? 'ltr' : 'rtl'}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>${title} — KSA.MEN</title><style>@font-face{font-family:Tajawal;src:url('/assets/Tajawal-Regular.ttf')}*{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;place-items:center;padding:24px;background:#07120f;color:#f4f4ed;font-family:Tajawal,Arial,sans-serif;text-align:center}main{width:min(100%,480px);padding:clamp(24px,6vw,44px);border:1px solid #294438;border-radius:24px;background:linear-gradient(145deg,#10271b,#101f19)}img{width:120px;height:120px;object-fit:contain}h1{font-size:clamp(24px,5vw,32px);line-height:1.5}p{color:#a7b9ae;line-height:1.8}a{display:inline-block;margin-top:12px;min-height:48px;padding:12px 22px;border:1px solid #8fddb2;border-radius:12px;color:#b4edcc;text-decoration:none;font-weight:bold}a:focus-visible{outline:3px solid #8fddb2;outline-offset:4px}</style></head><body><main><img src="/assets/logo-emblem.webp" alt="KSA.MEN"><h1>${title}</h1><p>${message}</p><a href="https://${root}/">${home}</a></main></body></html>`;
+}

@@ -49,9 +49,46 @@ describe.sequential('KSA.MEN integrated functional and security pass',()=>{
  it('technical reserved names cannot be taken',async()=>{expect((await request('/api/names/reserve','alice','POST',{name:'admin'})).status).toBe(409);});
  it('two concurrent reservations yield one owned name and no duplicate site',async()=>{const results=await Promise.all([request('/api/names/reserve','alice','POST',{name:'qa-concurrency'}),request('/api/names/reserve','bob','POST',{name:'qa-concurrency'})]);expect(results.filter(x=>x.status===201)).toHaveLength(1);const winner=results.find(x=>x.status===201)!;const name=bridge({sql:'SELECT * FROM dns_names WHERE name=?',params:['qa-concurrency']}).results[0];siteA=name.site_id;if(name.owner_id!==users.alice.id){const a=users.alice;users.alice=users.bob;users.bob=a;}expect(winner.data.site.id).toBe(siteA);expect(bridge({sql:'SELECT COUNT(*) AS n FROM dns_names WHERE name=?',params:['qa-concurrency']}).results[0].n).toBe(1);});
  it('creates second independent site and prevents cross-user reads',async()=>{const x=await request('/api/names/reserve','bob','POST',{name:'qa-second'});expect(x.status).toBe(201);siteB=x.data.site.id;expect((await request('/api/sites/'+siteA,'bob')).status).toBe(403);});
+ it('account activation does not publish an unsubmitted draft or count it as a pending publication', async()=>{
+  const activation=await request('/api/admin/users/'+users.bob.id+'/action','owner','POST',{action:'status',status:'active'});
+  expect(activation.status).toBe(200);
+  const row=bridge({sql:'SELECT status,published FROM sites WHERE id=?',params:[siteB]}).results[0];
+  expect(row).toEqual({status:'draft',published:null});
+  const overview=await request('/api/admin/overview','owner');
+  expect(overview.data.metrics.pending_sites).toBe(0);
+  expect(overview.data.metrics.draft_sites).toBe(2);
+  const list=await request('/api/admin/users','owner');
+  const member=list.data.users.find((u:any)=>u.id===users.bob.id);
+  expect(member.site_status).toBe('draft');expect(member.site_url).toBeNull();
+ });
+ it('unpublished and unknown site pages return a branded private 404, never a draft or raw JSON',async()=>{
+  for(const host of ['qa-second','qa-unknown']){
+   for(const lang of ['ar','en']){
+    const response=await worker.fetch(new Request('https://'+host+'.ksa.men/?lang='+lang),env,{} as any);
+    expect(response.status).toBe(404);expect(response.headers.get('Content-Type')).toContain('text/html');
+    expect(response.headers.get('Cache-Control')).toContain('no-store');expect(response.headers.get('X-Robots-Tag')).toContain('noindex');
+    const html=await response.text();expect(html).toContain('/assets/logo-emblem.webp');expect(html).toContain('https://ksa.men/');
+    expect(html).toContain(lang==='ar'?'هذه الهوية غير متاحة الآن':'This identity is not available');
+    expect(html).not.toContain('[تدقيق]');expect(html).not.toContain('@unit.invalid');expect(html).not.toContain('{"error"');
+   }
+  }
+  const apiResponse=await worker.fetch(new Request('https://qa-second.ksa.men/api/public/profile'),env,{} as any);
+  expect(apiResponse.status).toBe(404);expect(apiResponse.headers.get('Content-Type')).toContain('application/json');
+ });
  it('draft saves use version CAS and keep a separate published profile',async()=>{const x=await request('/api/sites/'+siteA+'/draft','alice','PUT',{draft:profile,version:0});expect(x.status).toBe(200);expect((await request('/api/sites/'+siteA+'/draft','alice','PUT',{draft:profile,version:0})).status).toBe(409);expect(bridge({sql:'SELECT published FROM sites WHERE id=?',params:[siteA]}).results[0].published).toBeNull();});
-	 it('explicit review freezes snapshot while later draft changes are preserved',async()=>{const x=await request('/api/sites/'+siteA+'/submit','alice','POST');expect(x.status).toBe(201);reviewA=x.data.review.id;const queue=await request('/api/admin/reviews','owner');const queued=queue.data.reviews.find((item:any)=>item.id===reviewA);expect(queued.submitter_email).toBe(users.alice.email);expect(queued.submitter_whatsapp).toBe('0555000000');const edit=await request('/api/sites/'+siteA+'/draft','alice','PUT',{draft:{...profile,bio:'مسودة أحدث لا تنشر قبل الموافقة'},version:1});expect(edit.status).toBe(200);const r=bridge({sql:'SELECT snapshot FROM reviews WHERE id=?',params:[reviewA]}).results[0];expect(JSON.parse(r.snapshot).bio).toBe(profile.bio);});
+	 it('explicit review freezes snapshot while later draft changes are preserved',async()=>{const x=await request('/api/sites/'+siteA+'/submit','alice','POST');expect(x.status).toBe(201);reviewA=x.data.review.id;const pendingOverview=await request('/api/admin/overview','owner');expect(pendingOverview.data.metrics.pending_sites).toBe(1);expect(pendingOverview.data.metrics.draft_sites).toBe(1);const queue=await request('/api/admin/reviews','owner');const queued=queue.data.reviews.find((item:any)=>item.id===reviewA);expect(queued.submitter_email).toBe(users.alice.email);expect(queued.submitter_whatsapp).toBe('0555000000');const edit=await request('/api/sites/'+siteA+'/draft','alice','PUT',{draft:{...profile,bio:'مسودة أحدث لا تنشر قبل الموافقة'},version:1});expect(edit.status).toBe(200);const r=bridge({sql:'SELECT snapshot FROM reviews WHERE id=?',params:[reviewA]}).results[0];expect(JSON.parse(r.snapshot).bio).toBe(profile.bio);});
  it('approves immutable submitted snapshot, not the newer draft',async()=>{const x=await request('/api/admin/reviews/'+reviewA+'/decision','owner','POST',{decision:'approve'});expect(x.status).toBe(200);const site=bridge({sql:'SELECT * FROM sites WHERE id=?',params:[siteA]}).results[0];expect(JSON.parse(site.published).bio).toBe(profile.bio);expect(JSON.parse(site.draft).bio).toBe('مسودة أحدث لا تنشر قبل الموافقة');expect(site.draft_version).toBe(2);});
+ it('only published active sites get a public link and leave the pending publication queue',async()=>{
+  const list=await request('/api/admin/users','owner');
+  const alice=list.data.users.find((u:any)=>u.id===users.alice.id);
+  const bob=list.data.users.find((u:any)=>u.id===users.bob.id);
+  expect(alice.site_status).toBe('published');expect(alice.site_url).toBe('https://qa-concurrency.ksa.men');
+  expect(bob.site_url).toBeNull();
+  const overview=await request('/api/admin/overview','owner');
+  expect(overview.data.metrics.pending_sites).toBe(0);expect(overview.data.metrics.draft_sites).toBe(1);
+  const response=await worker.fetch(new Request('https://qa-concurrency.ksa.men/'),env,{} as any);
+  expect(response.status).toBe(200);expect(response.headers.get('Content-Type')).toContain('text/html');
+ });
  it('approved review cannot be repeated',async()=>{expect((await request('/api/admin/reviews/'+reviewA+'/decision','owner','POST',{decision:'approve'})).status).toBe(409);});
 	 it('public profile strips hidden field from API',async()=>{const x=await worker.fetch(new Request('https://qa-concurrency.ksa.men/api/public/profile'),env,{} as any);expect(x.status).toBe(200);expect(await x.text()).not.toContain('private@unit.invalid');});
 	 it('public export is an approved snapshot and its vCard excludes hidden fields',async()=>{

@@ -5,7 +5,7 @@ import { ZodError } from 'zod';
 import { type Bindings, type Session, type User, type Env, one, now, digest, hmac, verifySecret, rate, setting } from './core';
 import { registerAuth } from './auth';
 import {registerPreview} from './preview';
-import { registerOG,personalizedHTML } from './og';
+import { registerOG,personalizedHTML,unavailableSiteHTML } from './og';
 import { registerBackup, makeBackup } from './backup';
 import { registerBusiness } from './business';
 import { registerOperations } from './operations';
@@ -120,7 +120,17 @@ app.get('*', async c => {
   const asset = await c.env.ASSETS.fetch(new Request(new URL(path === '/' ? '/index.html' : path, c.req.url), c.req.raw));
   // Preserve conditional (304), range (206) and missing-asset responses unchanged.
   if (staticPath(path)) return asset;
-  if (asset.status === 200) { if(new URL(c.req.url).hostname!==c.env.ROOT_DOMAIN&&path==='/')return c.html(await personalizedHTML(c,await asset.text()));return asset; }
+  if (asset.status === 200) {
+    if (new URL(c.req.url).hostname !== c.env.ROOT_DOMAIN && path === '/') {
+      try { return c.html(await personalizedHTML(c, await asset.text())); }
+      catch (error) {
+        if (!(error instanceof HTTPException) || error.status !== 404) throw error;
+        c.header('X-Robots-Tag', 'noindex, nofollow');
+        return c.html(unavailableSiteHTML(c), 404);
+      }
+    }
+    return asset;
+  }
   if (path.startsWith('/assets/') || path.includes('.') || path.startsWith('/api/')) throw new HTTPException(404);
   return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url), c.req.raw));
 });

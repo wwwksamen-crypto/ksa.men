@@ -544,6 +544,7 @@ export function registerOperations(app: App): void {
         new_registrations: null,
         published_sites: null,
         pending_sites: null,
+        draft_sites: null,
         review_requests: pending?.count ?? 0,
         free_trials: null,
         subscriptions: null,
@@ -576,10 +577,16 @@ export function registerOperations(app: App): void {
     );
     const pendingSites = await one<{ count: number }>(
       c,
-      scoped
-        ? "SELECT COUNT(*) AS count FROM sites WHERE status<>'published' AND (manager_id=? OR user_id=?)"
-        : "SELECT COUNT(*) AS count FROM sites WHERE status<>'published'",
-      ...(scoped ? [user.id, user.id] : []),
+      `SELECT COUNT(*) AS count FROM sites s WHERE s.status='pending' AND EXISTS(
+         SELECT 1 FROM reviews r WHERE r.site_id=s.id AND r.status='pending' AND r.kind<>'redirect'
+           AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)
+       ) ${scoped ? 'AND (s.manager_id=? OR s.user_id=? OR EXISTS(SELECT 1 FROM users u WHERE u.id=s.user_id AND u.assigned_to=?))' : ''}`,
+      ...(scoped ? [user.id, user.id, user.id] : []),
+    );
+    const draftSites = await one<{ count: number }>(
+      c,
+      `SELECT COUNT(*) AS count FROM sites s WHERE s.status='draft' ${scoped ? 'AND (s.manager_id=? OR s.user_id=? OR EXISTS(SELECT 1 FROM users u WHERE u.id=s.user_id AND u.assigned_to=?))' : ''}`,
+      ...(scoped ? [user.id, user.id, user.id] : []),
     );
     const pendingReviews = await one<{ count: number }>(
       c,
@@ -609,6 +616,7 @@ export function registerOperations(app: App): void {
       new_registrations: newRegistrations?.count ?? 0,
       published_sites: publishedSites?.count ?? 0,
       pending_sites: pendingSites?.count ?? 0,
+      draft_sites: draftSites?.count ?? 0,
       review_requests: pendingReviews?.count ?? 0,
       free_trials: trials?.count ?? 0,
       subscriptions: subscriptions?.count ?? 0,
@@ -665,7 +673,11 @@ export function registerOperations(app: App): void {
       limit,
       offset,
     );
-    return c.json({ users: rows.map(responseUser), offset, limit });
+    return c.json({ users: rows.map(row => ({
+      ...responseUser(row),
+      site_url: row.status === 'active' && row.site_status === 'published' && typeof row.subdomain === 'string'
+        ? 'https://' + row.subdomain + '.' + c.env.ROOT_DOMAIN : null,
+    })), offset, limit });
   });
 
   app.post("/api/admin/users/:id/action", async (c) => {
