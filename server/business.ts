@@ -248,7 +248,7 @@ function youtubeUrl(value: unknown): string {
   return url;
 }
 
-function defaultProfile(name = ''): Profile {
+export function defaultProfile(name = ''): Profile {
   return {
     name,
     title: '',
@@ -354,7 +354,7 @@ function linkList(value: unknown, field: string, maximum: number): Array<string 
 }
 
 /** Normalizes the complete profile schema and rejects unrecognised content rather than storing it blindly. */
-function normalizeProfile(value: unknown, fallbackName = '', nested = false): Profile {
+export function normalizeProfile(value: unknown, fallbackName = '', nested = false): Profile {
   if (!isRecord(value)) apiError(422, 'draft must be a profile object', 'VALIDATION');
   for (const key of Object.keys(value)) {
     if (!PROFILE_KEYS.has(key) || (nested && key === 'translations')) {

@@ -588,3 +588,16 @@
 .admin-season-fieldset legend { color: var(--accent); font-size: 13px; font-weight: 800; padding-inline: 6px; }
 .admin-form-wide { grid-column: 1 / -1; }
 @media (max-width: 680px) { .admin-form-wide { grid-column: auto; } }
+
+/* Managed-account workbench retains the existing mobile-first surface. */
+.admin-managed-form { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+.admin-managed-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; scroll-margin-top: 100px; }
+.admin-managed-list h2 { display: flex; gap: 9px; align-items: center; }
+.admin-managed-list > .card { min-width: 0; }
+.admin-managed-list details > .stack { padding-top: 18px; }
+.admin-managed summary { cursor: pointer; padding-block: 12px; font-weight: 700; }
+.admin-managed .field input, .admin-managed .field select { width: 100%; min-width: 0; }
+.admin-managed .admin-section-intro { flex-wrap: wrap; gap: 12px; }
+.admin-review > details { margin-block: 10px; }
+@media(max-width:760px) { .admin-managed-list { grid-template-columns: minmax(0,1fr); } }
+@media(max-width:540px) { .admin-managed-form { grid-template-columns: minmax(0,1fr); } .admin-managed .admin-actions > * { flex: 1 1 140px; justify-content: center; min-height: 46px; } }

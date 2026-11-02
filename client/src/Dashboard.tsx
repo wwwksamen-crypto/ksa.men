@@ -750,7 +750,12 @@ export default function Dashboard() {
 
   const saveDraft = useCallback(async (quiet = false): Promise<boolean> => {
     const siteId = siteIdRef.current;
-    if (!siteId || !dirtyRef.current || savingRef.current) return true;
+    if (!siteId) return false;
+    if (savingRef.current) {
+      for (let attempt = 0; attempt < 160 && savingRef.current; attempt++) await new Promise(resolve => window.setTimeout(resolve, 50));
+      if (savingRef.current) { notify(tr('انتظر اكتمال الحفظ ثم حاول مجدداً.', 'Wait for saving to finish, then try again.')); return false; }
+    }
+    if (!dirtyRef.current) return true;
     const revision = revisionRef.current;
     const version = versionRef.current;
     const outgoing = draftRef.current;
@@ -803,14 +808,13 @@ export default function Dashboard() {
 
   const submitForReview = async () => {
     if (!activeSite) return;
-    if (!window.confirm(tr('سيُنشئ هذا الإجراء لقطة ثابتة للمراجعة، ولن ينشر الموقع. هل تريد المتابعة؟', 'This creates a fixed review snapshot; it will not publish the site. Continue?'))) return;
     setSubmittingReview(true);
     try {
       if (!(await saveDraft(true))) return;
       const response = await api<{ review?: { id?: string }; id?: string }>(`/api/sites/${encodeURIComponent(activeSite.id)}/submit`, { method: 'POST', body: JSON.stringify({}) });
       setPreviewOpen(false);
       await loadDashboard();
-      notify(response.review?.id || response.id ? tr('تم إرسال لقطة المراجعة.', 'Review snapshot submitted.') : tr('تم استلام طلب المراجعة.', 'Review request received.'));
+      notify(response.review?.id || response.id ? tr('وصل طلب النشر إلى المشرف.', 'Your publishing request reached the administrator.') : tr('تم استلام طلب المراجعة.', 'Review request received.'));
     } catch (error) { notify(errorMessage(error)); }
     finally { setSubmittingReview(false); }
   };
@@ -1650,7 +1654,7 @@ function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draf
   >
     <header>
       <div>
-        <p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة محلية للمسودة', 'Local draft preview')}</p>
+        <p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة هويتك', 'Preview your identity')}</p>
         <h2 id="dashboard-preview-title">{draft.name || tr('اسمك', 'Your name')}</h2>
       </div>
       <button ref={closeButtonRef} type="button" className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button>
@@ -1664,10 +1668,10 @@ function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draf
       {site && <small dir="ltr"><bdi>{site.name}</bdi></small>}
     </div>
     <footer>
-      <p className="muted">{tr('هذه معاينة للمسودة فقط. إرسالها ينشئ لقطة مراجعة مستقلة ولا ينشرها.', 'This previews only your draft. Submitting creates an independent review snapshot and does not publish it.')}</p>
+      <p className="muted">{tr('اضغط طلب النشر، وسيتولى المشرف إتاحة موقعك.', 'Request publication and your administrator will make your site available.')}</p>
       <div>
         <button type="button" className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button>
-        <button type="button" className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('إرسال للمراجعة', 'Submit for review')}</button>
+        <button type="button" className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('طلب نشر موقعي', 'Request publication')}</button>
       </div>
     </footer>
   </dialog>;

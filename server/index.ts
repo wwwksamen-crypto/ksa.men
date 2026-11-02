@@ -1,3 +1,4 @@
+import { registerManaged } from './managed';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -57,7 +58,12 @@ app.use('*', async (c, next) => {
     const session = await one<Session>(c, 'SELECT * FROM sessions WHERE id=? AND revoked=0 AND expires_at>?', await digest(rawCookie), now());
     if (session) {
       const user = await one<User>(c, "SELECT * FROM users WHERE id=? AND status='active'", session.user_id);
-      if (user) { c.set('user', user); c.set('session', session); }
+      if (user) {
+        if (user.email.endsWith('@managed.' + root)) {
+          const managed = await one<{contact_email:string}>(c, 'SELECT contact_email FROM managed_accounts WHERE user_id=?', user.id);
+          if (managed) user.email = managed.contact_email;
+        }
+        c.set('user', user); c.set('session', session); }
     }
   }
   const lock: any = await setting(c, 'lock', { mode: 'private' });
@@ -109,7 +115,7 @@ registerBackup(app);
 registerAuth(app);
 registerPublic(app);
 registerBusiness(app);
-registerOperations(app);
+registerOperations(app);registerManaged(app);
 registerIntelligence(app);
 app.get('/robots.txt', async c => {
   const lock: any = await setting(c, 'lock');

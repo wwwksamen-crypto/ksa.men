@@ -1,3 +1,4 @@
+import { background } from './managed';
 import { HTTPException } from "hono/http-exception";
 import type { App, Ctx } from "./core";
 import { all, audit, auditRowHash, finance, fresh, hashSecret, me, now, one, role, run, siteFor, uid } from "./core";
@@ -654,10 +655,11 @@ export function registerOperations(app: App): void {
       : "";
     const rows = await all<Record<string, unknown>>(
       c,
-      `SELECT u.id,u.email,u.name,u.whatsapp,u.role,u.financial,u.status,u.trial_until,u.entitlement_until,u.referrer_id,u.referral_paid,u.assigned_to,u.created_at,u.last_active,
+      `SELECT u.id,COALESCE((SELECT contact_email FROM managed_accounts WHERE user_id=u.id),u.email) AS email,u.name,u.whatsapp,u.role,u.financial,u.status,u.trial_until,u.entitlement_until,u.referrer_id,u.referral_paid,u.assigned_to,u.created_at,u.last_active,
               w.balance,
               (SELECT n.name FROM dns_names n WHERE n.owner_id=u.id ORDER BY n.created_at LIMIT 1) AS subdomain,
               (SELECT s.status FROM sites s WHERE s.user_id=u.id ORDER BY s.created_at LIMIT 1) AS site_status,
+              (SELECT s.id FROM sites s WHERE s.user_id=u.id ORDER BY s.created_at LIMIT 1) AS site_id,
               (SELECT d.status FROM deletion_requests d WHERE d.user_id=u.id ORDER BY d.created_at DESC LIMIT 1) AS deletion_request_status
        FROM users u
        LEFT JOIN wallets w ON w.user_id=u.id
@@ -929,10 +931,6 @@ export function registerOperations(app: App): void {
     );
     if (!review) fail(404, "Review not found", "not_found");
     const reviewer = await reviewScope(c, review);
-    fresh(c);
-    if (review.user_id === reviewer.id) {
-      fail(403, "You cannot decide a review you submitted; an independent owner, manager, or moderator must review it", "reviewer_submitter_conflict");
-    }
     if (review.status !== "pending" || review.decision_status) fail(409, "This review is no longer pending", "review_stale");
     const decidedAt = now();
     try {
@@ -950,7 +948,7 @@ export function registerOperations(app: App): void {
       // published base. Do not disclose which competing actor caused the conflict.
       fail(409, "This review is no longer pending or its published base is stale", "review_stale");
     }
-    const delivery = await notifyMemberDecision(c, {
+    const notice = notifyMemberDecision(c, {
       targetId: review.user_id,
       title: decision === "approved" ? "تم اعتماد موقعك" : "تحديث بشأن طلب موقعك",
       body: decision === "approved"
@@ -959,7 +957,8 @@ export function registerOperations(app: App): void {
       actionLabel: decision === "approved" ? "فتح موقعك" : "تعديل الطلب",
       actionPath: decision === "approved" ? "/dashboard?tab=editor" : "/dashboard?tab=editor",
     });
-    await audit(c, "review.decision", `review:${review.id}`, { decision, reason, siteId: review.site_id, baseVersion: review.base_version, delivery: delivery.channel });
+    await background(c, notice);
+    await audit(c, "review.decision", `review:${review.id}`, { decision, reason, siteId: review.site_id, baseVersion: review.base_version, responsibility: 'administration' });
     const updated = await one<DecidedReviewRow>(
       c,
       `SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
@@ -967,7 +966,7 @@ export function registerOperations(app: App): void {
       review.id,
     );
     const resolved = updated ? resolvedReview(updated) : null;
-    return c.json({ review: resolved ? { ...resolved, snapshot: parseJson(resolved.snapshot) } : null });
+    return c.json({ published: decision === 'approved', review: resolved ? { ...resolved, snapshot: parseJson(resolved.snapshot) } : null });
   });
 
   app.get("/api/admin/payments", async (c) => {

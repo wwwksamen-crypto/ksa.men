@@ -4,6 +4,7 @@ import {ArrowUpLeft,ArrowUpRight,Search,Menu,X,Sun,Moon,Globe,ShieldCheck,LockKe
 import {api,AppContext,setCSRF,type User,useApp,Button} from './lib';
 import './style.css';
 import Sanad from './Sanad';
+import ManagedClaim from './ManagedClaim';
 const Personal=lazy(()=>import('./Personal'));
 const Dashboard=lazy(()=>import('./Dashboard'));const Admin=lazy(()=>import('./Admin'));const Exports=lazy(()=>import('./Exports'));const QRTools=lazy(()=>import('./Exports').then(m=>({default:m.QRTools})));
 const isStaffRole=(role:string|undefined)=>['owner','manager','moderator'].includes(role||'');
@@ -52,7 +53,7 @@ function App(){
  else if(loading)page=<div className="loader"><img src="/assets/logo-emblem.webp" alt="KSA.MEN"/><span className="load-line"/><p>{t('نجهّز مساحتك','Preparing your space')}</p></div>;
  else if(error)page=<div className="page"><div className="card connection-state"><ShieldCheck size={32}/><h1>{t('لنكمل اتصالنا','Let’s reconnect')}</h1><p>{error}</p><Button className="primary" onClick={()=>location.reload()}>{t('إعادة المحاولة','Try again')}</Button></div></div>;
  else if(platform&&!platform.access&&!(platform.lock.mode==='home'&&path!=='/')&&!['/auth','/privacy','/terms'].includes(path))page=<Gate platform={platform} onSuccess={()=>location.reload()}/>;
- else if(path==='/auth')page=<Auth/>;
+ else if(path==='/auth')page=new URLSearchParams(location.search).has('claim')?<ManagedClaim/>:<Auth/>;
  else if(path==='/dashboard')page=user?<Dashboard/>:<Auth/>;
  else if(path==='/admin')page=user&&isStaffRole(user.role)?<Admin/>:<Auth/>;
  else if(path.startsWith('/export/'))page=new URLSearchParams(location.search).has('public')?<Exports/>:user?<Exports/>:<Auth/>;
@@ -135,7 +136,7 @@ function Auth(){
     setCSRF(d.csrf);await refresh();location.href=authDestination(d.user.role);return;
    }
    if(!challenge){
-    const body={email:normalizedEmail,purpose:mode,...(mode==='register'?{name:name.trim(),whatsapp:phone.trim(),consent:agree,ageConfirmed:agree,eligibilityConfirmed:agree,referral:new URLSearchParams(location.search).get('ref')||undefined}:{})};
+    const body={email:normalizedEmail,account:new URLSearchParams(location.search).get('account')||undefined,purpose:mode,...(mode==='register'?{name:name.trim(),whatsapp:phone.trim(),consent:agree,ageConfirmed:agree,eligibilityConfirmed:agree,referral:new URLSearchParams(location.search).get('ref')||undefined}:{})};
     const d:any=await api('/api/auth/request',{method:'POST',body:JSON.stringify(body)});
     setEmail(normalizedEmail);setChallenge(d.challenge);notify(d.message);
    }else{
