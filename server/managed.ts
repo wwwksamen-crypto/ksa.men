@@ -75,18 +75,24 @@ export function registerManaged(app: App) {
     const creator = role(c, ['owner']);
     await rate(c, 'managed-create:' + creator.id, 30, 3600);
     const data = managedCreate.parse(await c.req.json());
-    if (await one(c, 'SELECT name FROM reserved_names WHERE name=? AND active=1', data.subdomain) || await one(c, 'SELECT name FROM dns_names WHERE name=?', data.subdomain)) throw new HTTPException(409, { message: 'الاسم محجوز، اختر اسماً آخر' });
+    const reserved = await one(c, 'SELECT name FROM reserved_names WHERE name=? AND active=1', data.subdomain);
+    const reservedTest = Boolean(reserved && data.subdomain === 'test');
+    if ((reserved && !reservedTest) || await one(c, 'SELECT name FROM dns_names WHERE name=?', data.subdomain)) throw new HTTPException(409, { message: 'الاسم محجوز، اختر اسماً آخر' });
     const managerId = data.managerId || creator.id;
     if (!await one(c, "SELECT id FROM users WHERE id=? AND role IN ('owner','manager','moderator') AND status='active'", managerId)) throw new HTTPException(400, { message: 'اختر مشرفاً نشطاً' });
     const clock = now(), siteId = uid(), internalEmail = uid() + '@managed.' + c.env.ROOT_DOMAIN;
     const profile = normalizeProfile({ ...defaultProfile(data.name), title: data.title, bio: data.bio, email: data.email, whatsapp: data.whatsapp, phone: data.whatsapp }, data.name);
     const pinHash = await hashSecret(data.pin);
     await audit(c, 'managed.creation.requested', siteId, { managerId, authorization: true });
+    // The owner-approved demo name is created in one transaction. Its reservation is
+    // restored before commit, so ordinary reservations never see an unprotected name.
     try { await c.env.DB.batch([
+      ...(reservedTest ? [c.env.DB.prepare("UPDATE reserved_names SET active=0 WHERE name='test' AND active=1")] : []),
       c.env.DB.prepare("INSERT INTO users(email,name,whatsapp,role,pin_hash,created_at,trial_until,assigned_to,consent_at,last_active) VALUES(?,?,?,'user',?,?,?,?,0,?)").bind(internalEmail, data.name, data.whatsapp, pinHash, clock, clock + 7 * 86400, managerId, clock),
       c.env.DB.prepare("INSERT INTO managed_accounts(user_id,contact_email,created_by,managed_by,created_at) SELECT id,?,?,?,? FROM users WHERE email=?").bind(data.email, creator.id, managerId, clock, internalEmail),
       c.env.DB.prepare("INSERT INTO sites(id,user_id,manager_id,draft,draft_version,created_at,updated_at) SELECT ?,id,?,?,1,?,? FROM users WHERE email=?").bind(siteId, managerId, JSON.stringify(profile), clock, clock, internalEmail),
       c.env.DB.prepare('INSERT INTO dns_names(name,owner_id,site_id,created_at) SELECT ?,id,?,? FROM users WHERE email=?').bind(data.subdomain, siteId, clock, internalEmail),
+      ...(reservedTest ? [c.env.DB.prepare("UPDATE reserved_names SET active=1 WHERE name='test' AND active=0")] : []),
     ]);
     } catch { throw new HTTPException(409, { message: 'تعذر حجز الاسم أو إنشاء الحساب. حدّث القائمة واختر اسماً متاحاً' }); }
     const account = await one<{ id: number }>(c, 'SELECT id FROM users WHERE email=?', internalEmail);

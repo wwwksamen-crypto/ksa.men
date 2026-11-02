@@ -28,7 +28,7 @@ async function request(path:string,actor?:string,method='GET',body?:unknown,extr
  return {response,status:response.status,data:await response.clone().json().catch(()=>null)};
 }
 beforeAll(async()=>{
- sql({setup:'migrations'});sql({sql:'UPDATE settings SET value=? WHERE key=?',params:['{"mode":"open"}','lock']});
+ sql({setup:'migrations'});sql({sql:"INSERT OR IGNORE INTO reserved_names(name,active) VALUES('test',1)"});sql({sql:'UPDATE settings SET value=? WHERE key=?',params:['{"mode":"open"}','lock']});
  ownerPin=await hashSecret('672105');
  for(const [key,role] of [['owner','owner'],['manager','manager'],['moderator','moderator'],['member','user']]){
   sql({sql:'INSERT INTO users(email,name,whatsapp,role,pin_hash,created_at,trial_until,consent_at) VALUES(?,?,?,?,?,?,?,?)',params:[key==='owner'?env.OWNER_EMAIL:key+'@unit.invalid',key,'0555000000',role,key==='owner'?ownerPin:null,now(),now()+86400,now()]});
@@ -36,22 +36,25 @@ beforeAll(async()=>{
  }
  vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,options)=>{capturedEmails.push(JSON.parse(String(options?.body)));return new Response(JSON.stringify({id:uid()}),{status:200});});
 },30000);
-const body={name:'عضو اختبار الحساب المدار',email:'managed-owner@unit.invalid',whatsapp:'0555000000',subdomain:'managed-unit',pin:'215839',title:'هوية اختبار',authorized:true};
+const body={name:'عضو اختبار الحساب المدار',email:'managed-owner@unit.invalid',whatsapp:'0555000000',subdomain:'test',pin:'215839',title:'هوية اختبار',authorized:true};
 describe.sequential('Managed identity and one-click administrative publication',()=>{
  it('only owner creates a separate managed member even when contact email equals administration',async()=>{
   expect((await request('/api/admin/managed-accounts','member','POST',body)).status).toBe(403);
   expect((await request('/api/admin/managed-accounts','manager','POST',body)).status).toBe(403);
+  expect((await request('/api/names/reserve','member','POST',{name:'test'})).status).toBe(409);
+  expect((await request('/api/admin/managed-accounts','owner','POST',{...body,subdomain:'admin'})).status).toBe(409);
   const x=await request('/api/admin/managed-accounts','owner','POST',body);expect(x.status).toBe(201);managedId=x.data.userId;siteId=x.data.siteId;expect(managedId).not.toBe(actors.owner.id);
   expect(sql({sql:'SELECT role,pin_hash FROM users WHERE id=?',params:[actors.owner.id]}).results[0]).toEqual({role:'owner',pin_hash:ownerPin});
   const managed=sql({sql:'SELECT role,pin_hash,email,consent_at FROM users WHERE id=?',params:[managedId]}).results[0];expect(managed.role).toBe('user');expect(managed.consent_at).toBe(0);expect(await verifySecret(body.pin,managed.pin_hash)).toBe(true);expect(managed.email).toContain('@managed.ksa.men');
   expect((await request('/api/admin/managed-accounts','owner','POST',body)).status).toBe(409);
+  expect(sql({sql:"SELECT active FROM reserved_names WHERE name='test'"}).results[0].active).toBe(1);
  });
  it('publishes immediately in a PIN session without fresh email and remains idempotent and logged',async()=>{
-  const x=await request('/api/admin/sites/'+siteId+'/publish','owner','POST');expect(x.status).toBe(200);expect(x.data.published).toBe(true);expect(x.data.url).toBe('https://managed-unit.ksa.men');
+  const x=await request('/api/admin/sites/'+siteId+'/publish','owner','POST');expect(x.status).toBe(200);expect(x.data.published).toBe(true);expect(x.data.url).toBe('https://test.ksa.men');
   expect((await request('/api/admin/sites/'+siteId+'/publish','owner','POST')).data.idempotent).toBe(true);
   expect(sql({sql:'SELECT status FROM sites WHERE id=?',params:[siteId]}).results[0].status).toBe('published');
   expect(sql({sql:"SELECT COUNT(*) AS n FROM audit WHERE action='site.published' AND target=?",params:[siteId]}).results[0].n).toBe(1);
-  const response=await worker.fetch(new Request('https://managed-unit.ksa.men/api/public/profile'),env,{} as any);expect(response.status).toBe(200);
+  const response=await worker.fetch(new Request('https://test.ksa.men/api/public/profile'),env,{} as any);expect(response.status).toBe(200);
   expect(capturedEmails[0].to).toEqual([body.email]);
  });
  it('keeps user, CSRF, scope, and financial protections while allowing the assigned moderator to edit and publish',async()=>{
