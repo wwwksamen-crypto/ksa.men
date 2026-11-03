@@ -1,3 +1,5 @@
+import { generateVCard } from './vcard';
+export { generateVCard } from './vcard';
 import { sanitizeProfile } from '../../shared/profile-visibility';
 import { canRestorePublishedBadge, readPublishedBadge } from './export-offline';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -88,7 +90,6 @@ const exportDataKindFor = (kind: ExportKind): ExportKind => kind;
 
 const text = (value: unknown) => typeof value === 'string' ? value.trim() : '';
 const list = <T,>(value: unknown): T[] => Array.isArray(value) ? value as T[] : [];
-const escapeVCard = (value: string) => value.replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
 const cleanFilename = (value: string) => {
   const cleaned = value.normalize('NFKD').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   return cleaned.slice(0, 72) || 'ksa-men-profile';
@@ -125,34 +126,6 @@ function profileUrl(name: string) {
   const port = window.location.port ? `:${window.location.port}` : '';
   if (!name) return window.location.origin;
   return `${window.location.protocol}//${name}.${root}${port}`;
-}
-
-function profileVCard(profile: Profile, siteName: string, url: string) {
-  const lines = ['BEGIN:VCARD', 'VERSION:3.0'];
-  const name = field(profile, 'name');
-  const title = field(profile, 'title');
-  const email = field(profile, 'email');
-  const phone = field(profile, 'phone');
-  const whatsapp = field(profile, 'whatsapp');
-  const city = field(profile, 'city');
-  const country = field(profile, 'country');
-  const bio = field(profile, 'bio');
-  if (name) { lines.push(`FN:${escapeVCard(name)}`); lines.push(`N:${escapeVCard(name)};;;;`); }
-  if (title) lines.push(`TITLE:${escapeVCard(title)}`);
-  if (siteName) lines.push(`ORG:${escapeVCard(siteName)}`);
-  if (email) lines.push(`EMAIL;TYPE=INTERNET:${escapeVCard(email)}`);
-  if (phone) lines.push(`TEL;TYPE=CELL:${escapeVCard(phone)}`);
-  if (whatsapp) lines.push(`TEL;TYPE=WORK:${escapeVCard(whatsapp)}`);
-  if (city || country) lines.push(`ADR;TYPE=WORK:;;;${escapeVCard(city)};;${escapeVCard(country)};`);
-  if (url) lines.push(`URL:${escapeVCard(url)}`);
-  if (bio) lines.push(`NOTE:${escapeVCard(bio)}`);
-  lines.push('END:VCARD');
-  return lines.join('\r\n');
-}
-
-/** A local serializer for the public profile route and the free QR/vCard tool. */
-export function generateVCard(profile: Profile, siteName = '', url = '') {
-  return profileVCard(sanitizeProfile(profile) as Profile, siteName, url);
 }
 
 function structuredLine(item: StructuredItem | string) {
@@ -686,7 +659,7 @@ export default function Exports() {
   const publicUrl = data ? profileUrl(data.name) : '';
   const avatar = profile ? profileImage(profile) : QR_BRAND_ICON;
   const filename = useCallback((suffix: string, extension: string) => `${cleanFilename(data?.name || identity || data?.site || 'ksa-men')}-${kind}-${suffix}.${extension}`, [data?.name, data?.site, identity, kind]);
-  const vcardPayload = useMemo(() => profile && data ? profileVCard(profile, data.name, publicUrl) : '', [data, profile, publicUrl]);
+  const vcardPayload = useMemo(() => profile && data ? generateVCard(profile, data.name, publicUrl) : '', [data, profile, publicUrl]);
   const buildProfileQr = useCallback(async () => {
     if (!publicUrl) throw new Error('A public profile URL is required for QR export.');
     return qrDataUrl(publicUrl, { width: 1800, centerImage: avatar });
@@ -757,7 +730,7 @@ export default function Exports() {
 
   const downloadVCard = () => {
     if (!profile || !data) return;
-    downloadable(profileVCard(profile, data.name, publicUrl), filename('contact', 'vcf'), 'text/vcard;charset=utf-8');
+    downloadable(generateVCard(profile, data.name, publicUrl), filename('contact', 'vcf'), 'text/vcard;charset=utf-8');
     notify(t('بدأ تنزيل بطاقة الاتصال.', 'Your contact card download has started.'));
   };
 
@@ -933,7 +906,7 @@ export function QRTools() {
   }, [mode, preview]);
   const content = mode === 'url'
     ? url.trim()
-    : profileVCard({ name: form.name, title: form.title, email: form.email, phone: form.phone }, form.organization, form.website.trim());
+    : generateVCard({ name: form.name, title: form.title, email: form.email, phone: form.phone }, form.organization, form.website.trim());
   const hasValidWebUrl = !url.trim() || validWebUrl(url.trim());
   const hasValidVCardWebsite = !form.website.trim() || validWebUrl(form.website.trim());
   const canCreate = mode === 'url'

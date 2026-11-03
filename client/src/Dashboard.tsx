@@ -1,3 +1,4 @@
+import LoadingState from './LoadingState';
 import { useMobileViewport } from './mobile-viewport';
 import { DictatedInput, DictatedTextarea } from './DictatedField';
 export { VoiceButton } from './DictatedField';
@@ -601,12 +602,15 @@ export default function Dashboard() {
     };
   }, [previewOpen]);
 
+  const dashboardRequest=useRef(0);
   const loadDashboard = useCallback(async () => {
+    const request=++dashboardRequest.current;
     if (!siteIdRef.current) setLoading(true);
     setLoadError('');
     try {
-      const data = await api<DashboardData>(`/api/dashboard?lang=${lang}`);
-      observeNotifications(asArray<Notification>(data.notifications));
+      const data = await api<DashboardData>(`/api/dashboard?lang=${lang}&view=${activeTab}`);
+      if(request!==dashboardRequest.current)return;
+      if(data.notifications?.length)observeNotifications(asArray<Notification>(data.notifications));
       setDashboard(data);
       const receivedServices = asArray<Service>(data.services);
       if (receivedServices.length) setServices(receivedServices);
@@ -620,14 +624,15 @@ export default function Dashboard() {
         if (current) setActiveSite((existing) => existing ? { ...existing, ...current } : existing);
       }
     } catch (error) {
+      if(request!==dashboardRequest.current)return;
       if (!siteIdRef.current) setLoadError(errorMessage(error));
       else notify(errorMessage(error));
     } finally {
-      setLoading(false);
+      if(request===dashboardRequest.current)setLoading(false);
     }
   // openSite is stable enough for initial fetch; its declaration is hoisted in this closure at execution time.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lang, observeNotifications]);
+  }, [lang, observeNotifications, activeTab]);
 
   const loadServices = useCallback(async () => {
     try {
@@ -713,7 +718,7 @@ export default function Dashboard() {
     } finally { setReservingName(false); }
   };
 
-  useEffect(() => { void loadDashboard(); void loadServices(); }, [loadDashboard, loadServices]);
+  useEffect(() => { void loadDashboard(); }, [loadDashboard]);
   useEffect(() => { if (activeTab === 'messages') void loadMessages(); }, [activeTab, loadMessages]);
   const loadIdentityInsights = useCallback(async () => {
     if (!activeSite) { setIdentityInsights(null); return; }
@@ -838,7 +843,7 @@ export default function Dashboard() {
     return () => window.removeEventListener('beforeunload', beforeLeave);
   }, []);
   useEffect(() => {
-    const interval = window.setInterval(() => { if (dirtyRef.current) void saveDraft(true); }, 15_000);
+    const interval = window.setInterval(() => { if (document.visibilityState !== 'hidden' && dirtyRef.current) void saveDraft(true); }, 15_000);
     return () => window.clearInterval(interval);
   }, [saveDraft]);
 
@@ -1550,7 +1555,7 @@ function LoyaltyPanel({ daily, competition, communities, busy, competitionBusy, 
 
 function CompetitionPanel({ competition, busy, onEnter, tr }: { competition?: LoyaltyCompetition | null; busy: boolean; onEnter: () => void; tr: (ar: string, en: string) => string }) {
   const [clock, setClock] = useState(Date.now());
-  useEffect(() => { if (!competition?.endsAt) return undefined; const timer = window.setInterval(() => setClock(Date.now()), 1_000); return () => window.clearInterval(timer); }, [competition?.endsAt]);
+  useEffect(() => { if (!competition?.endsAt) return undefined; const timer = window.setInterval(() => { if(document.visibilityState!=='hidden')setClock(Date.now()); }, 1_000); return () => window.clearInterval(timer); }, [competition?.endsAt]);
   if (!competition) return null;
   const seconds = Math.max(0, competition.endsAt - Math.floor(clock / 1000));
   const days = Math.floor(seconds / 86_400); const hours = Math.floor((seconds % 86_400) / 3_600); const minutes = Math.floor((seconds % 3_600) / 60); const remain = seconds % 60;

@@ -1,3 +1,4 @@
+import { decorateHTML, profileBody, personSchema } from '../shared/seo';
 import { siteVisibility, visibleSiteProfile } from './visibility';
 import { profileItemIds, withVisibility } from '../shared/profile-visibility';
 import type { App, Ctx } from './core';
@@ -15,8 +16,10 @@ export async function shareSite(c:Ctx,name:string){
  if(!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name))throw new HTTPException(404);
  const site:any=await one(c,"SELECT s.*,n.name,u.status AS owner_status FROM dns_names n JOIN sites s ON s.id=n.site_id LEFT JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL",name);
  if(!site||site.owner_status!=='active')throw new HTTPException(404);
- const raw=await visibleSiteProfile(c,site,JSON.parse(site.published));
- return {...site,published:JSON.stringify(raw)};
+ const policy=await siteVisibility(c,site);
+ if(!policy.visible)throw new HTTPException(404);
+ const raw=withVisibility(JSON.parse(site.published),policy);
+ return {...site,visibility:policy,published:JSON.stringify(raw)};
 }
 async function renderShare(c:Ctx,site:any){
   const lang=c.req.query('lang')==='en'?'en':'ar';
@@ -44,17 +47,15 @@ export async function personalizedHTML(c:Ctx,html:string){
  if(url.hostname===root)return html;
  const name=url.hostname.slice(0,-root.length-1);
  const site=await shareSite(c,name);
- if(site.lock_hash)return html.replace(/<title>[\s\S]*?<\/title>/,'<title>KSA.MEN — موقع خاص</title>');
+ if(site.lock_hash){c.header('X-Robots-Tag','noindex, nofollow');return decorateHTML(html,{title:'KSA.MEN — '+(c.req.query('lang')==='en'?'Private site':'موقع خاص'),description:'KSA.MEN',lang:c.req.query('lang')==='en'?'en':'ar',indexable:false});}
  const lang=url.searchParams.get('lang')==='en'?'en':'ar',profile=shareProfile(site.published,lang);
  const title=String(profile.name||'KSA.MEN')+(profile.title?' — '+String(profile.title):'');
- const description=String(profile.bio|| (lang==='ar'?'هوية مهنية سعودية — ظهور رقمي يليق بك':'A Saudi professional identity — a presence worthy of you')).slice(0,220);
- const canonical='https://'+name+'.'+root+'/';
+ const description=String(profile.bio||(lang==='ar'?'هوية مهنية سعودية — ظهور رقمي يليق بك':'A Saudi professional identity — a presence worthy of you'));
+ const canonical='https://'+name+'.'+root+'/'+(lang==='en'?'?lang=en':'');
  const image='https://'+root+'/api/public/og/'+name+'?lang='+lang;
- const policy=await siteVisibility(c,site);
+ const policy={...site.visibility,indexable:site.visibility.indexable&&c.get('platformLockMode')==='open'};
  if(!policy.indexable)c.header('X-Robots-Tag','noindex, nofollow');
- const metadata=`${!policy.indexable?'<meta name="robots" content="noindex,nofollow">':''}<meta name="description" content="${escape(description)}"><link rel="canonical" href="${canonical}"><meta property="og:type" content="profile"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="${escape(description)}"><meta property="og:url" content="${canonical}"><meta property="og:image" content="${image}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">`;
- const crawler=`<section id="public-summary" aria-label="${lang==='ar'?'الهوية المهنية':'Professional identity'}"><h1>${escape(String(profile.name||'KSA.MEN'))}</h1>${profile.title?'<p>'+escape(String(profile.title))+'</p>':''}${profile.bio?'<p>'+escape(String(profile.bio))+'</p>':''}</section>`;
- return html.replace(/<title>[\s\S]*?<\/title>/,'<title>'+escape(title)+'</title>').replace(/<meta name="description"[^>]*>/,'').replace('</head>',metadata+'</head>').replace('<body>','<body>'+'<noscript>'+crawler+'</noscript>');
+ return decorateHTML(html,{title,description,url:canonical,image,lang,indexable:policy.indexable,type:'profile',alternate:'https://'+name+'.'+root+'/'+(lang==='en'?'':'?lang=en'),schema:policy.indexable?personSchema(profile,canonical):undefined},profileBody(profile,name,lang));
 }
 
 export function unavailableSiteHTML(c: Ctx): string {

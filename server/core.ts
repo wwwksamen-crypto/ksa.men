@@ -16,7 +16,7 @@ export interface Env {
 }
 export interface User {id:number;email:string;name:string;whatsapp:string;role:'owner'|'manager'|'moderator'|'user';financial:number;status:string;pin_hash?:string|null;created_at:number;trial_until:number;entitlement_until:number;referrer_id?:number|null;assigned_to?:number|null;balance?:number;}
 export interface Session {id:string;user_id:number;csrf:string;expires_at:number;verified_at:number;revoked:number;created_at?:number;last_seen_at?:number;}
-export type Bindings={Bindings:Env;Variables:{user:User|null;session:Session|null}};
+export type Bindings={Bindings:Env;Variables:{user:User|null;session:Session|null;platformLockMode?:string}};
 export type App=Hono<Bindings>; export type Ctx=Context<Bindings>;
 export const now=()=>Math.floor(Date.now()/1000); export const uid=()=>crypto.randomUUID();
 export const one=async<T=any>(c:Ctx,sql:string,...args:any[])=>c.env.DB.prepare(sql).bind(...args).first<T>();

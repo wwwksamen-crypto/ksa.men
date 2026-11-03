@@ -89,13 +89,14 @@ export async function publishedForHost(c:Ctx){
 export function registerPublic(app:App){
   app.get('/api/public/profile',async c=>{
     const site=await publishedForHost(c);
-    const raw=await visibleSiteProfile(c,site,publishedJson(site));
+    const policy=await siteVisibility(c,site);if(!policy.visible)throw new HTTPException(404);
+    const raw=withVisibility(publishedJson(site),policy);
     const lang=c.req.query('lang')==='en'?'en':'ar';
     const profile=visibleProfile(raw,lang);
     if(!await personalGate(c,site)){
       return c.json({locked:true,site:site.id,name:site.name,photo:typeof profile.photo==='string'?profile.photo:'/assets/logo.webp',message:site.lock_message});
     }
-    return c.json({profile,site:site.id,name:site.name,branding:!!site.branding,userId:site.user_id?'C'+site.user_id:null});
+    return c.json({profile,site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,userId:site.user_id?'C'+site.user_id:null});
   });
 
   app.post('/api/public/unlock',async c=>{

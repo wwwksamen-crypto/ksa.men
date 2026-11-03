@@ -1,3 +1,4 @@
+import { registerSEO, rootHTML, knownRootPage } from './seo';
 import { siteVisibility } from './visibility';
 import { registerVisibility } from './visibility';
 import { registerManaged } from './managed';
@@ -27,7 +28,8 @@ function security(c: any, isStatic = false) {
   c.header('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
   c.header('Strict-Transport-Security', 'max-age=31536000');
   c.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; frame-src https://www.youtube-nocookie.com https://www.youtube.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");
-  c.header('Cache-Control', isStatic && ((c.res.status >= 200 && c.res.status < 300) || c.res.status === 304) ? (/[-.][A-Za-z0-9_-]{8,}\.(js|css)$/.test(new URL(c.req.url).pathname) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600') : 'private, no-store');
+  const path=new URL(c.req.url).pathname;
+  c.header('Cache-Control',isStatic&&((c.res.status>=200&&c.res.status<300)||c.res.status===304)?(['/sw.js','/bootstrap.js','/manifest.webmanifest','/offline.html','/gate.js'].includes(path)?'no-cache':/[-.][A-Za-z0-9_-]{8,}\.(js|css)$/.test(path)?'public, max-age=31536000, immutable':'public, max-age=3600'):'private, no-store');
 }
 async function gate(c: any, lock: any) {
   const value = getCookie(c, '__Host-ksa_gate') || '';
@@ -70,6 +72,7 @@ app.use('*', async (c, next) => {
     }
   }
   const lock: any = await setting(c, 'lock', { mode: 'private' });
+  c.set('platformLockMode',lock.mode);
   const staff = ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '');
   const gateOk = await gate(c, lock);
   if (!['GET', 'HEAD', 'OPTIONS'].includes(c.req.method)) {
@@ -81,7 +84,8 @@ app.use('*', async (c, next) => {
   if (!rootHost && path.startsWith('/api/') && !safeGlobal && !path.startsWith('/api/public/') && !path.startsWith('/api/media/')) throw new HTTPException(404);
   const homeClosed = lock.mode === 'home';
   const blocked = lock.mode !== 'open' && (!homeClosed || path === '/' || path === '/index.html' || path === '/api/search');
-  const exempt = safeGlobal || (rootHost && path.startsWith('/api/auth/')) || (rootHost && ['/auth', '/admin', '/privacy', '/terms'].includes(path));
+  const crawlerDocument = path === '/robots.txt' || path === '/sitemap.xml' || (path==='/sitemap-pages.xml'||/^\/sitemap-profiles\/\d+\.xml$/.test(path));
+  const exempt = crawlerDocument || safeGlobal || (rootHost && path.startsWith('/api/auth/')) || (rootHost && ['/auth', '/admin', '/privacy', '/terms'].includes(path));
   if (blocked && !staff && !gateOk && !exempt) {
     c.header('X-Robots-Tag', 'noindex, nofollow');
     if (path.startsWith('/api/')) throw new HTTPException(423, { message: lock.message || 'المنصة مقفلة' });
@@ -121,14 +125,17 @@ registerVisibility(app);
 registerBusiness(app);
 registerOperations(app);registerManaged(app);registerNotifications(app);
 registerIntelligence(app);
-app.get('/robots.txt', async c => {
-  const lock: any = await setting(c, 'lock');
-  const url=new URL(c.req.url);
-  if(url.hostname!==c.env.ROOT_DOMAIN){try{const site=await shareSite(c,url.hostname.slice(0,-c.env.ROOT_DOMAIN.length-1));const policy=await siteVisibility(c,site);if(site.lock_hash||!policy.indexable)return c.text('User-agent: *\nDisallow: /\n');}catch{return c.text('User-agent: *\nDisallow: /\n');}}
-  return c.text(lock.mode === 'open' ? 'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /api/\n' : 'User-agent: *\nDisallow: /\n');
-});
+registerSEO(app);
 app.get('*', async c => {
   const path = new URL(c.req.url).pathname;
+  const host=new URL(c.req.url).hostname;
+  if(host===c.env.ROOT_DOMAIN&&path==='/export/badge'&&c.req.query('public')&&!c.req.query('site'))c.header('X-KSA-Public-Shell','1');
+  if(path.startsWith('/api/'))throw new HTTPException(404);
+  if(path==='/index.html'){const destination=new URL(c.req.url);destination.pathname='/';return c.redirect(destination.href,308);}
+  if(!staticPath(path)){
+    if(host===c.env.ROOT_DOMAIN&&!knownRootPage(path)){c.header('X-Robots-Tag','noindex, nofollow');return c.html(unavailableSiteHTML(c),404);}
+    if(host!==c.env.ROOT_DOMAIN&&path!=='/'){c.header('X-Robots-Tag','noindex, nofollow');return c.html(unavailableSiteHTML(c),404);}
+  }
   const asset = await c.env.ASSETS.fetch(new Request(new URL(path === '/' ? '/index.html' : path, c.req.url), c.req.raw));
   // Preserve conditional (304), range (206) and missing-asset responses unchanged.
   if (staticPath(path)) return asset;
@@ -141,10 +148,12 @@ app.get('*', async c => {
         return c.html(unavailableSiteHTML(c), 404);
       }
     }
+    if(host===c.env.ROOT_DOMAIN&&asset.headers.get('Content-Type')?.includes('text/html')){return c.html(await rootHTML(c,await asset.text(),c.get('platformLockMode')==='open'));}
     return asset;
   }
   if (path.startsWith('/assets/') || path.includes('.') || path.startsWith('/api/')) throw new HTTPException(404);
-  return c.env.ASSETS.fetch(new Request(new URL('/index.html', c.req.url), c.req.raw));
+  const shell=await c.env.ASSETS.fetch(new Request(new URL('/index.html',c.req.url),c.req.raw));
+  return c.html(await rootHTML(c,await shell.text(),c.get('platformLockMode')==='open'));
 });
 app.onError((error, c) => {
   security(c);

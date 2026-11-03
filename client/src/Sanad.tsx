@@ -306,6 +306,7 @@ export default function Sanad() {
     }
     let lastFrame = 0;
     const sample = (timestamp: number) => {
+      if(document.visibilityState==='hidden'){rafRef.current=null;return;}
       if (timestamp-lastFrame < 75) { rafRef.current = requestAnimationFrame(sample); return; }
       lastFrame = timestamp;
       const analyser = analyserRef.current;
@@ -326,6 +327,15 @@ export default function Sanad() {
     };
     rafRef.current = requestAnimationFrame(sample);
   }, [motionEnabled, prefersReducedMotion, stopAnimationLoop]);
+
+  useEffect(() => {
+    const updateVisibility=() => {
+      if(document.visibilityState==='hidden'){stopAnimationLoop();setSpriteFrame('neutral');}
+      else if(audioRef.current&&!audioRef.current.paused)startAnimationLoop();
+    };
+    document.addEventListener('visibilitychange',updateVisibility);
+    return()=>document.removeEventListener('visibilitychange',updateVisibility);
+  },[startAnimationLoop,stopAnimationLoop]);
 
   const play = useCallback(async () => {
     const audio = audioRef.current;

@@ -10,4 +10,14 @@ describe('static asset response preservation',()=>{
   expect(response.headers.get('Cache-Control')).toBe(status===404?'private, no-store':'public, max-age=3600');
   if(status===304)expect(await response.text()).toBe('');
  });
+ for(const path of ['/sw.js','/bootstrap.js','/gate.js','/manifest.webmanifest','/offline.html'])it(`revalidates the mutable ${path} without session queries`,async()=>{
+  const env:any={ROOT_DOMAIN:'ksa.men',ASSETS:{fetch:async()=>new Response('asset',{headers:{'Content-Type':'text/javascript'}})}};
+  const response=await worker.fetch(new Request('https://ksa.men'+path),env,{} as any);
+  expect(response.status).toBe(200);expect(response.headers.get('Cache-Control')).toBe('no-cache');
+ });
+ it('caches fingerprinted bundles immutably without converting partial responses',async()=>{
+  const env:any={ROOT_DOMAIN:'ksa.men',ASSETS:{fetch:async()=>new Response('chunk',{status:206,headers:{'Content-Type':'text/javascript'}})}};
+  const response=await worker.fetch(new Request('https://ksa.men/assets/main-abcdefgh.js'),env,{} as any);
+  expect(response.status).toBe(206);expect(response.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+ });
 });

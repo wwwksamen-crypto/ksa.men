@@ -743,10 +743,14 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     const checkedAt = now();
+    const view=c.req.query('view');
+    const scoped=!!view&&['editor','wallet','services','messages','subscription','settings'].includes(view);
+    const needs=(...views:string[])=>!scoped||views.includes(view!);
+    const empty=<T,>()=>Promise.resolve([] as T[]);
     const [sites, reviews, wallet, ledger, payments, subscriptionRequests, services, notifications, quickLinks, analyticsRows, preferencesRow, dailyActivity, seasonalSetting] = await Promise.all([
       all<SiteRow>(
         c,
-        `SELECT s.*,(
+        `SELECT ${scoped?'s.id,s.user_id,s.manager_id,s.status,s.draft_version,s.published_version,s.lock_hash,s.lock_message,s.searchable,s.allow_contact,s.branding,s.created_at,s.updated_at':'s.*'},(
            SELECT n.name FROM dns_names n WHERE n.site_id=s.id ORDER BY n.created_at ASC LIMIT 1
          ) AS name
          FROM sites s
@@ -758,9 +762,9 @@ export function registerBusiness(app: App): void {
         String(user.role ?? ''),
         userId,
       ),
-      all<Record<string, unknown>>(c, `SELECT r.*,d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.user_id=? AND r.kind<>'redirect' ORDER BY r.created_at DESC LIMIT 100`, userId),
+      all<Record<string, unknown>>(c, `SELECT ${scoped?'r.id,r.site_id,r.user_id,r.draft_version,r.base_version,r.status,r.kind,r.reviewer_id,r.reason,r.created_at,r.decided_at':'r.*'},d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.user_id=? AND r.kind<>'redirect' ORDER BY r.created_at DESC LIMIT 100`, userId),
       one<{ balance: number }>(c, 'SELECT balance FROM wallets WHERE user_id=?', userId),
-      all<Record<string, unknown>>(
+      needs('wallet') ? all<Record<string, unknown>>(
         c,
         `SELECT l.*, CASE WHEN l.from_id=? THEN l.to_id ELSE l.from_id END AS counterparty_id,
           u.name AS counterparty_name
@@ -771,27 +775,27 @@ export function registerBusiness(app: App): void {
         userId,
         userId,
         userId,
-      ),
-      all<Record<string, unknown>>(c, 'SELECT * FROM payments WHERE user_id=? ORDER BY created_at DESC LIMIT 100', userId),
-      all<Record<string, unknown>>(
+      ) : empty<Record<string,unknown>>(),
+      needs('subscription') ? all<Record<string, unknown>>(c, 'SELECT * FROM payments WHERE user_id=? ORDER BY created_at DESC LIMIT 100', userId) : empty<Record<string,unknown>>(),
+      needs('subscription') ? all<Record<string, unknown>>(
         c,
         'SELECT id,kind,status,member_note,admin_reason,created_at,decided_at,applied_until FROM subscription_requests WHERE user_id=? ORDER BY created_at DESC LIMIT 30',
         userId,
-      ),
-      all<Record<string, unknown>>(
+      ) : empty<Record<string,unknown>>(),
+      needs('services') ? all<Record<string, unknown>>(
         c,
         `SELECT s.*, us.mode AS override_mode, us.until_at AS override_until
          FROM services s LEFT JOIN user_services us ON us.key=s.key AND us.user_id=? ORDER BY s.key`,
         userId,
-      ),
-      all<Record<string, unknown>>(c, 'SELECT * FROM notifications WHERE user_id=? AND dismissed_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 100', userId),
-      all<Record<string, unknown>>(
+      ) : empty<Record<string,unknown>>(),
+      !scoped ? all<Record<string, unknown>>(c, 'SELECT * FROM notifications WHERE user_id=? AND dismissed_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 100', userId) : empty<Record<string,unknown>>(),
+      needs('services') ? all<Record<string, unknown>>(
         c,
         'SELECT * FROM quick_links WHERE user_id=? AND expires_at>? ORDER BY created_at DESC LIMIT 100',
         userId,
         checkedAt,
-      ),
-      all<Record<string, unknown>>(
+      ) : empty<Record<string,unknown>>(),
+      needs('services') ? all<Record<string, unknown>>(
         c,
         `SELECT a.site_id,a.event,COUNT(*) AS total,
           SUM(CASE WHEN a.created_at>=? THEN 1 ELSE 0 END) AS last7
@@ -807,10 +811,10 @@ export function registerBusiness(app: App): void {
         String(user.role ?? ''),
         userId,
         checkedAt - 30 * 86_400,
-      ),
-      one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId),
-      one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, riyadhDay(checkedAt)),
-      one<{ value: string }>(c, "SELECT value FROM settings WHERE key='season'"),
+      ) : empty<Record<string,unknown>>(),
+      needs('wallet','settings') ? one<Record<string, unknown>>(c, 'SELECT * FROM member_preferences WHERE user_id=?', userId) : Promise.resolve(null),
+      needs('wallet') ? one<Record<string, unknown>>(c, 'SELECT * FROM loyalty_daily_activities WHERE user_id=? AND activity_day=?', userId, riyadhDay(checkedAt)) : Promise.resolve(null),
+      needs('wallet') ? one<{ value: string }>(c, "SELECT value FROM settings WHERE key='season'") : Promise.resolve(null),
     ]);
 
     const preferences = memberPreferences(preferencesRow);
@@ -851,8 +855,8 @@ export function registerBusiness(app: App): void {
     const serviceStates = await Promise.all(services.map((item) => toDashboardService(c, item, userId)));
 
     return c.json({
-      sites: sites.map(toSite),
-      reviews: reviews.map(toReview),
+      sites: sites.map(site=>{const result=toSite(site);if(scoped){delete result.draft;delete result.published;}return result;}),
+      reviews: reviews.map(review=>{const result=toReview(review);if(scoped)delete result.snapshot;return result;}),
       wallet: { balance: Number(wallet?.balance ?? 0) },
       ledger: ledger.map((row) => ({
         id: row.id,

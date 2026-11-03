@@ -35,6 +35,9 @@ import { api, Button, useApp } from './lib';
 import './personal.css';
 import { list, itemText, mediaSource, socialLink, brandNames, youtubeLink } from '../../shared/profile-content';
 import { brandPaths } from './brand-paths';
+import { generateVCard } from './vcard';
+import LoadingState from './LoadingState';
+import {updateProfileMetadata,clearProfileMetadata} from './page-metadata';
 
 type ProfileRecord = Record<string, unknown>;
 export type PublicProfileData = {
@@ -44,6 +47,7 @@ export type PublicProfileData = {
   branding?: boolean;
   userId?: string | null;
   locked?: boolean;
+  indexable?: boolean;
   photo?: string;
   message?: string;
 };
@@ -222,7 +226,7 @@ function MediaGallery({
       onClick={() => onPreview({ src, alt: stringValue(descriptions[src]) || `${title} ${index + 1}` })}
       aria-label={stringValue(descriptions[src]) || `${title} ${index + 1}`}
     >
-      <img loading="lazy" src={src} alt={stringValue(descriptions[src]) || `${title} ${index + 1}`}/>
+      <img loading="lazy" decoding="async" width="320" height="240" src={src} alt={stringValue(descriptions[src]) || `${title} ${index + 1}`}/>
       <span><ImageIcon size={18}/></span>
     </button>)}
   </div>;
@@ -241,8 +245,9 @@ export default function Personal() {
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : t('تعذر فتح الموقع', 'Could not open the site')));
   }, [lang, t]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (data || error) document.getElementById('initial-content')?.remove();if(error||data?.locked)clearProfileMetadata(lang);else if(data?.profile&&data?.name)updateProfileMetadata(data.profile,data.name,lang,data.indexable!==false); }, [data,error,lang]);
   if (error) return <div className="identity-page"><section className="identity-state" aria-live="polite"><span className="identity-state__mark"><Globe2 size={26}/></span><h1>{t('الموقع غير متاح', 'Site unavailable')}</h1><p>{error}</p><a href="https://ksa.men" className="identity-page__text-link">KSA.MEN <ArrowUpRight size={16}/></a></section></div>;
-  if (!data) return <div className="identity-page"><div className="identity-loading" role="status"><span/><p>{t('جارٍ تجهيز الهوية', 'Preparing this identity')}</p></div></div>;
+  if (!data) return <div className="identity-page"><LoadingState/></div>;
   if (data.locked) return <div className="identity-page"><section className="identity-lock" aria-labelledby="identity-lock-title"><div className="identity-lock__photo"><img src={stringValue(data.photo) || '/assets/logo-emblem.webp'} alt=""/></div><span className="identity-lock__icon"><LockKeyhole size={22}/></span><h1 id="identity-lock-title">{data.message || t('موقع خاص', 'Private site')}</h1><p>{t('هذه الهوية متاحة بإذن صاحبها فقط.', 'This identity is available only with its owner’s permission.')}</p><form onSubmit={async event => { event.preventDefault(); try { await api('/api/public/unlock', { method: 'POST', body: JSON.stringify({ password }) }); void load(); } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر الدخول', 'Could not enter')); } }}><label><span>{t('كلمة الدخول', 'Access password')}</span><input required type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"/></label><Button className="primary">{t('دخول الموقع', 'Enter site')} <ArrowUpRight size={18}/></Button></form></section></div>;
   return <IdentityView data={data}/>;
 }
@@ -252,6 +257,13 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
   const { t, lang, notify } = useApp();
   const [preview, setPreview] = useState<MediaPreview>(null);
   const [video, setVideo] = useState(false);
+  const [qrReady, setQrReady] = useState(false);
+  const qrRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const node=qrRef.current;if(!node)return;
+    if(!('IntersectionObserver' in window)){setQrReady(true);return;}
+    const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting)){setQrReady(true);observer.disconnect();}},{rootMargin:'200px'});observer.observe(node);return()=>observer.disconnect();
+  },[]);
   const [qr, setQr] = useState('');
   const [vcardQr, setVcardQr] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -268,7 +280,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
 
   useEffect(() => {
     let current = true;
-    if (!profileUrl) {
+    if (!profileUrl || !qrReady) {
       setQr('');
       setVcardQr('');
       return undefined;
@@ -277,12 +289,11 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
     void brandedQr(profileUrl, profilePhoto)
       .then((value) => { if (current) setQr(value); })
       .catch(() => { if (current) setQr(''); });
-    void import('./Exports')
-      .then((module) => brandedQr(module.generateVCard(profile, siteName, profileUrl), profilePhoto))
+    void brandedQr(generateVCard(profile, siteName, profileUrl), profilePhoto)
       .then((value) => { if (current) setVcardQr(value); })
       .catch(() => { if (current) setVcardQr(''); });
     return () => { current = false; };
-  }, [profile, profilePhoto, profileUrl, siteName]);
+  }, [profile, profilePhoto, profileUrl, siteName, qrReady]);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -298,8 +309,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
 
   const downloadVCard = async () => {
     try {
-      const module = await import('./Exports');
-      const text = module.generateVCard(profile, siteName, profileUrl);
+      const text = generateVCard(profile, siteName, profileUrl);
       const anchor = document.createElement('a');
       const href = URL.createObjectURL(new Blob([text], { type: 'text/vcard;charset=utf-8' }));
       anchor.href = href;
@@ -357,11 +367,11 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
   return <div className="identity-page">
     <header className="identity-hero">
       <picture className="identity-hero__cover">
-        <img src={profileCover} alt="" fetchPriority="high"/>
+        <img src={profileCover} alt="" fetchPriority="high" decoding="async" width="1600" height="900"/>
       </picture>
       <div className="identity-hero__wash" aria-hidden="true"/>
       <div className="identity-hero__content">
-        <div className={`identity-hero__portrait ${useInitials ? 'identity-hero__portrait--initials' : ''}`}>{useInitials ? <span aria-label={displayName}>{initials || 'K'}</span> : <img src={profilePhoto} alt={stringValue((profile.imageDescriptions as Record<string,unknown>)?.[mediaSource(profile.photo)]) || displayName}/>}</div>
+        <div className={`identity-hero__portrait ${useInitials ? 'identity-hero__portrait--initials' : ''}`}>{useInitials ? <span aria-label={displayName}>{initials || 'K'}</span> : <img width="192" height="192" decoding="async" src={profilePhoto} alt={stringValue((profile.imageDescriptions as Record<string,unknown>)?.[mediaSource(profile.photo)]) || displayName}/>}</div>
         <div className="identity-hero__copy">
           <div className="identity-hero__meta">
             <span>KSA.MEN / {t('هوية مهنية', 'PROFESSIONAL IDENTITY')}</span>
@@ -485,7 +495,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
           </div>
         </section>}
 
-        <section className="identity-card identity-qr">
+        <section ref={qrRef} className="identity-card identity-qr">
           <div className="identity-aside__marker"><span>{t('للوصول السريع', 'SCAN TO CONNECT')}</span></div>
           <div className="identity-qr__dual">
             {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز QR لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><a download={`${siteName || 'ksa-men'}-site-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل', 'Download')}</a></div>}
