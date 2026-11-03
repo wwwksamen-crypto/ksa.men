@@ -47,6 +47,15 @@ beforeEach(() => {
 afterEach(async () => { await act(async()=>root.unmount()); container.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('editor save races — DOM and mocked API only', () => {
+  it.each([['ar', 'معرّف المستفيد'], ['en', 'Recipient ID']] as const)('gives the recipient input an accessible name in %s', async (lang, label) => {
+    history.replaceState({}, '', '/dashboard?tab=messages');
+    const translate = (ar: string, en: string) => lang === 'ar' ? ar : en;
+    await act(async () => root.render(<AppContext.Provider value={{user,lang,t:translate,notify,refresh:async()=>{}}}><Dashboard/></AppContext.Provider>));
+    await flush();
+    const recipient = container.querySelector('.dashboard-message-sidebar input');
+    expect(recipient).not.toBeNull();
+    expect(recipient?.getAttribute('aria-label')).toBe(label);
+  });
   it('keeps focus and newer text when an old autosave response arrives, then saves the next version',async()=>{
     const pending=deferred(); let first=true;
     saveHandler=async(id,body)=>{ if(first){first=false;await pending.promise;} return saveReply(id,body); };
