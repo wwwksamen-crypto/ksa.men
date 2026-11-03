@@ -399,7 +399,6 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
           </div>
           <p className="identity-introduction__copy">{stringValue(profile.bio)}</p>
         </section>}
-        {blog && <ProfileSection id="journal" icon={Sparkles} kicker={t('كلمة من صاحب الهوية', 'A NOTE FROM THE OWNER')} title={t('المدونة الشخصية', 'Personal journal')}><p className="identity-journal">{blog}</p></ProfileSection>}
 
         {(experience.length > 0 || education.length > 0 || training.length > 0 || timeline.length > 0) && <div className="identity-group">
           <div className="identity-group__label"><Landmark size={17}/><span>{t('المسيرة', 'JOURNEY')}</span></div>
@@ -505,6 +504,11 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
         </section>
       </aside>
     </div>
+
+    {blog && <details id="journal" className="identity-blog">
+      <summary><Sparkles size={20}/><span>{t('مدونتي', 'My journal')}</span><ArrowUpRight size={18}/></summary>
+      <div className="identity-blog__body"><h2>{t('مدونتي', 'My journal')}</h2><p className="identity-journal">{blog}</p></div>
+    </details>}
 
     {data.branding && <footer className="identity-branding">
       <img src="/assets/icon-192.png" alt=""/>

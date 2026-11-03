@@ -27,6 +27,8 @@ beforeEach(() => {
   history.replaceState({},'', '/dashboard?tab=editor'); localStorage.clear();
   Object.defineProperty(window,'matchMedia',{configurable:true,value:()=>({matches:true})});
   HTMLElement.prototype.scrollIntoView=vi.fn();
+  Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(){this.setAttribute('open','');}});
+  Object.defineProperty(HTMLDialogElement.prototype,'close',{configurable:true,value:function(){this.removeAttribute('open');}});
   container=document.createElement('div'); document.body.append(container); root=createRoot(container);
   records={first:{id:'first',name:'local-first',draft:parseDraft({name:'اسم أول',title:'عنوان',skillImages:['/api/media/existing']}),draft_version:0,status:'draft'},second:{id:'second',name:'local-second',draft:parseDraft({name:'اسم ثان',title:'عنوان ثان'}),draft_version:0,status:'draft'}};
   puts=[]; saveHandler=null; uploadResult=null; notify.mockClear();
@@ -47,6 +49,20 @@ beforeEach(() => {
 afterEach(async () => { await act(async()=>root.unmount()); container.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('editor save races — DOM and mocked API only', () => {
+  it.each(['header','bottom','preview'])('submits directly from the %s publication button after saving the latest edit', async place => {
+    await mount();
+    await act(async()=>inputValue(nameInput(),'آخر نص قبل الطلب'));
+    if(place==='preview') await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.dashboard-editor-actions button')].find(button=>button.textContent==='معاينة')!.click());
+    const parent=place==='header'?'.dashboard-editor-actions':place==='bottom'?'.dashboard-review-rail':'.dashboard-preview-modal footer';
+    await act(async()=>[...container.querySelectorAll<HTMLButtonElement>(parent+' button')].find(button=>button.textContent?.trim()==='طلب نشر موقعي')!.click());
+    await flush();
+    const calls=vi.mocked(api).mock.calls;
+    const submit=calls.find(([path])=>path==='/api/sites/first/submit');
+    expect(submit).toBeDefined();expect(JSON.parse(String(submit![1]?.body))).toEqual({version:1});
+    expect(records.first.draft.name).toBe('آخر نص قبل الطلب');
+    expect(calls.findIndex(([path])=>path==='/api/sites/first/draft')).toBeLessThan(calls.findIndex(([path])=>path==='/api/sites/first/submit'));
+    expect(container.querySelector('.dashboard-preview-modal')).toBeNull();
+  });
   it.each([['ar', 'معرّف المستفيد'], ['en', 'Recipient ID']] as const)('gives the recipient input an accessible name in %s', async (lang, label) => {
     history.replaceState({}, '', '/dashboard?tab=messages');
     const translate = (ar: string, en: string) => lang === 'ar' ? ar : en;

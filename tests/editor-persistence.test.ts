@@ -45,8 +45,17 @@ describe.sequential('complete draft content — local D1 and R2 only', () => {
     const reopened = await request(`/api/sites/${siteId}`, 'member'); expect(reopened.status).toBe(200);
     const parsed = parseDraft(reopened.data.site.draft);
     for (const key of Object.keys(draft)) if (key !== 'translations') expect((parsed as any)[key], key).toEqual((draft as any)[key]);
-    const submit = await request(`/api/sites/${siteId}/submit`, 'member','POST',{version:1}); expect(submit.status).toBe(422); expect(submit.data.code).toBe('INCOMPLETE_PROFILE');
-    expect(sql({sql:'SELECT COUNT(*) n FROM reviews WHERE site_id=?',params:[siteId]}).results[0].n).toBe(0);
+    const submit = await request(`/api/sites/${siteId}/submit`, 'member','POST',{version:1}); expect(submit.status).toBe(201);
+    expect(sql({sql:'SELECT COUNT(*) n FROM reviews WHERE site_id=?',params:[siteId]}).results[0].n).toBe(1);
+    expect(submit.data.review.snapshot.name).toBe('member');
+    expect(submit.data.review.snapshot.email).toBe('');
+    expect(submit.data.review.snapshot.youtube).toBe('');
+    expect(submit.data.review.snapshot.experience).toHaveLength(1);
+    expect(submit.data.review.snapshot.experience[0].organization).toBe(item.organization);
+    expect(submit.data.review.snapshot.skills).toEqual(['مهارة']);
+    expect(JSON.stringify(submit.data.review.snapshot)).not.toContain('notes');
+    expect((await request(`/api/sites/${siteId}/submit`, 'member','POST',{version:1})).data.idempotent).toBe(true);
+    expect((await request(`/api/sites/${siteId}`, 'member')).data.site.draft.notes).toBe(draft.notes);
     expect((await request(`/api/sites/${siteId}/draft`,'member','PUT',{version:0,draft})).status).toBe(409);
   });
   it('offers only existing authorized skill/work images and never publishes restoration automatically', async () => {
@@ -66,6 +75,26 @@ describe.sequential('complete draft content — local D1 and R2 only', () => {
     expect((parsed.languages[0] as any).start).toBe('2020'); expect(parsed.socials[0]).toEqual({label:'',url:'https://x.com/local-test'});
     const normalized = normalizeProfile(parsed, '', false, true); expect(normalized.memberships).toEqual([item]);
     expect(normalized.skillRadar).toEqual(fixture.skillRadar); expect(normalized.skills).toEqual(legacy.skills);
+  });
+  it('publishes the current optional/incomplete profile from the administrator button without a completion gate', async () => {
+    const before=(await request(`/api/sites/${siteId}`,'member')).data.site;
+    const result=await request(`/api/admin/sites/${siteId}/publish`,'owner','POST',{});
+    expect(result.status).toBe(200);expect(result.data.published).toBe(true);expect(result.data.url).toBe('https://editor-local.ksa.men');
+    expect((await request(`/api/admin/sites/${siteId}/publish`,'owner','POST',{})).data.idempotent).toBe(true);
+    const after=(await request(`/api/sites/${siteId}`,'member')).data.site;
+    expect(after.draft).toEqual(before.draft);expect(after.draft_version).toBe(before.draft_version);
+    const publicView=await request('/api/public/profile',undefined,'GET',undefined,'editor-local.ksa.men');
+    expect(publicView.status).toBe(200);expect(publicView.data.profile.name).toBe('member');
+    expect(JSON.stringify(publicView.data)).not.toContain('notes');
+  });
+  it('publishes safe optional content with stable hidden-row identities without exposing unsafe URLs or private notes', () => {
+    const source = {...fixture, name:'', phone:'partial', email:'unfinished@', youtube:'javascript:alert(1)', socials:[{label:'بلا رابط',url:''},{label:'غير آمن',url:'javascript:alert(1)'},{label:'حساب صالح',url:'x.com/local-test'}], skills:['', 'مخفية', 'ظاهرة'], itemIds:{skills:['blank-row','hidden-row','visible-row'],socials:['empty-link','unsafe-link','safe-link']},hiddenItems:['skills:hidden-row'], translations:{en:{...fixture,email:'unfinished@',notes:'PRIVATE TRANSLATED NOTE'}}};
+    const projected=publicationProfile(source,'اسم الحساب');
+    expect(projected.name).toBe('اسم الحساب');expect(projected.phone).toBe('');expect(projected.youtube).toBe('');
+    expect(projected.socials).toEqual([{label:'حساب صالح',url:'https://x.com/local-test'}]);
+    expect((projected.itemIds as any).socials).toEqual(['safe-link']);expect((projected.itemIds as any).skills).toEqual(['hidden-row','visible-row']);
+    expect(projected.hiddenItems).toEqual(source.hiddenItems);expect(JSON.stringify(projected)).not.toMatch(/javascript:|unfinished@|notes|PRIVATE/);
+    expect(source.socials[1].url).toBe('javascript:alert(1)');expect(source.notes).toBe(fixture.notes);
   });
   it('freezes every completed section for review/publication while leaving private notes in the editable copy only', async () => {
     const draft = { ...fixture, skillImages:['/api/media/saved-skill'], workImages:['/api/media/saved-work'], imageDescriptions:{'/api/media/saved-skill':'وصف شهادة محلية','/api/media/saved-work':'وصف مشروع محلي'}, translations:{en:{...fixture,name:'Local identity',notes:'PRIVATE ENGLISH NOTE'}} };

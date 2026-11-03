@@ -1340,8 +1340,8 @@ export default function Dashboard() {
             </details>
           </div>
           <section className="dashboard-review-rail card">
-            <div><FileCheck2 size={19}/><div><h3>{tr('المراجعة والنشر', 'Review and publication')}</h3><p className="muted">{tr('الحفظ منفصل عن الإرسال. أنشئ لقطة مراجعة قبل أن يصبح أي تعديل منشوراً.', 'Saving is separate from submission. Create a review snapshot before any edit can be published.')}</p></div></div>
-            <div className="dashboard-review-rail__actions"><span className="dashboard-status">{publicationLabel(activeSite.status, lang)}</span><button className="button button--quiet" onClick={() => setPreviewOpen(true)}><Eye size={16}/>{tr('مراجعة وإرسال للنشر', 'Review & submit for publication')}</button></div>
+            <div><FileCheck2 size={19}/><div><h3>{tr('النشر', 'Publication')}</h3><p className="muted">{tr('أرسل موقعك للمشرف بلمسة. نحفظ أحدث تعديلاتك قبل الإرسال.', 'Send your site to the administrator with one click. Your latest edits are saved first.')}</p></div></div>
+            <div className="dashboard-review-rail__actions"><span className="dashboard-status">{publicationLabel(activeSite.status, lang)}</span><button className="button" onClick={() => void submitForReview()} disabled={submittingReview || Boolean(uploading)}><FileCheck2 size={16}/>{submittingReview ? tr('جارٍ إرسال موقعك', 'Sending your site') : tr('طلب نشر موقعي', 'Request publication')}</button></div>
           </section>
           {reviews.length > 0 && <section className="dashboard-review-history card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('سجل المراجعات', 'Review history')}</h2></div></div>{reviews.slice(0, 5).map((review, index) => <div key={String(review.id ?? index)} className="dashboard-history-row"><span>{String(review.status ?? 'pending')}</span><p>{String(review.reason || tr('بانتظار قرار المراجع.', 'Awaiting reviewer decision.'))}</p><time>{formatDate(Number(review.created_at), locale)}</time></div>)}</section>}
         </>}

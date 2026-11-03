@@ -24,6 +24,15 @@ describe('the same complete visitor view in a local draft preview', () => {
     expect(container.querySelectorAll('.identity-timeline__period bdi')).toHaveLength(5);
     expect(container.textContent).not.toContain('PRIVATE NOTE'); expect(apiMock).not.toHaveBeenCalled();
   });
+  it('places the optional journal after the professional workspace and opens original evidence images', async () => {
+    await render(sanitizeProfile(fixture));
+    const journal=container.querySelector<HTMLDetailsElement>('details#journal')!;
+    expect(journal).not.toBeNull();expect(journal.open).toBe(false);expect(journal.querySelector('summary')?.textContent).toBe('مدونتي');
+    expect(container.querySelector('.identity-workspace')?.nextElementSibling).toBe(journal);
+    expect(container.querySelector('.identity-content #journal')).toBeNull();
+    await act(async()=>container.querySelector<HTMLButtonElement>('#work-samples .identity-gallery__item')!.click());
+    expect(container.querySelector('.identity-lightbox[open] img')?.getAttribute('src')).toBe('/api/media/local-work');
+  });
   it('shows original icon-only platform links from their URLs without requiring labels or preloading YouTube', async () => {
     await render(sanitizeProfile(fixture));
     const x=container.querySelector<HTMLAnchorElement>('.identity-social-icons a[href="https://x.com/local-member"]')!;

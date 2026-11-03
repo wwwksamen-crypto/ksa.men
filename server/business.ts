@@ -453,18 +453,49 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
 }
 
 export function publicationProfile(value: unknown, fallbackName = ''): Record<string, unknown> {
-  const stripNotes = (profile: Profile): Record<string, unknown> => {
+  // Completion is guidance, not a publication gate. The bounded editable schema
+  // remains intact; only valid destinations and nonempty rows enter the snapshot.
+  const optional = (validate: () => string): string => {
+    try { return validate(); }
+    catch (error) { if (error instanceof HTTPException && error.status === 422) return ''; throw error; }
+  };
+  const project = (draft: Profile, name: string): Record<string, unknown> => {
+    const profile = { ...draft, skillRadar: { ...draft.skillRadar }, itemIds: { ...profileItemIds(draft as unknown as Json) } };
+    for (const key of ['name','title','bio','city','country','blog'] as const) profile[key] = profile[key].trim();
+    profile.name ||= name.trim();
+    profile.email = optional(() => emailValue(draft.email, 'email'));
+    profile.phone = optional(() => phoneValue(draft.phone, 'phone'));
+    profile.whatsapp = optional(() => phoneValue(draft.whatsapp, 'whatsapp'));
+    profile.youtube = optional(() => youtubeUrl(draft.youtube));
+    const trimRow = (item: unknown): unknown => {
+      if (typeof item === 'string') return item.trim() || null;
+      if (!isRecord(item)) return null;
+      const row = Object.fromEntries(Object.entries(item).map(([key, part]) => [key, typeof part === 'string' ? part.trim() : part]));
+      return Object.values(row).some(part => typeof part === 'string' && part) ? row : null;
+    };
+    for (const field of listFields) {
+      const source = pathValue(draft as unknown as Json, field) as unknown[];
+      const kept: unknown[] = [], ids: string[] = [];
+      source.forEach((item, index) => {
+        let row: unknown = trimRow(item);
+        if (field === 'socials' || field === 'buttons') {
+          const url = optional(() => httpUrl(typeof item === 'string' ? item : isRecord(item) ? item.url : '', field));
+          row = url ? typeof item === 'string' ? url : { label: isRecord(item) && typeof item.label === 'string' && item.label.trim() || new URL(url).hostname.replace(/^www\./, ''), url } : null;
+        }
+        if (row !== null) { kept.push(row); ids.push(profile.itemIds[field][index]); }
+      });
+      if (field.startsWith('skillRadar.')) profile.skillRadar[field.split('.')[1] as keyof Profile['skillRadar']] = kept as string[];
+      else (profile as unknown as Json)[field] = kept;
+      profile.itemIds[field] = ids;
+    }
+    profile.imageDescriptions = Object.fromEntries(Object.entries(draft.imageDescriptions || {}).map(([url, text]) => [url, text.trim()]));
     const { notes: _privateNotes, translations, ...content } = profile;
     return { ...content, ...(translations ? { translations: {
-      ...(translations.ar ? { ar: stripNotes(translations.ar) } : {}),
-      ...(translations.en ? { en: stripNotes(translations.en) } : {}),
+      ...(translations.ar ? { ar: project(translations.ar, profile.name) } : {}),
+      ...(translations.en ? { en: project(translations.en, profile.name) } : {}),
     } } : {}) };
   };
-  try { return stripNotes(normalizeProfile(value, fallbackName)); }
-  catch (error) {
-    if (error instanceof HTTPException && error.status === 422) apiError(422, 'حُفظت كتابتك. أكمل الاسم والعناوين وبيانات التواصل والروابط قبل طلب النشر.', 'INCOMPLETE_PROFILE');
-    throw error;
-  }
+  return project(normalizeProfile(value, fallbackName, false, true), fallbackName);
 }
 
 function mediaIds(profile: Profile): string[] {
@@ -1278,11 +1309,12 @@ export function registerBusiness(app: App): void {
     if(site.status==='published'&&site.published_version===site.draft_version){
       return c.json({alreadyPublished:true,message:'موقعك معتمد بالفعل. يمكنك متابعة تطويره؛ أرسل طلباً جديداً بعد حفظ تعديلك.'});
     }
-    const snapshot=JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft),site.published?JSON.parse(site.published):undefined),String(user.name??'')));
+    const siteOwner=await one<{name:string}>(c,'SELECT name FROM users WHERE id=?',site.user_id);
+    const snapshot=JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft),site.published?JSON.parse(site.published):undefined),siteOwner?.name||String(user.name??'')));
     const reviewId=uid(),clock=now();
     try{
       const result=await run(c,`INSERT INTO reviews(id,site_id,user_id,snapshot,draft_version,base_version,status,kind,created_at)
-        SELECT ?,id,?,?,?,?,?,'content',? FROM sites WHERE id=? AND draft_version=?`,reviewId,Number(user.id),snapshot,Number(site.draft_version),Number(site.published_version),'pending',clock,site.id,Number(site.draft_version));
+        SELECT ?,id,?,?,?,?,?,'content',? FROM sites WHERE id=? AND draft_version=?`,reviewId,Number(site.user_id??user.id),snapshot,Number(site.draft_version),Number(site.published_version),'pending',clock,site.id,Number(site.draft_version));
       if(changes(result)!==1) apiError(409,'تغيّر الملف. احفظ أحدث تعديل ثم أرسله.','DRAFT_CONFLICT');
     }catch(error){if(error instanceof HTTPException)throw error;const pending=await findPending();if(pending)return currentResult(pending.id,true);apiError(409,'تعذر إرسال الطلب. عملك محفوظ؛ حاول من جديد.','REVIEW_CONFLICT');}
     if(!site.published)await run(c,"UPDATE sites SET status='pending',updated_at=? WHERE id=? AND published IS NULL",clock,site.id);

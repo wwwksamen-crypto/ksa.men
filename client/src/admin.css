@@ -601,3 +601,7 @@
 .admin-review > details { margin-block: 10px; }
 @media(max-width:760px) { .admin-managed-list { grid-template-columns: minmax(0,1fr); } }
 @media(max-width:540px) { .admin-managed-form { grid-template-columns: minmax(0,1fr); } .admin-managed .admin-actions > * { flex: 1 1 140px; justify-content: center; min-height: 46px; } }
+
+.admin-console .admin-user-card-open { display: grid; gap: 10px; inline-size: 100%; min-inline-size: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.admin-console .admin-user-card-open:focus-visible { outline: 3px solid var(--admin-accent); outline-offset: 4px; border-radius: 8px; }
+.admin-console .admin-user-card > .button { inline-size: 100%; min-block-size: 44px; justify-content: center; }
