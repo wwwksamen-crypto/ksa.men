@@ -779,9 +779,10 @@ export default function Dashboard() {
   const saveVisibility = async (patch: Partial<Omit<VisibilityPolicy, 'version'>>) => {
     const siteId = siteIdRef.current, policy = visibilityRef.current;
     if (!siteId || !policy || visibilityBusyRef.current) return;
+    const { aliases: _readOnlyAliases, ...editablePolicy } = policy;
     visibilityBusyRef.current = true; setVisibilityBusy(true);
     try {
-      const result = await api<{ siteId: string; policy: VisibilityPolicy }>(`/api/sites/${encodeURIComponent(siteId)}/visibility`, { method: 'PUT', body: JSON.stringify({ ...policy, ...patch }) });
+      const result = await api<{ siteId: string; policy: VisibilityPolicy }>(`/api/sites/${encodeURIComponent(siteId)}/visibility`, { method: 'PUT', body: JSON.stringify({ ...editablePolicy, ...patch }) });
       if (siteIdRef.current !== siteId || result.siteId !== siteId) return;
       visibilityRef.current = result.policy; setVisibilityPolicy(result.policy);
       changeDraft({ hidden: result.policy.hidden, hiddenItems: result.policy.hiddenItems, searchable: result.policy.listed, allowContact: !result.policy.hidden.includes('allowContact') });

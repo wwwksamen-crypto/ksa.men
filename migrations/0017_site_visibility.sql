@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS site_visibility (
   site_id TEXT PRIMARY KEY REFERENCES sites(id),
   hidden_fields TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(hidden_fields)),
   hidden_items TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(hidden_items)),
+  hidden_aliases TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(hidden_aliases)),
   visible INTEGER NOT NULL DEFAULT 1 CHECK(visible IN (0,1)),
   listed INTEGER NOT NULL DEFAULT 1 CHECK(listed IN (0,1)),
   indexable INTEGER NOT NULL DEFAULT 1 CHECK(indexable IN (0,1)),

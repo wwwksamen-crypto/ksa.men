@@ -27,6 +27,7 @@ export function VisibilityControls({ profile, policy, onChange, busy = false, se
       <p>{t('خيارات الظهور تُحفظ مباشرة. إتاحة الموقع لا تنشر تعديلات لم تعتمد بعد، وقد تحتاج محركات البحث وقتاً لتحديث نتائجها.', 'Visibility choices save immediately. Making the site available never publishes unapproved edits. Search engines may take time to refresh their results.')}</p>
       <div><span>{t('طلبات التواصل المهني', 'Professional contact requests')}</span><VisibilityButton hidden={policy.hidden.includes('allowContact')} label={t('طلبات التواصل المهني', 'Professional contact requests')} busy={busy} onClick={() => toggleField('allowContact')}/></div>
     </div>}
+    {siteOptions && <button type="button" className="button button--quiet" disabled={busy} onClick={() => onChange({hidden:policy.hidden.filter(key => key === 'allowContact'),hiddenItems:[]})}>{t('إظهار كل معلوماتي', 'Show all my information')}</button>}
     {allowed.filter(field => text(pathValue(profile, field)) || list(pathValue(profile, field)).some(value => text(value) || Object.keys(value && typeof value === 'object' ? value : {}).length)).map(field => {
       const label = visibilityLabels[field] ? t(...visibilityLabels[field]) : field;
       const isList = (listFields as readonly string[]).includes(field), items = isList ? list(pathValue(profile, field)) : [], hidden = policy.hidden.includes(field) || field.startsWith('skillRadar.') && policy.hidden.includes('skillRadar');

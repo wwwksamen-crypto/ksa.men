@@ -3,7 +3,7 @@ export const listFields = ['experience','education','training','skills','members
 export const scalarFields = ['name','title','bio','email','phone','whatsapp','city','country','photo','cover','youtube','blog'] as const;
 export const visibilityFields = [...scalarFields, ...listFields, 'skillRadar', 'allowContact'] as const;
 export type ItemIds = Record<string, string[]>;
-export type VisibilityPolicy = { hidden: string[]; hiddenItems: string[]; visible: boolean; listed: boolean; indexable: boolean; version: number };
+export type VisibilityPolicy = { hidden: string[]; hiddenItems: string[]; visible: boolean; listed: boolean; indexable: boolean; version: number; aliases?: Record<string, string[]> };
 export function pathValue(profile: ProfileRecord, path: string): unknown { return path.split('.').reduce<unknown>((value, part) => record(value)[part], profile); }
 function setPath(profile: ProfileRecord, path: string, value: unknown) {
   const parts = path.split('.'); let target = profile;
@@ -45,6 +45,20 @@ export function draftWithIdentities(input: unknown, approved?: unknown): Profile
   if (Object.keys(record(draft.itemIds)).length || !Object.keys(published).length) return { ...draft, itemIds: fallback };
   return { ...draft, itemIds: reconcileItemIds(published, draft, (field, index) => fallback[field][index]) };
 }
+/** Restrict uncertain legacy counterparts; never expose an old approved row as a new hidden one. */
+export function visibilityAliases(draftInput: unknown, approvedInput: unknown, hiddenItems: string[]): Record<string, string[]> {
+  const approved = record(approvedInput), publishedIds = profileItemIds(approved), draftIds = profileItemIds(draftWithIdentities(draftInput, approved)), aliases: Record<string, string[]> = {};
+  for (const key of hiddenItems) {
+    const [field, id] = key.split(':');
+    if (!publishedIds[field] || publishedIds[field].includes(id) || !draftIds[field].includes(id)) continue;
+    const uncertain = publishedIds[field].filter(candidate => !draftIds[field].includes(candidate));
+    if (uncertain.length) aliases[key] = uncertain.map(candidate => `${field}:${candidate}`);
+  }
+  return aliases;
+}
+export function expandedHiddenItems(items: string[], aliases: Record<string, string[]> = {}): string[] {
+  return [...new Set(items.flatMap(key => [key, ...(Array.isArray(aliases[key]) ? aliases[key] : [])]))];
+}
 export function sanitizeProfile(input: unknown): ProfileRecord {
   const source = record(input), output = structuredClone(source), ids = profileItemIds(source);
   const hidden = new Set(list(source.hidden).filter((v): v is string => typeof v === 'string'));
@@ -58,5 +72,5 @@ export function sanitizeProfile(input: unknown): ProfileRecord {
 }
 export function withVisibility(input: unknown, policy?: VisibilityPolicy | null): ProfileRecord {
   const profile = record(input);
-  return { ...profile, itemIds: profileItemIds(profile), ...(policy ? { hidden: policy.hidden, hiddenItems: policy.hiddenItems, allowContact: !policy.hidden.includes('allowContact') } : {}) };
+  return { ...profile, itemIds: profileItemIds(profile), ...(policy ? { hidden: policy.hidden, hiddenItems: expandedHiddenItems(policy.hiddenItems, policy.aliases), allowContact: !policy.hidden.includes('allowContact') } : {}) };
 }

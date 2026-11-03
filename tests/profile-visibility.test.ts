@@ -7,7 +7,7 @@ import { webcrypto } from 'node:crypto';
 import worker from '../server/index';
 import { defaultProfile } from '../server/business';
 import { digest, now, uid } from '../server/core';
-import { profileItemIds } from '../shared/profile-visibility';
+import { profileItemIds, draftWithIdentities } from '../shared/profile-visibility';
 import { generateVCard } from '../client/src/Exports';
 Object.defineProperty(globalThis,'crypto',{value:webcrypto,configurable:true});
 const database=join(mkdtempSync(join(tmpdir(),'ksa-visibility-')),'local.sqlite');
@@ -21,7 +21,7 @@ const approved={...defaultProfile('هوية معتمدة'),title:'مختص مح�
 const ids=profileItemIds(approved);
 let policy={version:0,hidden:[] as string[],hiddenItems:[] as string[],visible:true,listed:true,indexable:true};
 async function request(path:string,actor?:string,method='GET',body?:unknown,host='ksa.men',csrf=true){const headers:Record<string,string>={Origin:'https://'+host};if(actor){headers.Cookie=actors[actor].cookie;if(csrf)headers['X-CSRF-Token']=actors[actor].csrf;}if(body)headers['Content-Type']='application/json';const response=await worker.fetch(new Request('https://'+host+path,{method,headers,body:body?JSON.stringify(body):undefined}),env,{waitUntil:()=>{}} as any);return{response,status:response.status,data:await response.clone().json().catch(()=>null)};}
-async function update(patch:Partial<typeof policy>){const result=await request(`/api/sites/${siteId}/visibility`,'member','PUT',{...policy,...patch});expect(result.status,JSON.stringify(result.data)).toBe(200);policy=result.data.policy;return result;}
+async function update(patch:Partial<typeof policy>){const result=await request(`/api/sites/${siteId}/visibility`,'member','PUT',{version:policy.version,hidden:policy.hidden,hiddenItems:policy.hiddenItems,visible:policy.visible,listed:policy.listed,indexable:policy.indexable,...patch});expect(result.status,JSON.stringify(result.data)).toBe(200);policy=result.data.policy;return result;}
 beforeAll(async()=>{
  sql({setup:'migrations'});sql({sql:'UPDATE settings SET value=? WHERE key=?',params:['{"mode":"open"}','lock']});
  for(const [key,role]of[['owner','owner'],['member','user'],['stranger','user']]){sql({sql:'INSERT INTO users(email,name,whatsapp,role,created_at,trial_until,consent_at) VALUES(?,?,?,?,?,?,?)',params:[key+'@visibility.invalid',key,'0555000000',role,now(),now()+86400,now()]});const id=sql({sql:'SELECT id FROM users WHERE email=?',params:[key+'@visibility.invalid']}).results[0].id;const raw=uid()+uid(),csrf=uid();sql({sql:'INSERT INTO sessions(id,user_id,csrf,expires_at,verified_at) VALUES(?,?,?,?,0)',params:[await digest(raw),id,csrf,now()+86400]});actors[key]={id,cookie:'__Host-ksa_session='+raw,csrf};}
@@ -39,7 +39,7 @@ describe.sequential('reversible visibility applies to all public paths without p
   expect((await request(`/api/sites/${siteId}/visibility`,'member','PUT',policy,'ksa.men',false)).status).toBe(403);
   expect((await request(`/api/sites/${siteId}/visibility`,'member')).data.policy.version).toBe(0);
   await update({hidden:['email','blog','skillRadar.scientific'],hiddenItems:[`skills:${ids.skills[1]}`,`skillImages:${ids.skillImages[0]}`]});
-  const stale=await request(`/api/sites/${siteId}/visibility`,'member','PUT',{...policy,version:0});expect(stale.status).toBe(409);
+  const stale=await request(`/api/sites/${siteId}/visibility`,'member','PUT',{version:0,hidden:policy.hidden,hiddenItems:policy.hiddenItems,visible:policy.visible,listed:policy.listed,indexable:policy.indexable});expect(stale.status).toBe(409);
  });
  it('immediately filters fields, list items and images from Arabic and English profile/export/QR data without changing the approved snapshot',async()=>{
   for(const lang of['ar','en']){const result=await request('/api/public/profile?lang='+lang,undefined,'GET',undefined,'visibility-local.ksa.men');expect(result.status).toBe(200);const profile=result.data.profile;expect(profile).not.toHaveProperty('email');expect(profile).not.toHaveProperty('blog');expect(profile.skills).toEqual([lang==='ar'?'مهارة مرئية':'Visible skill']);expect(profile.skillImages).toEqual([]);expect(profile).not.toHaveProperty('notes');expect(profile).not.toHaveProperty('itemIds');}
@@ -56,6 +56,20 @@ describe.sequential('reversible visibility applies to all public paths without p
   await update({listed:true,indexable:false});expect((await request('/api/search?q=visibility-local')).data.items).toHaveLength(1);
   const html=await request('/',undefined,'GET',undefined,'visibility-local.ksa.men');expect(html.response.headers.get('X-Robots-Tag')).toContain('noindex');const body=await html.response.text();expect(body).toContain('name="robots"');expect(body).not.toContain('PRIVATE');expect(body).not.toContain('visible@visibility.invalid');
   const robots=await request('/robots.txt',undefined,'GET',undefined,'visibility-local.ksa.men');expect(await robots.response.text()).toContain('Disallow: /');
+ });
+ it('restricts ambiguous old rows when both content and length changed before stable IDs existed, and reverses the choice cleanly',async()=>{
+  const draft={...approved,name:'مسودة أحدث لا تنشر',skills:['مهارة جديدة منفردة'],notes:'PRIVATE DRAFT'};
+  sql({sql:'UPDATE sites SET draft=? WHERE id=?',params:[JSON.stringify(draft),siteId]});
+  const current=draftWithIdentities(draft,approved), key=`skills:${profileItemIds(current).skills[0]}`;
+  await update({hiddenItems:[key]});
+  expect((await request('/api/public/profile',undefined,'GET',undefined,'visibility-local.ksa.men')).data.profile.skills).toEqual([]);
+  expect((await request(`/api/export-data/${siteId}?kind=qr`,'member')).data.profile.skills).toEqual([]);
+  expect((await request('/api/search?q=visibility-local')).data.items[0].profile.skills ?? []).toEqual([]);
+  sql({sql:'UPDATE sites SET draft=? WHERE id=?',params:[JSON.stringify({...draft,skills:[]}),siteId]});
+  await update({listed:true});
+  expect((await request('/api/public/profile',undefined,'GET',undefined,'visibility-local.ksa.men')).data.profile.skills).toEqual([]);
+  await update({hiddenItems:[]});
+  expect((await request('/api/public/profile',undefined,'GET',undefined,'visibility-local.ksa.men')).data.profile.skills).toEqual(approved.skills);
  });
  it('hides the whole site immediately across profile, HTML, exports, media, quick links and OG, while retaining authorized editing',async()=>{
   await update({visible:false});

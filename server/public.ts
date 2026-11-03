@@ -1,4 +1,4 @@
-import { profileItemIds, draftWithIdentities, withVisibility } from '../shared/profile-visibility';
+import { profileItemIds, draftWithIdentities, expandedHiddenItems, withVisibility } from '../shared/profile-visibility';
 import { siteVisibility, visibleSiteProfile } from './visibility';
 import type {App,Ctx} from './core';
 import {one,all,run,now,uid,me,siteFor,service,publicProfile,rate,verifySecret,hmac} from './core';
@@ -113,8 +113,8 @@ export function registerPublic(app:App){
     const city=(c.req.query('city')||'').slice(0,100).toLocaleLowerCase();
     const specialty=(c.req.query('specialty')||'').slice(0,100).toLocaleLowerCase();
     const offset=Math.min(10_000,Math.max(0,Number(c.req.query('offset'))||0));
-    const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.searchable,s.published,s.lock_hash,n.name,v.site_id AS privacy_id,v.hidden_fields,v.hidden_items FROM sites s JOIN dns_names n ON n.site_id=s.id LEFT JOIN site_visibility v ON v.site_id=s.id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE u.status='active' AND s.status='published' AND COALESCE(v.visible,1)=1 AND COALESCE(v.listed,s.searchable)=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");
-    const profiles=rows.filter(row=>!row.lock_hash).map(row=>{const raw=publishedJson(row);return {site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(row.privacy_id?{...raw,hidden:JSON.parse(row.hidden_fields),hiddenItems:JSON.parse(row.hidden_items)}:raw,'ar')};});
+    const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.searchable,s.published,s.lock_hash,n.name,v.site_id AS privacy_id,v.hidden_fields,v.hidden_items,v.hidden_aliases FROM sites s JOIN dns_names n ON n.site_id=s.id LEFT JOIN site_visibility v ON v.site_id=s.id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE u.status='active' AND s.status='published' AND COALESCE(v.visible,1)=1 AND COALESCE(v.listed,s.searchable)=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");
+    const profiles=rows.filter(row=>!row.lock_hash).map(row=>{const raw=publishedJson(row);return {site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(row.privacy_id?{...raw,hidden:JSON.parse(row.hidden_fields),hiddenItems:expandedHiddenItems(JSON.parse(row.hidden_items),JSON.parse(row.hidden_aliases))}:raw,'ar')};});
     const matched=profiles.filter(result=>{
       const profile=result.profile;
       const haystack=[result.name,result.userId,profile.name,profile.title,profile.city].filter(value=>typeof value==='string').join(' ').toLocaleLowerCase();
