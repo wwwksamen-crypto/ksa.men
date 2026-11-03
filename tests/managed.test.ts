@@ -18,7 +18,7 @@ class Statement {
  async run(){return this.all();}
 }
 const objects = new Map<string,any>();
-const env:any = { ROOT_DOMAIN:'ksa.men', OWNER_EMAIL:'managed-owner@unit.invalid', AUTH_SECRET:'managed-unit-secret', RESEND_API_KEY:'unit', BACKUP_ENCRYPTION_KEY:'unit-independent-key', DB:{ prepare:(query:string)=>new Statement(query),batch:async(statements:Statement[])=>sql({batch:statements.map(s=>({sql:s.sql,params:s.params}))}) }, MEDIA:{put:async(key:string,bytes:any,metadata:any)=>objects.set(key,{bytes,metadata})}, ASSETS:{fetch:async()=>new Response('<!doctype html>Application fixture',{headers:{'Content-Type':'text/html'}})} };
+const env:any = { ROOT_DOMAIN:'ksa.men', OWNER_EMAIL:'managed-owner@unit.invalid', AUTH_SECRET:'managed-unit-secret', RESEND_API_KEY:'unit', BACKUP_ENCRYPTION_KEY:'unit-independent-key', DB:{ prepare:(query:string)=>new Statement(query),batch:async(statements:Statement[])=>sql({batch:statements.map(s=>({sql:s.sql,params:s.params}))}) }, MEDIA:{put:async(key:string,bytes:any,metadata:any)=>objects.set(key,{bytes,metadata}),get:async(key:string)=>objects.has(key)?{body:objects.get(key).bytes}:null}, ASSETS:{fetch:async()=>new Response('<!doctype html>Application fixture',{headers:{'Content-Type':'text/html'}})} };
 const actors:Record<string,{id:number;cookie:string;csrf:string}>={};
 let managedId=0,siteId='',ownerPin='';
 let capturedEmails:any[]=[];
@@ -48,6 +48,15 @@ describe.sequential('Managed identity and one-click administrative publication',
   const managed=sql({sql:'SELECT role,pin_hash,email,consent_at FROM users WHERE id=?',params:[managedId]}).results[0];expect(managed.role).toBe('user');expect(managed.consent_at).toBe(0);expect(await verifySecret(body.pin,managed.pin_hash)).toBe(true);expect(managed.email).toContain('@managed.ksa.men');
   expect((await request('/api/admin/managed-accounts','owner','POST',body)).status).toBe(409);
   expect(sql({sql:"SELECT active FROM reserved_names WHERE name='test'"}).results[0].active).toBe(1);
+  const upload=new FormData();upload.set('file',new File([new TextEncoder().encode('RIFF1234WEBPVP8L')],'owner-photo.webp',{type:'image/webp'}));upload.set('purpose','photo');upload.set('siteId',siteId);
+  const uploaded=await worker.fetch(new Request('https://ksa.men/api/upload',{method:'POST',headers:{Origin:'https://ksa.men',Cookie:actors.owner.cookie,'X-CSRF-Token':actors.owner.csrf},body:upload}),env,{} as any);expect(uploaded.status).toBe(200);const media=(await uploaded.json()) as {id:string};
+  expect((await request('/api/media/'+media.id,'moderator')).status).toBe(403);
+  expect((await request('/api/admin/managed-accounts/'+managedId+'/assign','owner','POST',{managerId:actors.moderator.id})).status).toBe(200);
+  expect((await request('/api/media/'+media.id,'moderator')).status).toBe(200);
+  expect((await request('/api/media/'+media.id,'member')).status).toBe(403);
+  expect((await request('/api/admin/managed-accounts/'+managedId+'/assign','owner','POST',{managerId:actors.owner.id})).status).toBe(200);
+  expect((await request('/api/media/'+media.id,'moderator')).status).toBe(403);
+
  });
  it('publishes immediately in a PIN session without fresh email and remains idempotent and logged',async()=>{
   const x=await request('/api/admin/sites/'+siteId+'/publish','owner','POST');expect(x.status).toBe(200);expect(x.data.published).toBe(true);expect(x.data.url).toBe('https://test.ksa.men');
@@ -85,7 +94,7 @@ describe.sequential('Managed identity and one-click administrative publication',
  it('excludes invitation capabilities from encrypted backups',async()=>{
   const result=await makeBackup(env,'unit-managed-test');
   expect(result).toBeTruthy();
-  const record=[...objects.values()][0];const raw=new Uint8Array(record.bytes);
+  const record=[...objects.values()].at(-1)!;const raw=new Uint8Array(record.bytes);
   const key=await crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(env.BACKUP_ENCRYPTION_KEY)),{name:'AES-GCM'},false,['decrypt']);
   const plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:raw.slice(4,16)},key,raw.slice(16));
   const data=JSON.parse(new TextDecoder().decode(plain));expect(data.tables.managed_claim_tokens).toBeUndefined();expect(data.tables.managed_accounts.length).toBe(1);

@@ -203,8 +203,8 @@ export function registerPublic(app:App){
       authorized=!!user&&(user.role==='owner'||(user.role==='manager'&&!!user.financial));
     }
     if(media.purpose!=='receipt'&&!authorized&&media.site_id&&user&&['owner','manager','moderator'].includes(user.role)){
-      if(user.role!=='moderator'){try{await siteFor(c,media.site_id);authorized=true;}catch{}}
-      else authorized=!!await one(c,"SELECT id FROM reviews WHERE site_id=? AND instr(snapshot,?)>0 LIMIT 1",media.site_id,'/api/media/'+media.id);
+      try{await siteFor(c,media.site_id);authorized=true;}catch{}
+      if(!authorized&&user.role==='moderator')authorized=!!await one(c,"SELECT id FROM reviews WHERE site_id=? AND instr(snapshot,?)>0 LIMIT 1",media.site_id,'/api/media/'+media.id);
     }
     if(media.purpose!=='receipt'&&!authorized){
       const site:any=media.site_id?await one(c,"SELECT * FROM sites WHERE id=? AND status='published'",media.site_id):null;
