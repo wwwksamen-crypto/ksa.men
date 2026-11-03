@@ -1,3 +1,5 @@
+import { sanitizeProfile } from '../../shared/profile-visibility';
+import { canRestorePublishedBadge, readPublishedBadge } from './export-offline';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BadgeCheck,
@@ -150,7 +152,7 @@ function profileVCard(profile: Profile, siteName: string, url: string) {
 
 /** A local serializer for the public profile route and the free QR/vCard tool. */
 export function generateVCard(profile: Profile, siteName = '', url = '') {
-  return profileVCard(profile, siteName, url);
+  return profileVCard(sanitizeProfile(profile) as Profile, siteName, url);
 }
 
 function structuredLine(item: StructuredItem | string) {
@@ -637,20 +639,23 @@ export default function Exports() {
     setLoading(true);
     setError('');
     const requestQuery = new URLSearchParams({ lang: exportLang, kind: exportDataKindFor(kind) });
-    const cacheKey = `ksa-men:published-export:${publicName}:${exportLang}`;
+    const cacheKey = `ksa-men:published-badge:v2:${publicName}:${exportLang}`;
+    if (isPublishedSource) { try { window.localStorage.removeItem(`ksa-men:published-export:${publicName}:${exportLang}`); } catch {} }
     try {
       const response = await api<ExportData>(isPublishedSource
         ? `/api/public/export-data/${encodeURIComponent(publicName)}?${requestQuery}`
         : `/api/export-data/${encodeURIComponent(site)}?${requestQuery}`);
       if (!response.allowed) throw new Error(t('لا تملك صلاحية هذا التصدير.', 'You are not allowed to create this export.'));
       setData(response);
-      if (isPublishedSource) { try { window.localStorage.setItem(cacheKey, JSON.stringify(response)); } catch {} }
+      if (isPublishedSource && kind === 'badge' && response.source === 'published') { try { window.localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: response })); } catch {} }
     } catch (cause) {
-      if (isPublishedSource) {
+      if (canRestorePublishedBadge(kind, isPublishedSource, window.navigator.onLine, cause)) {
         try {
-          const saved = window.localStorage.getItem(cacheKey);
-          if (saved) { setData(JSON.parse(saved) as ExportData); return; }
+          const saved = readPublishedBadge(window.localStorage.getItem(cacheKey), publicName);
+          if (saved) { setData(saved); return; }
         } catch {}
+      } else if (isPublishedSource) {
+        try { window.localStorage.removeItem(cacheKey); } catch {}
       }
       const message = cause instanceof Error ? cause.message : t('تعذر جلب بيانات التصدير.', 'Could not load export data.');
       setData(null);

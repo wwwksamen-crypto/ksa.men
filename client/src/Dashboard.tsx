@@ -1,3 +1,7 @@
+import { IdentityView, BrandIcon } from './Personal';
+import { VisibilityControls } from './VisibilityControls';
+import { itemText as profileItemText, list as profileList, mediaSource, socialLink, youtubeLink } from '../../shared/profile-content';
+import { profileItemIds, reconcileItemIds, sanitizeProfile, withVisibility, type ItemIds, type VisibilityPolicy } from '../../shared/profile-visibility';
 import { useCallback, useEffect, useMemo, useRef, useState, useId, type ChangeEvent } from 'react';
 import {
   AlertTriangle,
@@ -99,12 +103,15 @@ export type ProfileDraft = {
   socials: Social[];
   buttons: CustomButton[];
   hidden: string[];
+  hiddenItems: string[];
+  itemIds: ItemIds;
   searchable: boolean;
   allowContact: boolean;
   translations?: { ar?: Partial<ProfileDraft>; en?: Partial<ProfileDraft> };
 };
 
 type Site = {
+  visibility?: VisibilityPolicy;
   id: string;
   name?: string;
   draft?: ProfileDraft | string;
@@ -255,7 +262,7 @@ const DEFAULT_COVER_IMAGE = '/assets/cover-1600.webp';
 const emptyDraft = (): ProfileDraft => ({
   name: '', title: '', bio: '', email: '', phone: '', whatsapp: '', city: '', country: 'المملكة العربية السعودية',
   photo: DEFAULT_PROFILE_IMAGE, avatarMode: 'photo', cover: DEFAULT_COVER_IMAGE, youtube: '', experience: [], education: [], training: [], skills: [], memberships: [], languages: [],
-  hobbies: [], achievements: [], timeline: [], skillRadar: { human: [], scientific: [], professional: [] }, blog: '', notes: '', skillImages: [], workImages: [], socials: [], buttons: [], hidden: [],
+  hobbies: [], achievements: [], timeline: [], skillRadar: { human: [], scientific: [], professional: [] }, blog: '', notes: '', skillImages: [], workImages: [], socials: [], buttons: [], hidden: [], hiddenItems: [], itemIds: {},
   searchable: true, allowContact: true,
 });
 
@@ -280,13 +287,13 @@ export function parseDraft(source: unknown): ProfileDraft {
   const toResume = (item: unknown): ResumeItem => {
     if (typeof item === 'string') return { ...blankItem(), title: item };
     const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
-    return { title: asText(entry.title) || asText(entry.name) || asText(entry.role), organization: asText(entry.organization) || asText(entry.institution), start: asText(entry.start) || asText(entry.date), end: asText(entry.end), description: asText(entry.description) };
+    return { title: asText(entry.title) || asText(entry.name) || asText(entry.role) || asText(entry.label) || asText(entry.language) || asText(entry.value), organization: asText(entry.organization) || asText(entry.institution), start: asText(entry.start) || asText(entry.date), end: asText(entry.end), description: asText(entry.description) || asText(entry.level) || asText(entry.proficiency) };
   };
-  const normalizeStructured = (value: unknown): ResumeItem[] => asArray<unknown>(value).map(toResume);
-  const normalizeStrings = (value: unknown): string[] => asArray<unknown>(value).filter((item): item is string => typeof item === 'string');
-  const normalizeTextItems = (value: unknown): Array<string | ResumeItem> => asArray<unknown>(value).map((item) => typeof item === 'string' ? item : toResume(item));
-  const normalizeLinks = (value: unknown): Social[] => asArray<unknown>(value).map((item) => typeof item === 'string' ? { label: '', url: item } : { label: asText((item as Social)?.label) || asText((item as { name?: string })?.name), url: asText((item as Social)?.url) });
-  return {
+  const normalizeStructured = (value: unknown): ResumeItem[] => profileList(value).map(toResume);
+  const normalizeStrings = (value: unknown): string[] => profileList(value).filter((item): item is string => typeof item === 'string');
+  const normalizeTextItems = (value: unknown): Array<string | ResumeItem> => profileList(value).map((item) => typeof item === 'string' ? item : toResume(item));
+  const normalizeLinks = (value: unknown): Social[] => profileList(value).map((item) => typeof item === 'string' ? { label: '', url: item } : { label: asText((item as Social)?.label) || asText((item as { name?: string })?.name), url: asText((item as Social)?.url) || asText((item as { href?: string })?.href) });
+  const profile: ProfileDraft = {
     ...emptyDraft(),
     ...Object.fromEntries(Object.keys(emptyDraft()).map((key) => [key, raw[key] ?? (emptyDraft() as unknown as Record<string, unknown>)[key]])),
     name: asText(raw.name), title: asText(raw.title), bio: asText(raw.bio), email: asText(raw.email), phone: asText(raw.phone), whatsapp: asText(raw.whatsapp),
@@ -294,14 +301,16 @@ export function parseDraft(source: unknown): ProfileDraft {
     experience: normalizeStructured(raw.experience), education: normalizeStructured(raw.education), training: normalizeStructured(raw.training), timeline: normalizeStructured(raw.timeline),
     skills: normalizeTextItems(raw.skills), memberships: normalizeTextItems(raw.memberships), languages: normalizeTextItems(raw.languages), hobbies: normalizeTextItems(raw.hobbies), achievements: normalizeTextItems(raw.achievements),
     skillRadar: {
-      human: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.human),
-      scientific: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.scientific),
-      professional: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.professional),
+      human: profileList((raw.skillRadar as Record<string, unknown> | undefined)?.human).map(profileItemText),
+      scientific: profileList((raw.skillRadar as Record<string, unknown> | undefined)?.scientific).map(profileItemText),
+      professional: profileList((raw.skillRadar as Record<string, unknown> | undefined)?.professional).map(profileItemText),
     },
-    skillImages: normalizeStrings(raw.skillImages).slice(0, 3), workImages: normalizeStrings(raw.workImages).slice(0, 4), hidden: normalizeStrings(raw.hidden),
+    skillImages: profileList(raw.skillImages).map(mediaSource).filter(Boolean).slice(0, 3), workImages: profileList(raw.workImages).map(mediaSource).filter(Boolean).slice(0, 4), hidden: normalizeStrings(raw.hidden), hiddenItems: normalizeStrings(raw.hiddenItems),
     socials: normalizeLinks(raw.socials), buttons: normalizeLinks(raw.buttons).slice(0, 3), searchable: asBool(raw.searchable, true), allowContact: asBool(raw.allowContact, true),
     translations: raw.translations as ProfileDraft['translations'],
   };
+  profile.itemIds = profileItemIds(raw);
+  return profile;
 }
 function formatDate(value?: number, locale = 'ar-SA') {
   if (!value) return '—';
@@ -408,6 +417,11 @@ export default function Dashboard() {
   const [loadError, setLoadError] = useState('');
   const [activeSite, setActiveSite] = useState<Site | null>(null);
   const [draft, setDraft] = useState<ProfileDraft>(emptyDraft);
+  const [visibilityPolicy, setVisibilityPolicy] = useState<VisibilityPolicy | null>(null);
+  const [visibilityBusy, setVisibilityBusy] = useState(false);
+  const visibilityBusyRef = useRef(false);
+  const visibilityRef = useRef<VisibilityPolicy | null>(null);
+  visibilityRef.current = visibilityPolicy;
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [editorSection, setEditorSection] = useState<EditorSection>('identity');
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -644,7 +658,7 @@ export default function Dashboard() {
     } catch { /* Restoration is optional; a failed listing must never change a draft. */ }
   };
   const openSite = useCallback(async (summary: Site) => {
-    if (openingSiteRef.current || summary.id === siteIdRef.current) return;
+    if (openingSiteRef.current || visibilityBusyRef.current || summary.id === siteIdRef.current) return;
     if (uploadSiteRef.current) { notify(tr('انتظر تثبيت الصورة قبل تبديل الموقع.', 'Wait until your image is saved before switching sites.')); return; }
     openingSiteRef.current = true;
     setOpeningSite(true);
@@ -660,6 +674,7 @@ export default function Dashboard() {
       setActiveSite(site);
       setLockForm({ enabled: Boolean(site.lock?.enabled), password: '', message: asText(site.lock?.message) });
       const nextDraft = parseDraft(site.draft);
+      setVisibilityPolicy(site.visibility ?? { hidden: nextDraft.hidden, hiddenItems: nextDraft.hiddenItems, visible: true, listed: nextDraft.searchable, indexable: true, version: 0 });
       draftRef.current = nextDraft;
       setDraft(nextDraft);
       versionRef.current = Number(site.draft_version ?? site.version ?? 0);
@@ -752,6 +767,7 @@ export default function Dashboard() {
   const changeDraft = useCallback((patch: Partial<ProfileDraft> | ((current: ProfileDraft) => ProfileDraft)) => {
     const current = draftRef.current;
     const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
+    next.itemIds = reconcileItemIds(current, next);
     draftRef.current = next;
     revisionRef.current += 1;
     dirtyRef.current = true;
@@ -760,6 +776,23 @@ export default function Dashboard() {
     setSaveState('unsaved');
   }, []);
 
+  const saveVisibility = async (patch: Partial<Omit<VisibilityPolicy, 'version'>>) => {
+    const siteId = siteIdRef.current, policy = visibilityRef.current;
+    if (!siteId || !policy || visibilityBusyRef.current) return;
+    visibilityBusyRef.current = true; setVisibilityBusy(true);
+    try {
+      const result = await api<{ siteId: string; policy: VisibilityPolicy }>(`/api/sites/${encodeURIComponent(siteId)}/visibility`, { method: 'PUT', body: JSON.stringify({ ...policy, ...patch }) });
+      if (siteIdRef.current !== siteId || result.siteId !== siteId) return;
+      visibilityRef.current = result.policy; setVisibilityPolicy(result.policy);
+      changeDraft({ hidden: result.policy.hidden, hiddenItems: result.policy.hiddenItems, searchable: result.policy.listed, allowContact: !result.policy.hidden.includes('allowContact') });
+      notify(tr('حُفظ اختيار الظهور.', 'Visibility choice saved.'));
+    } catch (error) {
+      if (Number((error as { status?: number })?.status) === 409) {
+        try { const result = await api<{ siteId: string; policy: VisibilityPolicy }>(`/api/sites/${encodeURIComponent(siteId)}/visibility`); if (siteIdRef.current === siteId && result.siteId === siteId) { visibilityRef.current = result.policy; setVisibilityPolicy(result.policy); } } catch { /* Keep the current choice unchanged on a network failure. */ }
+      }
+      notify(errorMessage(error));
+    } finally { visibilityBusyRef.current = false; setVisibilityBusy(false); }
+  };
   const saveDraft = useCallback(async (quiet = false, flush = false): Promise<boolean> => {
     const siteId = siteIdRef.current;
     if (!siteId) return false;
@@ -1306,11 +1339,12 @@ export default function Dashboard() {
                 {editorSection === 'skillImages' && <MediaSection savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
                 {editorSection === 'workImages' && <MediaSection savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('نماذج الأعمال', 'Work samples')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
                 {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
-                {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
+                {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('أضف الرابط فقط؛ ستظهر أيقونة المنصة تلقائياً.', 'Just add the URL; its platform icon appears automatically.')} socialOnly value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
                 {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
                 {editorSection === 'blog' && <TextSection label={tr('المدونة الشخصية', 'Personal journal')} hint={tr('اكتب فقرة أو مقالة مختصرة تريد ظهورها في موقعك.', 'Write a short thought or article you want to appear on your site.')} value={draft.blog} maxLength={12000} multiline onChange={(blog) => changeDraft({ blog })} lang={lang}/>}
                 {editorSection === 'notes' && <TextSection label={tr('ملاحظات خاصة', 'Private notes')} hint={tr('ملاحظاتك هنا تبقى داخل المسودة ولا تظهر في موقعك المنشور.', 'These notes stay inside your draft and never appear on your published site.')} value={draft.notes} maxLength={12000} multiline onChange={(notes) => changeDraft({ notes })} lang={lang}/>}
-                {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
+                {editorSection === 'privacy' && visibilityPolicy && <><header className="dashboard-edit-heading"><h2>{tr('اختر ما يظهر', 'Choose what appears')}</h2></header><VisibilityControls profile={draft} policy={visibilityPolicy} onChange={saveVisibility} busy={visibilityBusy} siteOptions/></>}
+                {editorSection !== 'privacy' && editorSection !== 'notes' && visibilityPolicy && <details className="dashboard-section-visibility"><summary><Eye size={17}/>{tr('ما يظهر من هذا القسم', 'What appears from this section')}</summary><VisibilityControls profile={draft} policy={visibilityPolicy} onChange={saveVisibility} busy={visibilityBusy} section={editorSection}/></details>}
               </div>
             </details>
           </div>
@@ -1377,7 +1411,7 @@ export default function Dashboard() {
           </section>
         </div>
       </div>
-      {previewOpen && <PreviewModal draft={draft} site={activeSite} tr={tr} submitting={submittingReview} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
+      {previewOpen && <PreviewModal policy={visibilityPolicy} visibilityBusy={visibilityBusy} onVisibilityChange={saveVisibility} draft={draft} site={activeSite} tr={tr} submitting={submittingReview} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
     </main>
   );
 }
@@ -1527,15 +1561,14 @@ function MilestonesSection({ draft, onChange, tr, lang }: { draft: ProfileDraft;
 
 function MediaSection({ title, hint, items, max, purpose, uploading, tr, onUpload, onChange, savedImages, onRestore }: { title: string; hint: string; items: string[]; savedImages: SavedImage[]; onRestore: (image: SavedImage) => void; max: number; purpose: 'skill' | 'work'; uploading: string; tr: (ar: string, en: string) => string; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose) => void; onChange: (items: string[]) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ImagePlus size={15}/>{items.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{items.length < max && <UploadControl label={tr('إضافة صورة', 'Add image')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={(event) => void onUpload(event, purpose)}/>}</header><div className="dashboard-image-grid">{items.length === 0 && <EmptyInline text={tr('لا توجد صور مرفوعة بعد.', 'No images uploaded yet.')} />}{items.map((url, index) => <figure key={url}><img src={url} alt=""/><button className="dashboard-icon-button" onClick={() => onChange(items.filter((_, imageIndex) => imageIndex !== index))} aria-label={tr('إزالة الصورة', 'Remove image')}><X size={16}/></button></figure>)}</div>{savedImages.some((image) => image.purpose === purpose && !items.includes(image.url)) && <details className="dashboard-saved-images"><summary><ImagePlus size={17}/>{tr('صورك المحفوظة — اختر لاستعادتها', 'Your saved images — choose to restore')}</summary><div className="dashboard-image-grid">{savedImages.filter((image) => image.purpose === purpose && !items.includes(image.url)).map((image, index) => <button key={image.id} type="button" disabled={Boolean(uploading) || items.length >= max} onClick={() => onRestore(image)} aria-label={`${tr('استعادة الصورة', 'Restore image')} ${index + 1}`}><img src={image.url} alt="" loading="lazy"/><span><Plus size={16}/>{tr('استعادة', 'Restore')}</span></button>)}</div></details>}</>;
 }
-function YoutubeSection({ value, onChange, tr }: { value: string; onChange: (value: string) => void; tr: (ar: string, en: string) => string }) { const valid = !value || /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(value); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Youtube size={15}/>{tr('فيديو اختياري', 'Optional video')}</p><h2>{tr('فيديو YouTube التعريفي', 'YouTube introduction')}</h2><p className="muted">{tr('يُحمّل مشغّل الفيديو في موقعك بعد تفاعل الزائر فقط.', 'The video player loads on your site only after visitor interaction.')}</p></div></header><label><span>{tr('رابط YouTube', 'YouTube URL')}</span><input className={`field ${!valid ? 'is-invalid' : ''}`} type="url" placeholder="https://youtu.be/..." value={value} onChange={(event) => onChange(event.target.value)}/></label>{!valid && <p className="dashboard-error">{tr('استخدم رابطاً صحيحاً من YouTube.', 'Use a valid YouTube URL.')}</p>}</>;
+export function YoutubeSection({ value, onChange, tr }: { value: string; onChange: (value: string) => void; tr: (ar: string, en: string) => string }) {
+  const parsed = youtubeLink(value), valid = !value.trim() || Boolean(parsed);
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><BrandIcon brand="youtube" size={20}/>YouTube</p><h2>{tr('قناتك أو فيديو يعرّف بك', 'Your channel or introduction video')}</h2><p className="muted">{tr('أضف رابط القناة أو الفيديو. لا يُحمّل المشغّل إلا عند اختيار المشاهدة.', 'Add your channel or video link. The player loads only when someone chooses to watch.')}</p></div></header><label><span>{tr('رابط YouTube', 'YouTube URL')}</span><input className={`field ${!valid ? 'is-invalid' : ''}`} type="url" dir="ltr" inputMode="url" maxLength={2048} placeholder="https://youtube.com/@..." value={value} onChange={event => onChange(event.target.value)}/></label>{parsed && <p className="dashboard-youtube-kind"><BrandIcon brand="youtube" size={19}/>{parsed.kind === 'channel' ? tr('ستظهر أيقونة تفتح قناتك.', 'An icon will open your channel.') : tr('ستظهر أيقونة ومشغّل لفيديوك عند الطلب.', 'An icon and an on-demand player will show your video.')}</p>}{!valid && <p className="dashboard-error">{tr('أكمل رابط القناة أو الفيديو؛ تبقى كتابتك محفوظة.', 'Complete the channel or video URL; your work stays saved.')}</p>}</>;
 }
-export function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hint: string; value: Social[]; onChange: (value: Social[]) => void; max: number; tr: (ar: string, en: string) => string }) { const rows = useEditorRowKeys(value.length); const update = (index: number, key: keyof Social, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item)); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Link2 size={15}/>{value.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{value.length < max && <button className="button button--quiet" onClick={() => onChange([...value, { label: '', url: '' }])}><Plus size={16}/>{tr('إضافة رابط', 'Add link')}</button>}</header><div className="dashboard-link-list">{value.length === 0 && <EmptyInline text={tr('لا توجد روابط مضافة بعد.', 'No links added yet.')} />}{value.map((item, index) => <div key={rows.keys[index]}><Globe2 size={17}/><input className="field" maxLength={100} value={item.label} aria-label={tr('عنوان الرابط — اختياري', 'Link label — optional')} placeholder={tr('عنوان اختياري', 'Optional label')} onChange={(event) => update(index, 'label', event.target.value)}/><input className="field" type="url" dir="ltr" inputMode="url" maxLength={2048} aria-label={tr('الرابط', 'URL')} value={item.url} placeholder="https://" onChange={(event) => update(index, 'url', event.target.value)}/>{item.url && <small>{safeLink(item.url) ? socialHost(item.url) : tr('أكمل الرابط قبل طلب النشر؛ كتابتك محفوظة.', 'Complete the link before publishing; your work is saved.')}</small>}<button className="dashboard-icon-button" onClick={() => { rows.remove(index); onChange(value.filter((_, itemIndex) => itemIndex !== index)); }} aria-label={tr('حذف الرابط', 'Remove link')}><X size={16}/></button></div>)}</div></>;
+
+export function LinkList({ title, hint, value, onChange, max, tr, socialOnly = false }: { socialOnly?: boolean; title: string; hint: string; value: Social[]; onChange: (value: Social[]) => void; max: number; tr: (ar: string, en: string) => string }) { const rows = useEditorRowKeys(value.length); const update = (index: number, key: keyof Social, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item)); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Link2 size={15}/>{value.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{value.length < max && <button className="button button--quiet" onClick={() => onChange([...value, { label: '', url: '' }])}><Plus size={16}/>{tr('إضافة رابط', 'Add link')}</button>}</header><div className="dashboard-link-list">{value.length === 0 && <EmptyInline text={tr('لا توجد روابط مضافة بعد.', 'No links added yet.')} />}{value.map((item, index) => <div className={socialOnly ? "dashboard-link-row--social" : ""} key={rows.keys[index]}><BrandIcon brand={socialLink(item)?.brand || "website"} size={20}/>{!socialOnly && <input className="field" maxLength={100} value={item.label} aria-label={tr('عنوان الرابط — اختياري', 'Link label — optional')} placeholder={tr('عنوان اختياري', 'Optional label')} onChange={(event) => update(index, 'label', event.target.value)}/>}<input className="field" type="url" dir="ltr" inputMode="url" maxLength={2048} aria-label={tr('الرابط', 'URL')} value={item.url} placeholder="https://" onChange={(event) => update(index, 'url', event.target.value)}/>{item.url && <small>{socialLink(item)?.host ? socialLink(item)!.host : tr('أكمل الرابط قبل طلب النشر؛ كتابتك محفوظة.', 'Complete the link before publishing; your work is saved.')}</small>}<button className="dashboard-icon-button" onClick={() => { rows.remove(index); onChange(value.filter((_, itemIndex) => itemIndex !== index)); }} aria-label={tr('حذف الرابط', 'Remove link')}><X size={16}/></button></div>)}</div></>;
 }
-function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) {
-  const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]];
-  const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] });
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div></>;
-}
+
 function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = useId(); return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/></label>; }
 function ProfessionalPointsMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="Professional points"><Gift size={compact ? 13 : 16}/><span>{compact ? 'نقاط' : 'نقاط التميز'}</span></span>; }
 function ProfessionalPointsAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><ProfessionalPointsMark compact/></span>; }
@@ -1687,7 +1720,13 @@ function TranslationEditor({ target, translation, onChange, tr }: { target: Tran
   ];
   return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} maxLength={3000} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
-function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
+export function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit, policy, visibilityBusy = false, onVisibilityChange }: { policy?: VisibilityPolicy | null; visibilityBusy?: boolean; onVisibilityChange?: (patch: Partial<Omit<VisibilityPolicy, 'version'>>) => void; draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
+  const { lang } = useApp();
+  const previewProfile = useMemo(() => {
+    const translated = lang === 'en' ? draft.translations?.en : undefined;
+    const localized = translated ? { ...draft, ...translated, avatarMode: draft.avatarMode, itemIds: profileItemIds(draft), hidden: draft.hidden, hiddenItems: draft.hiddenItems } : draft;
+    return sanitizeProfile(withVisibility(localized, policy));
+  }, [draft, policy, lang]);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
@@ -1716,13 +1755,11 @@ function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draf
       </div>
       <button ref={closeButtonRef} type="button" className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button>
     </header>
-    {draft.cover && <img className="dashboard-preview-cover" src={draft.cover} alt=""/>}
-    <div className="dashboard-preview-body">
-      {draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}
-      <p className="dashboard-preview-title">{draft.title}</p>
-      {draft.bio && <p>{draft.bio}</p>}
-      <div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill, index) => <span key={index}>{textItem(skill)}</span>)}</div>
-      {site && <small dir="ltr"><bdi>{site.name}</bdi></small>}
+    <div className="dashboard-preview-scroll">
+      {policy && onVisibilityChange && <details className="dashboard-preview-visibility"><summary><ShieldCheck size={18}/>{tr('اختر ما يظهر للزوار', 'Choose what visitors see')}</summary><VisibilityControls profile={draft} policy={policy} onChange={onVisibilityChange} busy={visibilityBusy} siteOptions/></details>}
+      {policy?.visible === false && <p className="dashboard-preview-visibility-status" role="status">{tr('موقعك مخفي عن الزوار. هذه المعاينة الخاصة متاحة لك.', 'Your site is hidden from visitors. This private preview is available to you.')}</p>}
+      <IdentityView previewMode data={{ profile: previewProfile, site: site?.id, name: site?.name || '', branding: site?.branding !== false }}/>
+      {draft.notes && <aside className="dashboard-preview-private"><h3><Lock size={17}/>{tr('خاص بك', 'Only for you')}</h3><p>{draft.notes}</p></aside>}
     </div>
     <footer>
       <p className="muted">{tr('اضغط طلب النشر، وسيتولى المشرف إتاحة موقعك.', 'Request publication and your administrator will make your site available.')}</p>

@@ -1,3 +1,5 @@
+import { siteVisibility, visibleSiteProfile } from './visibility';
+import { profileItemIds, withVisibility } from '../shared/profile-visibility';
 import type { App, Ctx } from './core';
 import { one, publicProfile, digest, role, siteFor } from './core';
 import { HTTPException } from 'hono/http-exception';
@@ -8,12 +10,13 @@ const escape=(text:string)=>text.replace(/[&<>"']/g,value=>({'&':'&amp;','<':'&l
 let ready:Promise<void>|undefined;
 const initialize=()=>ready||(ready=initWasm(wasm));
 const b64=(bytes:Uint8Array)=>{let output='';for(let index=0;index<bytes.length;index+=4096)output+=String.fromCharCode(...bytes.slice(index,index+4096));return btoa(output);};
-export function shareProfile(raw:any,lang:string){const original=typeof raw==='string'?JSON.parse(raw):raw;const translated=original?.translations?.[lang];return publicProfile(translated&&typeof translated==='object'?{...original,...translated,hidden:original.hidden}:original);}
+export function shareProfile(raw:any,lang:string){const original=typeof raw==='string'?JSON.parse(raw):raw;const translated=original?.translations?.[lang];return publicProfile(translated&&typeof translated==='object'?{...original,...translated,itemIds:profileItemIds(original),hiddenItems:original.hiddenItems,hidden:original.hidden}:original);}
 export async function shareSite(c:Ctx,name:string){
  if(!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name))throw new HTTPException(404);
  const site:any=await one(c,"SELECT s.*,n.name,u.status AS owner_status FROM dns_names n JOIN sites s ON s.id=n.site_id LEFT JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL",name);
  if(!site||site.owner_status!=='active')throw new HTTPException(404);
- return site;
+ const raw=await visibleSiteProfile(c,site,JSON.parse(site.published));
+ return {...site,published:JSON.stringify(raw)};
 }
 async function renderShare(c:Ctx,site:any){
   const lang=c.req.query('lang')==='en'?'en':'ar';
@@ -34,7 +37,7 @@ async function renderShare(c:Ctx,site:any){
 }
 export function registerOG(app:App){
  app.get('/api/public/og/:name',async c=>{const site=await shareSite(c,c.req.param('name'));if(site.lock_hash)throw new HTTPException(423,{message:'الموقع خاص، ولا تتوفر له صورة مشاركة عامة'});return renderShare(c,site);});
- app.get('/api/admin/sites/:id/share-image',async c=>{role(c,['owner','manager']);const site=await siteFor(c,c.req.param('id'));if(!site.published)throw new HTTPException(404);const named:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? LIMIT 1',site.id);return renderShare(c,{...site,name:named?.name||'KSA.MEN'});});
+ app.get('/api/admin/sites/:id/share-image',async c=>{role(c,['owner','manager']);const site=await siteFor(c,c.req.param('id'));if(!site.published)throw new HTTPException(404);const named:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? LIMIT 1',site.id);return renderShare(c,{...site,published:JSON.stringify(withVisibility(JSON.parse(site.published),await siteVisibility(c,site))),name:named?.name||'KSA.MEN'});});
 }
 export async function personalizedHTML(c:Ctx,html:string){
  const url=new URL(c.req.url),root=c.env.ROOT_DOMAIN;
@@ -47,7 +50,9 @@ export async function personalizedHTML(c:Ctx,html:string){
  const description=String(profile.bio|| (lang==='ar'?'هوية مهنية سعودية — ظهور رقمي يليق بك':'A Saudi professional identity — a presence worthy of you')).slice(0,220);
  const canonical='https://'+name+'.'+root+'/';
  const image='https://'+root+'/api/public/og/'+name+'?lang='+lang;
- const metadata=`<meta name="description" content="${escape(description)}"><link rel="canonical" href="${canonical}"><meta property="og:type" content="profile"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="${escape(description)}"><meta property="og:url" content="${canonical}"><meta property="og:image" content="${image}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">`;
+ const policy=await siteVisibility(c,site);
+ if(!policy.indexable)c.header('X-Robots-Tag','noindex, nofollow');
+ const metadata=`${!policy.indexable?'<meta name="robots" content="noindex,nofollow">':''}<meta name="description" content="${escape(description)}"><link rel="canonical" href="${canonical}"><meta property="og:type" content="profile"><meta property="og:title" content="${escape(title)}"><meta property="og:description" content="${escape(description)}"><meta property="og:url" content="${canonical}"><meta property="og:image" content="${image}"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630"><meta name="twitter:card" content="summary_large_image">`;
  const crawler=`<section id="public-summary" aria-label="${lang==='ar'?'الهوية المهنية':'Professional identity'}"><h1>${escape(String(profile.name||'KSA.MEN'))}</h1>${profile.title?'<p>'+escape(String(profile.title))+'</p>':''}${profile.bio?'<p>'+escape(String(profile.bio))+'</p>':''}</section>`;
  return html.replace(/<title>[\s\S]*?<\/title>/,'<title>'+escape(title)+'</title>').replace(/<meta name="description"[^>]*>/,'').replace('</head>',metadata+'</head>').replace('<body>','<body>'+'<noscript>'+crawler+'</noscript>');
 }

@@ -1,3 +1,6 @@
+import { visibleProfile } from './public';
+import { siteVisibility } from './visibility';
+import { withVisibility } from '../shared/profile-visibility';
 import type {App,Ctx} from './core';
 import {one,role,siteFor,publicProfile} from './core';
 import {HTTPException} from 'hono/http-exception';
@@ -8,7 +11,9 @@ export function registerPreview(app:App){
   const review:any=await one(c,'SELECT * FROM reviews WHERE id=?',c.req.param('id'));
   if(!review)throw new HTTPException(404);
   if(user.role==='manager')await siteFor(c,review.site_id);
-  const p=JSON.parse(review.snapshot||'{}');
+  const site:any=await one(c,'SELECT * FROM sites WHERE id=?',review.site_id);
+  if(!site)throw new HTTPException(404);
+  const p:any=visibleProfile(withVisibility(JSON.parse(review.snapshot||'{}'),await siteVisibility(c,site)),'ar');
   const image=(url:string)=>/^\/api\/media\/[a-zA-Z0-9_-]+$/.test(url)||/^\/assets\/[a-zA-Z0-9_-]+\.(png|webp)$/.test(url)?url:'';
   const list=(key:string,title:string)=>Array.isArray(p[key])&&p[key].length?'<section><h2>'+title+'</h2>'+p[key].map((item:any)=>'<article>'+Object.entries(typeof item==='object'&&item!==null?item:{value:item}).filter(([key])=>!['id','hidden','url'].includes(key)).map(([,value])=>'<p>'+escape(value)+'</p>').join('')+'</article>').join('')+'</section>':'';
   const galleries=[...(p.skillImages||[]),...(p.workImages||[])].filter((v:any)=>typeof v==='string'&&image(v));

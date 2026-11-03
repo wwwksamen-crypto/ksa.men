@@ -429,7 +429,7 @@ async function contactAllowed(c: Ctx, recipient: number): Promise<void> {
     c,
     `SELECT u.id FROM users u
      WHERE u.id=? AND u.status='active'
-       AND EXISTS(SELECT 1 FROM sites s WHERE s.user_id=u.id AND s.allow_contact=1 AND s.status='published')`,
+       AND EXISTS(SELECT 1 FROM sites s LEFT JOIN site_visibility v ON v.site_id=s.id WHERE s.user_id=u.id AND s.status='published' AND COALESCE(v.visible,1)=1 AND ((v.site_id IS NULL AND s.allow_contact=1) OR (v.site_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM json_each(v.hidden_fields) WHERE value='allowContact'))))`,
     recipient,
   );
   if (!allowed) fail(403, "This user is not accepting contact requests", "contact_unavailable");

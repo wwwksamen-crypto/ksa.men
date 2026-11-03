@@ -1,3 +1,5 @@
+import { siteVisibility } from './visibility';
+import { registerVisibility } from './visibility';
 import { registerManaged } from './managed';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -6,7 +8,7 @@ import { ZodError } from 'zod';
 import { type Bindings, type Session, type User, type Env, one, now, digest, hmac, verifySecret, rate, setting } from './core';
 import { registerAuth } from './auth';
 import {registerPreview} from './preview';
-import { registerOG,personalizedHTML,unavailableSiteHTML } from './og';
+import { registerOG,personalizedHTML,unavailableSiteHTML,shareSite } from './og';
 import { registerBackup, makeBackup } from './backup';
 import { registerBusiness } from './business';
 import { registerOperations } from './operations';
@@ -114,11 +116,14 @@ registerOG(app);
 registerBackup(app);
 registerAuth(app);
 registerPublic(app);
+registerVisibility(app);
 registerBusiness(app);
 registerOperations(app);registerManaged(app);
 registerIntelligence(app);
 app.get('/robots.txt', async c => {
   const lock: any = await setting(c, 'lock');
+  const url=new URL(c.req.url);
+  if(url.hostname!==c.env.ROOT_DOMAIN){try{const site=await shareSite(c,url.hostname.slice(0,-c.env.ROOT_DOMAIN.length-1));const policy=await siteVisibility(c,site);if(site.lock_hash||!policy.indexable)return c.text('User-agent: *\nDisallow: /\n');}catch{return c.text('User-agent: *\nDisallow: /\n');}}
   return c.text(lock.mode === 'open' ? 'User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /api/\n' : 'User-agent: *\nDisallow: /\n');
 });
 app.get('*', async c => {

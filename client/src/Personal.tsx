@@ -33,9 +33,11 @@ import {
 } from 'lucide-react';
 import { api, Button, useApp } from './lib';
 import './personal.css';
+import { list, itemText, mediaSource, socialLink, brandNames, youtubeLink } from '../../shared/profile-content';
+import { brandPaths } from './brand-paths';
 
 type ProfileRecord = Record<string, unknown>;
-type PublicProfileData = {
+export type PublicProfileData = {
   profile?: ProfileRecord;
   site?: string;
   name?: string;
@@ -52,14 +54,10 @@ function stringValue(value: unknown) {
 }
 
 function itemsFor(profile: ProfileRecord, key: string) {
-  return Array.isArray(profile[key]) ? profile[key] : [];
+  return list(profile[key]).filter(value => typeof value === 'string' ? Boolean(value.trim()) : value && typeof value === 'object' && Object.values(value).some(part => typeof part === 'string' && part.trim()));
 }
 
-function imageSource(value: unknown) {
-  if (typeof value === 'string') return value;
-  if (value && typeof value === 'object') return stringValue((value as ProfileRecord).url);
-  return '';
-}
+function imageSource(value: unknown) { return mediaSource(value); }
 
 function loadPublicImage(src: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -120,42 +118,28 @@ async function brandedQr(url: string, mark: string) {
   }
 }
 
-function socialDetails(value: unknown) {
-  const raw = typeof value === 'string' ? value : value && typeof value === 'object' ? (value as ProfileRecord).url : '';
-  const url = stringValue(raw);
-  if (!url) return null;
-
-  let host = '';
-  try {
-    host = new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-  } catch {
-    return null;
-  }
-
-  const label = value && typeof value === 'object' ? stringValue((value as ProfileRecord).label) || host : host;
-  const Icon = host.includes('linkedin.') ? Linkedin
-    : host.includes('instagram.') ? Instagram
-      : host.includes('facebook.') ? Facebook
-        : host.includes('github.') ? Github
-          : host.includes('youtube.') || host === 'youtu.be' ? Youtube
-            : host.includes('twitter.') || host === 'x.com' ? Twitter
-              : Globe2;
-  return { url, label, Icon };
+export function BrandIcon({ brand, size = 22 }: { brand: string; size?: number }) {
+  const path = brandPaths[brand];
+  return path ? <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor" aria-hidden="true" focusable="false"><path d={path}/></svg> : <Globe2 size={size} aria-hidden="true"/>;
 }
 
-function youtubeId(value: string) {
-  try {
-    const raw = /^https?:\/\//i.test(value) ? value : `https://${value}`;
-    const url = new URL(raw);
-    const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
-    if (!['youtube.com', 'm.youtube.com'].includes(host)) return '';
-    if (url.pathname === '/watch') return url.searchParams.get('v') || '';
-    const [kind, id] = url.pathname.split('/').filter(Boolean);
-    return ['embed', 'shorts', 'live'].includes(kind) ? id || '' : '';
-  } catch {
-    return '';
-  }
+export function SkillRadarView({ groups }: { groups: Array<{ key: string; label: string; items: unknown[] }> }) {
+  const { t } = useApp();
+  const counts = groups.map(group => group.items.map(itemText).filter(Boolean).length);
+  const max = Math.max(1, ...counts), center = 110, radius = 84;
+  const point = (i: number, ratio: number) => { const angle = -Math.PI / 2 + i * 2 * Math.PI / 3; return [center + Math.cos(angle) * radius * ratio, center + Math.sin(angle) * radius * ratio]; };
+  const polygon = (ratio: number) => groups.map((_, i) => point(i, ratio).join(',')).join(' ');
+  const points = counts.map((count, i) => point(i, count / max));
+  if (!counts.some(Boolean)) return null;
+  return <div className="identity-skill-radar">
+    <div className="identity-radar-plot"><h3>{t('رادار المهارات', 'Skill radar')}</h3><svg viewBox="0 0 220 220" role="img" aria-label={groups.map((group, i) => `${group.label}: ${counts[i]}`).join('، ')}>
+      {[1 / 3, 2 / 3, 1].map(ratio => <polygon key={ratio} points={polygon(ratio)} className="identity-radar-grid"/>)}
+      {groups.map((group, i) => { const [x, y] = point(i, 1); return <line key={group.key} x1={center} y1={center} x2={x} y2={y} className="identity-radar-grid"/>; })}
+      <polygon points={points.map(point => point.join(',')).join(' ')} className="identity-radar-shape"/>
+      {points.map(([cx, cy], i) => <circle key={groups[i].key} cx={cx} cy={cy} r="4" className="identity-radar-dot"/>)}
+    </svg><p>{t('بحسب عدد المهارات المضافة في كل محور', 'Based on the number of skills added in each area')}</p></div>
+    <div className="identity-radar-groups">{groups.map((group, i) => <section key={group.key}><header><strong>{group.label}</strong><span>{counts[i]}</span></header><PillList items={group.items}/></section>)}</div>
+  </div>;
 }
 
 function ProfileSection({
@@ -209,7 +193,7 @@ function TimelineList({ items }: { items: unknown[] }) {
 }
 
 function PillList({ items }: { items: unknown[] }) {
-  const values = items.map(stringValue).filter(Boolean);
+  const values = items.map(itemText).filter(Boolean);
   if (!values.length) return null;
   return <ul className="identity-pills">
     {values.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
@@ -247,12 +231,28 @@ export default function Personal() {
   const [data, setData] = useState<PublicProfileData | null>(null);
   const [error, setError] = useState('');
   const [password, setPassword] = useState('');
+  const load = useCallback(() => {
+    setError('');
+    return api<PublicProfileData>(`/api/public/profile?lang=${lang}`).then(result => {
+      setData(result);
+      if (result.site && !result.locked) void api('/api/public/event', { method: 'POST', body: JSON.stringify({ site: result.site, event: 'visit' }) }).catch(() => {});
+    }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : t('تعذر فتح الموقع', 'Could not open the site')));
+  }, [lang, t]);
+  useEffect(() => { void load(); }, [load]);
+  if (error) return <div className="identity-page"><section className="identity-state" aria-live="polite"><span className="identity-state__mark"><Globe2 size={26}/></span><h1>{t('الموقع غير متاح', 'Site unavailable')}</h1><p>{error}</p><a href="https://ksa.men" className="identity-page__text-link">KSA.MEN <ArrowUpRight size={16}/></a></section></div>;
+  if (!data) return <div className="identity-page"><div className="identity-loading" role="status"><span/><p>{t('جارٍ تجهيز الهوية', 'Preparing this identity')}</p></div></div>;
+  if (data.locked) return <div className="identity-page"><section className="identity-lock" aria-labelledby="identity-lock-title"><div className="identity-lock__photo"><img src={stringValue(data.photo) || '/assets/logo-emblem.webp'} alt=""/></div><span className="identity-lock__icon"><LockKeyhole size={22}/></span><h1 id="identity-lock-title">{data.message || t('موقع خاص', 'Private site')}</h1><p>{t('هذه الهوية متاحة بإذن صاحبها فقط.', 'This identity is available only with its owner’s permission.')}</p><form onSubmit={async event => { event.preventDefault(); try { await api('/api/public/unlock', { method: 'POST', body: JSON.stringify({ password }) }); void load(); } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر الدخول', 'Could not enter')); } }}><label><span>{t('كلمة الدخول', 'Access password')}</span><input required type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"/></label><Button className="primary">{t('دخول الموقع', 'Enter site')} <ArrowUpRight size={18}/></Button></form></section></div>;
+  return <IdentityView data={data}/>;
+}
+
+/** Same renderer for the published profile, a member's local draft, and a review snapshot. */
+export function IdentityView({ data, previewMode = false }: { data: PublicProfileData; previewMode?: boolean }) {
+  const { t, lang, notify } = useApp();
   const [preview, setPreview] = useState<MediaPreview>(null);
   const [video, setVideo] = useState(false);
   const [qr, setQr] = useState('');
   const [vcardQr, setVcardQr] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
-
   const profile = data?.profile || {};
   const siteName = stringValue(data?.name);
   const profileUrl = siteName ? `https://${siteName}.ksa.men` : '';
@@ -260,26 +260,9 @@ export default function Personal() {
   const displayName = stringValue(profile.name) || siteName;
   const initials = displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => Array.from(part)[0] || '').join('').toLocaleUpperCase(lang === 'ar' ? 'ar-SA' : 'en-US');
   const useInitials = profile.avatarMode === 'monogram';
-  const profilePhoto = staticImage(useInitials ? '/assets/icon-192.png' : stringValue(profile.photo) || '/assets/icon-192.png');
-  const profileCover = staticImage(stringValue(profile.cover) || '/assets/cover-1600.webp');
+  const profilePhoto = staticImage(useInitials ? '/assets/icon-192.png' : mediaSource(profile.photo) || '/assets/logo-emblem.webp');
+  const profileCover = staticImage(mediaSource(profile.cover) || '/assets/cover-1600.webp');
   const location = [stringValue(profile.city), stringValue(profile.country)].filter(Boolean).join(lang === 'ar' ? '، ' : ', ');
-
-  const load = useCallback(() => {
-    setError('');
-    return api<PublicProfileData>(`/api/public/profile?lang=${lang}`)
-      .then((result) => {
-        setData(result);
-        setVideo(false);
-        if (result.site && !result.locked) {
-          void api('/api/public/event', { method: 'POST', body: JSON.stringify({ site: result.site, event: 'visit' }) }).catch(() => {});
-        }
-      })
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : t('تعذر فتح الموقع', 'Could not open the site')));
-  }, [lang, t]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   useEffect(() => {
     let current = true;
@@ -288,6 +271,7 @@ export default function Personal() {
       setVcardQr('');
       return undefined;
     }
+    setQr(''); setVcardQr('');
     void brandedQr(profileUrl, profilePhoto)
       .then((value) => { if (current) setQr(value); })
       .catch(() => { if (current) setQr(''); });
@@ -306,7 +290,7 @@ export default function Personal() {
   }, [preview]);
 
   const track = (event: 'contact' | 'vcard' | 'qr') => {
-    if (!data?.site) return;
+    if (previewMode || !data?.site) return;
     void api('/api/public/event', { method: 'POST', body: JSON.stringify({ site: data.site, event }) }).catch(() => {});
   };
 
@@ -342,49 +326,9 @@ export default function Personal() {
     }
   };
 
-  if (error) {
-    return <div className="identity-page">
-      <section className="identity-state" aria-live="polite">
-        <span className="identity-state__mark"><Globe2 size={26}/></span>
-        <h1>{t('الموقع غير متاح', 'Site unavailable')}</h1>
-        <p>{error}</p>
-        <a href="https://ksa.men" className="identity-page__text-link">KSA.MEN <ArrowUpRight size={16}/></a>
-      </section>
-    </div>;
-  }
-
-  if (!data) {
-    return <div className="identity-page"><div className="identity-loading" role="status"><span/><p>{t('جارٍ تجهيز الهوية', 'Preparing this identity')}</p></div></div>;
-  }
-
-  if (data.locked) {
-    return <div className="identity-page">
-      <section className="identity-lock" aria-labelledby="identity-lock-title">
-        <div className="identity-lock__photo"><img src={stringValue(data.photo) || '/assets/icon-192.png'} alt=""/></div>
-        <span className="identity-lock__icon"><LockKeyhole size={22}/></span>
-        <p className="identity-section__kicker">KSA.MEN / PRIVATE IDENTITY</p>
-        <h1 id="identity-lock-title">{data.message || t('موقع خاص', 'Private site')}</h1>
-        <p>{t('هذه الهوية متاحة بإذن صاحبها فقط.', 'This identity is available only with its owner’s permission.')}</p>
-        <form onSubmit={async (event) => {
-          event.preventDefault();
-          try {
-            await api('/api/public/unlock', { method: 'POST', body: JSON.stringify({ password }) });
-            void load();
-          } catch (cause: unknown) {
-            notify(cause instanceof Error ? cause.message : t('تعذر الدخول', 'Could not enter'));
-          }
-        }}>
-          <label>
-            <span>{t('كلمة الدخول', 'Access password')}</span>
-            <input required type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password"/>
-          </label>
-          <Button className="primary">{t('دخول الموقع', 'Enter site')} <ArrowUpRight size={18}/></Button>
-        </form>
-      </section>
-    </div>;
-  }
-
-  const videoId = youtubeId(stringValue(profile.youtube));
+  const youtube = youtubeLink(profile.youtube);
+  const videoId = youtube?.kind === 'video' ? youtube.id : '';
+  useEffect(() => { setVideo(false); }, [videoId]);
   const experience = itemsFor(profile, 'experience');
   const education = itemsFor(profile, 'education');
   const training = itemsFor(profile, 'training');
@@ -395,14 +339,15 @@ export default function Personal() {
     { key: 'human', label: t('إنسانية', 'Human'), items: itemsFor(rawSkillRadar, 'human') },
     { key: 'scientific', label: t('علمية', 'Scientific'), items: itemsFor(rawSkillRadar, 'scientific') },
     { key: 'professional', label: t('مهنية', 'Professional'), items: itemsFor(rawSkillRadar, 'professional') },
-  ].filter((group) => group.items.length > 0);
+  ];
   const memberships = itemsFor(profile, 'memberships');
   const languages = itemsFor(profile, 'languages');
   const hobbies = itemsFor(profile, 'hobbies');
   const achievements = itemsFor(profile, 'achievements');
   const skillImages = itemsFor(profile, 'skillImages');
   const workImages = itemsFor(profile, 'workImages');
-  const socials = itemsFor(profile, 'socials');
+  const socials = [...itemsFor(profile, 'socials'), ...(youtube ? [{ url: youtube.url }] : [])].map(socialLink).filter((item): item is NonNullable<ReturnType<typeof socialLink>> => Boolean(item)).filter((item, i, all) => all.findIndex(other => other.url === item.url) === i);
+  const hasRadar = skillRadar.some(group => group.items.map(itemText).some(Boolean));
   const buttons = itemsFor(profile, 'buttons');
   const allowContact = profile.allowContact !== false;
   const blog = stringValue(profile.blog);
@@ -426,7 +371,7 @@ export default function Personal() {
         </div>
         <div className="identity-hero__actions" aria-label={t('إجراءات الهوية', 'Identity actions')}>
           <Button className="primary" onClick={() => void downloadVCard()}><Download size={18}/>{t('حفظ جهة الاتصال', 'Save contact')}</Button>
-          {siteName && <a className="button secondary" href={`https://ksa.men/export/badge?public=${encodeURIComponent(siteName)}&source=published`}><BadgeCheck size={18}/>{t('بطاقة معرض', 'Event badge')}</a>}
+          {siteName && <a className="button secondary" href={previewMode && data.site ? `/export/badge?site=${encodeURIComponent(data.site)}` : `https://ksa.men/export/badge?public=${encodeURIComponent(siteName)}&source=published`}><BadgeCheck size={18}/>{t('بطاقة معرض', 'Event badge')}</a>}
           <Button className="secondary" onClick={() => void share()}><Share2 size={18}/>{t('مشاركة', 'Share')}</Button>
         </div>
       </div>
@@ -460,12 +405,12 @@ export default function Personal() {
           </ProfileSection>}
         </div>}
 
-        {(skills.length > 0 || skillRadar.length > 0 || achievements.length > 0 || languages.length > 0 || memberships.length > 0 || hobbies.length > 0) && <div className="identity-group">
+        {(skills.length > 0 || hasRadar || achievements.length > 0 || languages.length > 0 || memberships.length > 0 || hobbies.length > 0) && <div className="identity-group">
           <div className="identity-group__label"><Sparkles size={17}/><span>{t('القدرات والاهتمامات', 'CAPABILITIES')}</span></div>
           <div className="identity-capabilities">
-            {(skills.length > 0 || skillRadar.length > 0) && <ProfileSection id="skills" icon={Sparkles} title={t('المهارات', 'Skills')}>
+            {(skills.length > 0 || hasRadar) && <ProfileSection id="skills" icon={Sparkles} title={t('المهارات', 'Skills')}>
               {skills.length > 0 && <PillList items={skills}/>}
-              {skillRadar.length > 0 && <div className="identity-skill-radar">{skillRadar.map((group) => <div key={group.key}><strong>{group.label}</strong><PillList items={group.items}/></div>)}</div>}
+              {hasRadar && <SkillRadarView groups={skillRadar}/>}
             </ProfileSection>}
             {achievements.length > 0 && <ProfileSection id="achievements" icon={Target} title={t('الإنجازات', 'Achievements')}><PillList items={achievements}/></ProfileSection>}
             {languages.length > 0 && <ProfileSection id="languages" icon={Globe2} title={t('اللغات', 'Languages')}><PillList items={languages}/></ProfileSection>}
@@ -490,7 +435,7 @@ export default function Personal() {
               allow="autoplay; encrypted-media; picture-in-picture"
               allowFullScreen
             /> : <button className="identity-video__launch" type="button" onClick={() => setVideo(true)}>
-              <span><Play size={22} fill="currentColor"/></span>
+              <span><BrandIcon brand="youtube" size={30}/></span>
               <strong>{t('تشغيل الفيديو التعريفي', 'Play introduction')}</strong>
               <small>{t('يفتح الفيديو عند اختيارك فقط', 'Loads only when you choose to play')}</small>
             </button>}
@@ -527,24 +472,13 @@ export default function Personal() {
 
         {(socials.length > 0 || buttons.length > 0) && <section className="identity-card identity-aside__links">
           <div className="identity-aside__marker"><Link2 size={18}/><span>{t('روابط مختارة', 'SELECTED LINKS')}</span></div>
-          <div className="identity-link-list">
-            {socials.map((item, index) => {
-              const social = socialDetails(item);
-              if (!social) return null;
-              const Icon = social.Icon;
-              return <a key={`${social.url}-${index}`} href={social.url} target="_blank" rel="noreferrer" onClick={() => track('contact')}>
-                <Icon size={17}/><bdi dir="ltr">{social.label}</bdi><ArrowUpRight size={14}/>
-              </a>;
-            })}
+          <div className="identity-social-icons" aria-label={t('حسابات التواصل', 'Social profiles')}>
+            {socials.map(social => <a key={social.url} href={social.url} target="_blank" rel="noopener noreferrer" title={social.brand === 'website' ? social.label : brandNames[social.brand]} aria-label={`${social.brand === 'website' ? social.label : brandNames[social.brand]} — ${new URL(social.url).pathname.slice(1) || social.host}`} onClick={() => track('contact')}><BrandIcon brand={social.brand}/></a>)}
+          </div><div className="identity-link-list">
             {buttons.map((item, index) => {
-              if (!item || typeof item !== 'object') return null;
-              const link = item as ProfileRecord;
-              const href = stringValue(link.url);
-              const label = stringValue(link.label) || stringValue(link.title);
-              if (!href || !label) return null;
-              return <a key={`${href}-${index}`} href={href} target="_blank" rel="noreferrer" onClick={() => track('contact')}>
-                <Link2 size={17}/><span>{label}</span><ArrowUpRight size={14}/>
-              </a>;
+              const link = socialLink(item);
+              if (!link) return null;
+              return <a key={`${link.url}-${index}`} href={link.url} target="_blank" rel="noopener noreferrer" onClick={() => track('contact')}><Link2 size={17}/><span>{link.label}</span><ArrowUpRight size={14}/></a>;
             })}
           </div>
         </section>}

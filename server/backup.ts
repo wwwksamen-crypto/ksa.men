@@ -33,7 +33,7 @@ export function scrubTombstones(tables:Record<string,any[]>){
   if(before!==tables.messages.length)removed.messages=(removed.messages||0)+before-tables.messages.length;
  }
  const accounts=sets.get('account');if(accounts){for(const table of ['managed_accounts','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','sessions','devices'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!accounts.has(String(row?.user_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
- const sites=sets.get('site');if(sites){for(const table of ['dns_names','names','analytics','proxy_media','proxy_sites','site_custody'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!sites.has(String(row?.site_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
+ const sites=sets.get('site');if(sites){for(const table of ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!sites.has(String(row?.site_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
  return removed;
 }
 export async function makeBackup(env:Env,reason='nightly') {

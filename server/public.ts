@@ -1,3 +1,5 @@
+import { profileItemIds, draftWithIdentities, withVisibility } from '../shared/profile-visibility';
+import { siteVisibility, visibleSiteProfile } from './visibility';
 import type {App,Ctx} from './core';
 import {one,all,run,now,uid,me,siteFor,service,publicProfile,rate,verifySecret,hmac} from './core';
 import {HTTPException} from 'hono/http-exception';
@@ -45,7 +47,7 @@ export function visibleProfile(raw:Record<string,unknown>,lang:string,includeVis
     ?(raw.translations as Record<string,unknown>).en
     :undefined;
   const localized=translation&&typeof translation==='object'
-    ?{...raw,...translation,avatarMode:raw.avatarMode,hidden:visibility(raw)}
+    ?{...raw,...translation,avatarMode:raw.avatarMode,itemIds:profileItemIds(raw),hiddenItems:raw.hiddenItems,hidden:visibility(raw)}
     :{...raw,hidden:visibility(raw)};
   const profile=publicProfile(localized) as Record<string,unknown>;
   return includeVisibility?{...profile,hidden:visibility(raw)}:profile;
@@ -61,7 +63,7 @@ function exportRule(kind:string){
 function profileReferencesMedia(profile:Record<string,unknown>,mediaId:string){
   const expected='/api/media/'+mediaId;
   const media=[profile.photo,profile.cover,...(Array.isArray(profile.skillImages)?profile.skillImages:[]),...(Array.isArray(profile.workImages)?profile.workImages:[])];
-  return media.some(value=>value===expected);
+  return media.some(value=>value===expected||(value&&typeof value==='object'&&(value as Record<string,unknown>).url===expected));
 }
 
 function publishedReferencesMedia(raw:Record<string,unknown>,mediaId:string){
@@ -87,7 +89,7 @@ export async function publishedForHost(c:Ctx){
 export function registerPublic(app:App){
   app.get('/api/public/profile',async c=>{
     const site=await publishedForHost(c);
-    const raw=publishedJson(site);
+    const raw=await visibleSiteProfile(c,site,publishedJson(site));
     const lang=c.req.query('lang')==='en'?'en':'ar';
     const profile=visibleProfile(raw,lang);
     if(!await personalGate(c,site)){
@@ -111,8 +113,8 @@ export function registerPublic(app:App){
     const city=(c.req.query('city')||'').slice(0,100).toLocaleLowerCase();
     const specialty=(c.req.query('specialty')||'').slice(0,100).toLocaleLowerCase();
     const offset=Math.min(10_000,Math.max(0,Number(c.req.query('offset'))||0));
-    const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.published,s.lock_hash,n.name FROM sites s JOIN dns_names n ON n.site_id=s.id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE u.status='active' AND s.status='published' AND s.searchable=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");
-    const profiles=rows.filter(row=>!row.lock_hash).map(row=>({site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(publishedJson(row),'ar')}));
+    const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.searchable,s.published,s.lock_hash,n.name,v.site_id AS privacy_id,v.hidden_fields,v.hidden_items FROM sites s JOIN dns_names n ON n.site_id=s.id LEFT JOIN site_visibility v ON v.site_id=s.id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE u.status='active' AND s.status='published' AND COALESCE(v.visible,1)=1 AND COALESCE(v.listed,s.searchable)=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");
+    const profiles=rows.filter(row=>!row.lock_hash).map(row=>{const raw=publishedJson(row);return {site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(row.privacy_id?{...raw,hidden:JSON.parse(row.hidden_fields),hiddenItems:JSON.parse(row.hidden_items)}:raw,'ar')};});
     const matched=profiles.filter(result=>{
       const profile=result.profile;
       const haystack=[result.name,result.userId,profile.name,profile.title,profile.city].filter(value=>typeof value==='string').join(' ').toLocaleLowerCase();
@@ -138,7 +140,9 @@ export function registerPublic(app:App){
     const link:any=await one(c,'SELECT * FROM quick_links WHERE id=? AND revoked=0 AND expires_at>?',c.req.param('id'),now());
     if(!link)throw new HTTPException(404,{message:'انتهت صلاحية رابط التعارف أو ألغي'});
     const payload=JSON.parse(link.payload);
-    const profile=payload.values||payload;
+    let profile=payload.values||payload;
+    const site:any=await one(c,'SELECT * FROM sites WHERE user_id=? ORDER BY created_at LIMIT 1',link.user_id);
+    if(site){const policy=await siteVisibility(c,site);if(!policy.visible)throw new HTTPException(404);profile=publicProfile(withVisibility(profile,policy));}
     return c.json({profile:{...profile,url:profile.url||profile.site},mode:payload.mode||'professional',expiresAt:link.expires_at});
   });
 
@@ -151,7 +155,7 @@ export function registerPublic(app:App){
     if(!site)throw new HTTPException(404,{message:'المخرج العام غير متاح'});
     const rule=exportRule(c.req.query('kind')||'profile');
     const lang=c.req.query('lang')==='en'?'en':'ar';
-    const raw=publishedJson(site);
+    const raw=await visibleSiteProfile(c,site,publishedJson(site));
     const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
     return c.json({profile:visibleProfile(raw,lang,true),name:site.name,site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation,source:'published'});
   });
@@ -166,6 +170,7 @@ export function registerPublic(app:App){
     const lang=c.req.query('lang')==='en'?'en':'ar';
     const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
     const name:any=await one(c,'SELECT name FROM dns_names WHERE site_id=? LIMIT 1',site.id);
+    raw=withVisibility(draftWithIdentities(raw,site.published?JSON.parse(site.published):undefined),await siteVisibility(c,site));
     return c.json({profile:visibleProfile(raw,lang,true),name:name?.name??'',site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation,source:'draft'});
   });
 
@@ -208,7 +213,7 @@ export function registerPublic(app:App){
     }
     if(media.purpose!=='receipt'&&!authorized){
       const site:any=media.site_id?await one(c,"SELECT * FROM sites WHERE id=? AND status='published'",media.site_id):null;
-      if(site?.published&&await personalGate(c,site))authorized=publishedReferencesMedia(publishedJson(site),media.id);
+      if(site?.published&&await personalGate(c,site)){ const owner:any=await one(c,"SELECT status FROM users WHERE id=?",site.user_id); const policy=await siteVisibility(c,site); if(owner?.status==='active'&&policy.visible)authorized=publishedReferencesMedia(withVisibility(publishedJson(site),policy),media.id); }
     }
     if(!authorized)throw new HTTPException(403,{message:'الملف خاص أو غير منشور'});
     const object=await c.env.MEDIA.get(media.bucket_key);

@@ -1,3 +1,6 @@
+import { webUrl } from '../shared/profile-content';
+import { profileItemIds, draftWithIdentities, listFields, pathValue, visibilityFields, type ItemIds } from '../shared/profile-visibility';
+import { siteVisibility } from './visibility';
 import { HTTPException } from 'hono/http-exception';
 import type { App } from './core';
 import {
@@ -69,6 +72,8 @@ type Profile = {
   socials: Array<string | { label: string; url: string }>;
   buttons: Array<string | { label: string; url: string }>;
   hidden: string[];
+  itemIds?: ItemIds;
+  hiddenItems?: string[];
   searchable: boolean;
   allowContact: boolean;
   translations?: { ar?: Profile; en?: Profile };
@@ -87,7 +92,7 @@ const PROFILE_KEYS = new Set([
   'photo', 'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
   'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'notes', 'skillImages',
   'workImages', 'socials', 'buttons', 'hidden', 'searchable', 'allowContact',
-  'translations',
+  'itemIds', 'hiddenItems', 'translations',
 ]);
 const PUBLIC_PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
@@ -95,6 +100,7 @@ const PUBLIC_PROFILE_KEYS = new Set([
   'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'skillImages', 'workImages',
   'socials', 'buttons',
 ]);
+for (const field of visibilityFields) PUBLIC_PROFILE_KEYS.add(field);
 const RESUME_LISTS = [
   'experience', 'education', 'training', 'skills', 'memberships', 'languages',
   'hobbies', 'achievements', 'timeline',
@@ -219,7 +225,9 @@ function httpUrl(value: unknown, field: string): string {
   const raw = asString(value, field, 2048);
   if (!raw) return '';
   try {
-    const url = new URL(raw);
+    const normalized = webUrl(raw);
+    if (!normalized) apiError(422, `${field} must be a safe HTTP(S) URL`, 'VALIDATION');
+    const url = new URL(normalized);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
       apiError(422, `${field} must be a safe HTTP(S) URL`, 'VALIDATION');
     }
@@ -242,7 +250,7 @@ function youtubeUrl(value: unknown): string {
   const url = httpUrl(value, 'youtube');
   if (!url) return '';
   const host = new URL(url).hostname.toLowerCase();
-  if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(host)) {
+  if (!['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com', 'youtu.be'].includes(host)) {
     apiError(422, 'youtube must be a YouTube URL', 'VALIDATION');
   }
   return url;
@@ -398,6 +406,15 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
   profile.socials = linkList(value.socials, 'socials', 12, editing);
   profile.buttons = linkList(value.buttons, 'buttons', 3, editing);
 
+  const sourceIds = profileItemIds(value);
+  if (value.itemIds !== undefined && (!isRecord(value.itemIds) || Object.keys(value.itemIds).some(key => !listFields.includes(key as typeof listFields[number])))) apiError(422, 'itemIds is invalid', 'VALIDATION');
+  profile.itemIds = Object.fromEntries(listFields.map(field => {
+    const source = pathValue(value, field);
+    const keep = (item: unknown) => typeof item === 'string' ? Boolean(item.trim()) : !isRecord(item) || Object.values(item).some(part => typeof part !== 'string' || part.trim());
+    return [field, sourceIds[field].filter((_, index) => editing || !Array.isArray(source) || keep(source[index]))];
+  }));
+  if (value.hiddenItems !== undefined && (!Array.isArray(value.hiddenItems) || value.hiddenItems.length > 1000 || value.hiddenItems.some(item => typeof item !== 'string' || !listFields.some(field => item.startsWith(field + ':') && /^[A-Za-z\d_-]{1,80}$/.test(item.slice(field.length + 1)))))) apiError(422, 'hiddenItems is invalid', 'VALIDATION');
+  profile.hiddenItems = Array.isArray(value.hiddenItems) ? [...new Set(value.hiddenItems as string[])] : [];
   if (value.hidden !== undefined) {
     if (!Array.isArray(value.hidden) || value.hidden.length > PUBLIC_PROFILE_KEYS.size) {
       apiError(422, 'hidden must be a bounded list of profile field keys', 'VALIDATION');
@@ -522,7 +539,7 @@ function toSite(site: SiteRow): Json {
     name: site.name ?? null,
     userId: site.user_id === null ? null : `C${site.user_id}`,
     managerId: site.manager_id === null ? null : `C${site.manager_id}`,
-    draft: parseJson<Profile>(site.draft, defaultProfile()),
+    draft: draftWithIdentities(parseJson<Profile>(site.draft, defaultProfile()), site.published ? parseJson<Profile>(site.published, defaultProfile()) : undefined),
     draft_version: Number(site.draft_version),
     draftVersion: Number(site.draft_version),
     published: site.published ? parseJson<Profile | null>(site.published, null) : null,
@@ -1176,7 +1193,7 @@ export function registerBusiness(app: App): void {
   app.get('/api/sites/:id', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const site = await editableSiteFor(c, c.req.param('id'), user);
-    return c.json({ site: toSite(await withSiteName(c, site)) });
+    return c.json({ site: { ...toSite(await withSiteName(c, site)), visibility: await siteVisibility(c, site) } });
   });
 
   app.get('/api/sites/:id/media', async (c) => {
@@ -1241,7 +1258,7 @@ export function registerBusiness(app: App): void {
     );
     if (existing) apiError(409, 'This draft version is already under review', 'REVIEW_PENDING');
 
-    const snapshot = JSON.stringify(publicationProfile(JSON.parse(site.draft), String(user.name ?? '')));
+    const snapshot = JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft), site.published ? JSON.parse(site.published) : undefined), String(user.name ?? '')));
     const body = await c.req.json().catch(() => ({})) as { version?: unknown };
     if (body.version !== undefined && body.version !== site.draft_version) apiError(409, 'تغيّرت المسودة قبل الإرسال. احفظها ثم أعد المحاولة.', 'DRAFT_CONFLICT');
     const reviewId = uid();

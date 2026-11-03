@@ -1,3 +1,4 @@
+import { draftWithIdentities } from '../shared/profile-visibility';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
 import type { App, Ctx, User } from './core';
@@ -30,14 +31,14 @@ export async function publishCurrentDraft(c: Ctx, siteId: string) {
   if (!account) throw new HTTPException(409, { message: 'فعّل حساب صاحب الموقع أولاً' });
   const name = await one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE site_id=? LIMIT 1', site.id);
   if (!name) throw new HTTPException(409, { message: 'احجز اسم الموقع أولاً' });
-  const snapshot = JSON.stringify(publicationProfile(JSON.parse(site.draft), account.name));
+  const snapshot = JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft),site.published?JSON.parse(site.published):undefined), account.name));
   // Existing immutable evidence may predate private-note separation. Compare its
   // publishable content, never rewrite history or require the user to edit again.
   if (site.status === 'published' && site.published_version === site.draft_version && site.published && JSON.stringify(publicationProfile(JSON.parse(site.published), account.name)) === snapshot) return { published: true, url: `https://${name.name}.${c.env.ROOT_DOMAIN}`, idempotent: true };
   const pending = await one<{ id: string; snapshot: string; base_version: number }>(c,
     "SELECT r.id,r.snapshot,r.base_version FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL ORDER BY r.created_at DESC LIMIT 1", site.id, site.draft_version);
   const reviewId = pending?.id || uid();
-  if (pending && (JSON.stringify(publicationProfile(JSON.parse(pending.snapshot), account.name)) !== snapshot || pending.base_version !== site.published_version)) throw new HTTPException(409, { message: 'تغيّر الموقع. احفظ أحدث تعديل ثم أعد النشر' });
+  if (pending && (JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(pending.snapshot),site.published?JSON.parse(site.published):undefined), account.name)) !== snapshot || pending.base_version !== site.published_version)) throw new HTTPException(409, { message: 'تغيّر الموقع. احفظ أحدث تعديل ثم أعد النشر' });
   const clock = now();
   await audit(c, 'site.publish.requested', site.id, { draftVersion: site.draft_version, responsibility: 'administration', reviewId });
   const statements = [];

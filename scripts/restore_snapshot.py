@@ -49,7 +49,7 @@ conversations={rid for typ,rid in tombstones if typ=='conversation'}
 if isinstance(tables.get('messages'),list):tables['messages']=[r for r in tables['messages'] if str(r.get('conversation_id')) not in conversations]
 for table in ['managed_accounts','managed_claim_tokens','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','sessions','devices']:
  if isinstance(tables.get(table),list):tables[table]=[r for r in tables[table] if str(r.get('user_id')) not in accounts]
-for table in ['dns_names','names','analytics','proxy_media','proxy_sites','site_custody']:
+for table in ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody']:
  if isinstance(tables.get(table),list):tables[table]=[r for r in tables[table] if str(r.get('site_id')) not in sites]
 args.target.parent.mkdir(parents=True,exist_ok=True)
 conn=sqlite3.connect(args.target);conn.execute('PRAGMA foreign_keys=OFF')

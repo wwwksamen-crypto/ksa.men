@@ -66,7 +66,7 @@
 
 .identity-hero__cover img {
   display: block;
-  filter: saturate(.76) contrast(1.04);
+  filter: saturate(.9) contrast(1.06);
   height: 100%;
   object-fit: cover;
   object-position: center;
@@ -75,7 +75,7 @@
 
 .identity-hero__wash {
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg, #07120f) 96%, transparent) 0%, color-mix(in srgb, var(--bg, #07120f) 89%, transparent) 43%, color-mix(in srgb, var(--bg, #07120f) 62%, transparent) 100%),
+    linear-gradient(90deg, color-mix(in srgb, var(--bg, #07120f) 89%, transparent) 0%, color-mix(in srgb, var(--bg, #07120f) 76%, transparent) 43%, color-mix(in srgb, var(--bg, #07120f) 42%, transparent) 100%),
     linear-gradient(0deg, var(--bg, #07120f) 0%, transparent 47%);
   z-index: -1;
 }
@@ -829,3 +829,29 @@ dialog.identity-lightbox::backdrop { background: #031009e8; backdrop-filter: blu
 .identity-skill-radar { display: grid; gap: 12px; margin-top: 15px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent); }
 .identity-skill-radar > div { display: grid; gap: 7px; }
 .identity-skill-radar strong { color: var(--identity-accent, #006837); font-size: .84rem; }
+
+/* Full identity renderer: local brand paths, genuine counts, no remote player before opt-in. */
+.identity-social-icons { display: flex; flex-wrap: wrap; gap: 10px; margin-block: 16px; }
+.identity-social-icons a { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 48px; width: 48px; min-height: 48px; border: 1px solid var(--identity-border); border-radius: 14px; color: var(--identity-text); background: var(--identity-surface-2); transition: border-color .18s, background .18s; }
+.identity-social-icons a:hover { border-color: var(--identity-accent); background: color-mix(in srgb, var(--identity-accent) 12%, var(--identity-surface)); }
+.identity-social-icons svg { display: block; flex-shrink: 0; }
+.identity-link-list:empty { display: none; }
+.identity-page .identity-skill-radar { display: grid; grid-template-columns: minmax(140px, .85fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.identity-radar-plot { text-align: center; }
+.identity-radar-plot svg { display: block; width: min(100%, 220px); height: auto; margin-inline: auto; overflow: visible; }
+.identity-page .identity-radar-plot h3 { font-size: 1rem; line-height: 1.7; }
+.identity-page .identity-radar-plot p { color: var(--identity-muted); font-size: .8rem; line-height: 1.7; }
+.identity-radar-grid { fill: none; stroke: var(--identity-border); stroke-width: 1; }
+.identity-radar-shape { fill: color-mix(in srgb, var(--identity-accent) 22%, transparent); stroke: var(--identity-accent); stroke-width: 2; stroke-linejoin: round; }
+.identity-radar-dot { fill: var(--identity-accent); }
+.identity-radar-groups { display: grid; gap: 12px; min-width: 0; }
+.identity-radar-groups > section { min-width: 0; padding: 10px; border-radius: 12px; border: 1px solid var(--identity-border); }
+.identity-radar-groups header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 9px; }
+.identity-radar-groups header > span { color: var(--identity-accent); font-weight: 800; font-variant-numeric: tabular-nums; }
+.identity-radar-groups .identity-pills { gap: 6px; }
+@media (max-width: 600px) {
+  .identity-page .identity-skill-radar { grid-template-columns: minmax(0, 1fr); }
+  .identity-radar-plot svg { max-width: 210px; }
+  .identity-social-icons { gap: 12px; }
+}
+@media (prefers-reduced-motion: reduce) { .identity-social-icons a { transition: none; } }
