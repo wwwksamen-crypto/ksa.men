@@ -1,4 +1,4 @@
-import { list, record, type ProfileRecord } from './profile-content';
+import { list, record, mediaSource, type ProfileRecord } from './profile-content';
 export const listFields = ['experience','education','training','skills','memberships','languages','hobbies','achievements','timeline','skillImages','workImages','socials','buttons','skillRadar.human','skillRadar.scientific','skillRadar.professional'] as const;
 export const scalarFields = ['name','title','bio','email','phone','whatsapp','city','country','photo','cover','youtube','blog'] as const;
 export const visibilityFields = [...scalarFields, ...listFields, 'skillRadar', 'allowContact'] as const;
@@ -68,6 +68,10 @@ export function sanitizeProfile(input: unknown): ProfileRecord {
   }
   for (const field of hidden) { if (field === 'allowContact') { output.allowContact = false; continue; } if (field.includes('.')) setPath(output, field, []); else delete output[field]; }
   for (const field of ['hidden','hiddenItems','itemIds','translations','private','notes']) delete output[field];
+  if (output.imageDescriptions) {
+    const images = new Set([output.photo,output.cover,...list(output.skillImages),...list(output.workImages)].map(mediaSource).filter(Boolean));
+    output.imageDescriptions = Object.fromEntries(Object.entries(record(output.imageDescriptions)).filter(([url,description]) => images.has(url) && typeof description === 'string'));
+  }
   return output;
 }
 export function withVisibility(input: unknown, policy?: VisibilityPolicy | null): ProfileRecord {

@@ -1,0 +1,33 @@
+/* Shared field controls: no overlay on the user's text or virtual keyboard. */
+.dictated-field { display: grid; gap: 7px; min-inline-size: 0; inline-size: 100%; align-content: start; }
+.dictated-field > label { display: block; font-size: .9rem; font-weight: 700; line-height: 1.65; text-align: start; }
+.dictated-field > :is(input, textarea) { min-inline-size: 0; inline-size: 100%; font: inherit; font-size: max(1rem, 16px); scroll-margin-block: 18px; }
+.dictation-controls { min-inline-size: 0; color: var(--dash-text, var(--text)); }
+.dictation-actions { display: flex; align-items: flex-start; gap: 7px; flex-wrap: wrap; }
+.dictation-button { display: inline-flex; justify-content: center; align-items: center; min-inline-size: 44px; min-block-size: 44px; border-radius: 12px; border: 1px solid var(--dash-border, var(--border)); background: var(--dash-surface, var(--surface)); color: var(--dash-accent, var(--accent)); cursor: pointer; padding: 8px; font: inherit; }
+.dictation-button.is-listening { background: color-mix(in srgb, var(--green) 24%, var(--surface)); border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent); }
+.dictation-button:disabled { opacity: .55; cursor: default; }
+.dictation-options { min-inline-size: 0; flex: 1; }
+.dictation-options > summary { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; min-block-size: 44px; padding: 8px 10px; font-size: .86rem; font-weight: 650; color: var(--dash-muted, var(--muted)); border-radius: 10px; list-style: none; }
+.dictation-options > summary::-webkit-details-marker { display: none; }
+.dictation-options-body { display: grid; gap: 7px; padding: 12px; margin-block: 5px 8px; border: 1px solid var(--dash-border, var(--border)); background: var(--dash-surface, var(--surface)); border-radius: 12px; }
+.dictation-options-body label { font-size: .85rem; font-weight: 700; }
+.dictation-options-body select { inline-size: 100%; min-inline-size: 0; min-block-size: 44px; font: inherit; font-size: max(1rem, 16px); border-radius: 9px; border: 1px solid var(--border); color: var(--text); background: var(--surface); padding: 8px; }
+.dictation-options-body p, .dictation-status, .dictation-interim { color: var(--dash-muted, var(--muted)); font-size: .85rem; line-height: 1.65; white-space: normal; overflow-wrap: anywhere; margin-block: 8px 0; }
+.dictation-interim { font-style: italic; }
+.dictation-corrections { display: flex; flex-wrap: wrap; gap: 7px; margin-block-start: 8px; }
+.dictation-corrections button { min-block-size: 44px; font: inherit; font-size: .85rem; color: var(--accent); border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+.dictation-controls :is(button, summary, select):focus-visible { outline: 3px solid var(--dash-accent, var(--accent)); outline-offset: 3px; }
+.hero-search .dictation-controls { flex-shrink: 0; }
+.hero-search .dictation-options, .hero-search .dictation-status:not(.sr-only), .hero-search .dictation-interim, .hero-search .dictation-corrections { flex-basis: 100%; }
+.hero-search { flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { .dictation-controls * { animation: none !important; transition: none !important; } }
+
+/* The homepage search has a complete first row; speech options sit below it, never squeeze the query. */
+.hero-search > .dictation-controls { order: 4; flex: 1 0 100%; min-inline-size: 0; border-block-start: 1px solid var(--border); padding-block: 7px 3px; }
+.hero-search > svg { order: 1; flex-shrink: 0; }
+.hero-search > input { order: 2; min-inline-size: 0; font-size: max(1rem, 16px); }
+.hero-search > .hero-search-submit { order: 3; flex-shrink: 0; }
+.search-panel > .dictated-field { min-inline-size: 0; }
+.search-result-status { color: var(--muted); line-height: 1.7; }
+@media (max-width: 700px) { .search-panel > .dictated-field { grid-column: 1 / -1; } }

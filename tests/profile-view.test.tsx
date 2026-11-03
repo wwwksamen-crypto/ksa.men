@@ -53,6 +53,16 @@ describe('the same complete visitor view in a local draft preview', () => {
     expect(publicView.querySelector('#work-samples')).not.toBeNull();expect(publicView.querySelector('#memberships')).not.toBeNull();expect(publicView.querySelector('.identity-radar-plot')).not.toBeNull();
     expect(publicView.textContent).not.toContain('PRIVATE NOTE');expect(container.querySelector('.dashboard-preview-private')?.textContent).toContain('PRIVATE NOTE');expect(apiMock).not.toHaveBeenCalled();
   });
+  it('provides optional image descriptions in the same preview/public view without leaking descriptions of hidden images', async () => {
+    const descriptions = {'/api/media/local-skill':'شهادة مهنية بوصف واضح','/api/media/local-work':'مشروع موثق بوصف واضح'};
+    await render(sanitizeProfile({...fixture,imageDescriptions:descriptions}));
+    expect(container.querySelector('#skill-evidence img')?.getAttribute('alt')).toBe(descriptions['/api/media/local-skill']);
+    const ids=profileItemIds(fixture);
+    const hidden=sanitizeProfile({...fixture,imageDescriptions:descriptions,hiddenItems:[`skillImages:${ids.skillImages[0]}`]});
+    expect(hidden.imageDescriptions).toEqual({'/api/media/local-work':descriptions['/api/media/local-work']});
+    await render(hidden);expect(container.querySelector('#skill-evidence')).toBeNull();
+    expect(container.querySelector('#work-samples img')?.getAttribute('alt')).toBe(descriptions['/api/media/local-work']);
+  });
   it('does not demand or render an unnecessary label input in social-link entry', async () => {
     await act(async()=>root.render(<LinkList socialOnly title="روابط" hint="" value={[{label:'',url:'https://x.com/local-member'}]} onChange={()=>{}} max={12} tr={ar=>ar}/>));
     expect(container.querySelectorAll('input')).toHaveLength(1);expect(container.querySelector('path')?.getAttribute('d')).toBeTruthy();

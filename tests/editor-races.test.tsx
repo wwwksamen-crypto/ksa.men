@@ -100,12 +100,15 @@ describe('editor save races — DOM and mocked API only', () => {
     await act(async()=> (nav().find(button=>button.textContent?.includes('إثبات المهارات')) as HTMLButtonElement).click());
     const fileInput=container.querySelector('input[type="file"]') as HTMLInputElement;
     expect(fileInput).not.toBeNull();
+    const selectFile = vi.spyOn(fileInput, 'click').mockImplementation(() => {});
+    await act(async () => (container.querySelector('button[aria-label="إضافة صورة"]') as HTMLButtonElement).click());
+    expect(selectFile).toHaveBeenCalledOnce();
     Object.defineProperty(fileInput,'files',{configurable:true,value:[new File([new Uint8Array(16)],'unit.jpg',{type:'image/jpeg'})]});
     await act(async()=> fileInput.dispatchEvent(new Event('change',{bubbles:true})));await flush();
     expect(vi.mocked(api).mock.calls.some(([path])=>path==='/api/upload')).toBe(true);
     const select=container.querySelector('select[aria-label="الموقع الحالي"]') as HTMLSelectElement;
     expect(select.disabled).toBe(true);
-    await act(async()=> (container.querySelector('button[aria-label="إزالة الصورة"]') as HTMLButtonElement).click());
+    await act(async()=> (container.querySelector('button[aria-label^="إزالة الصورة"]') as HTMLButtonElement).click());
     await act(async()=> (nav()[0] as HTMLButtonElement).click());
     await act(async()=> inputValue(nameInput(),'نص أثناء الرفع'));
     await act(async()=> imageReady.resolve({id:'new-image',url:'/api/media/new-image'}));await flush();

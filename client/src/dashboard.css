@@ -907,13 +907,6 @@
 .dashboard-editor-guide p { margin: 0; color: var(--dash-text); font-size: .85rem; line-height: 1.65; }
 .dashboard-editor-guide button { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 9px; background: transparent; color: var(--dash-muted); }
 .dashboard-editor-guide button:hover { color: var(--dash-text); background: color-mix(in srgb, var(--dash-surface-2) 78%, transparent); }
-.dashboard-dictated-field { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; }
-.dashboard-dictated-field > .field { min-width: 0; }
-.dashboard-dictated-field--textarea { align-items: start; }
-.dashboard-dictated-field--textarea .dashboard-voice-control { padding-top: 3px; }
-.dashboard-voice-control { display: inline-flex; align-items: center; gap: 6px; }
-.dashboard-voice-control small { max-width: 150px; color: var(--dash-muted); font-size: .7rem; line-height: 1.35; }
-.dashboard-icon-button.is-listening { border-color: var(--dash-accent); background: color-mix(in srgb, var(--dash-green) 24%, transparent); color: var(--dash-accent); animation: dashboard-pulse 900ms ease-in-out infinite alternate; }
 .dashboard-email-suggestion { display: flex; align-items: flex-start; gap: 8px; margin: 15px 0 0; padding: 11px 12px; border-inline-start: 2px solid var(--dash-gold); background: color-mix(in srgb, var(--dash-gold) 8%, transparent); font-size: .82rem; }
 .dashboard-email-suggestion svg { flex: 0 0 auto; margin-top: 3px; color: var(--dash-gold); }
 .dashboard-radar-editor,
@@ -932,9 +925,6 @@
   .dashboard-edit-card__body { min-height: 0; padding: 17px; }
   .dashboard-edit-card > summary { padding: 13px 17px; }
   .dashboard-editor-guide { grid-template-columns: auto minmax(0, 1fr) auto; padding: 10px; }
-  .dashboard-dictated-field--textarea { grid-template-columns: minmax(0, 1fr); }
-  .dashboard-dictated-field--textarea .dashboard-voice-control { justify-self: end; margin-top: -48px; margin-inline-end: 6px; padding: 0; }
-  .dashboard-voice-control small { max-width: 122px; }
 }
 
 /* Phase 4: member-led membership requests replace self-service payments. */
@@ -1162,3 +1152,34 @@ html[data-season] .dashboard-loyalty { box-shadow: inset 0 1px 0 color-mix(in sr
   .profile-visibility-site-options > div > span { min-width: 0; line-height: 1.8; }
   .dashboard-link-list > .dashboard-link-row--social > input { grid-column: 2; grid-row: 1; min-width: 0; }
 }
+
+/* Portrait editing and accessible keyboard navigation, scoped to the existing workspace. */
+.dashboard :is(button, a, summary, input, textarea, select):focus-visible { outline: 3px solid var(--dash-accent); outline-offset: 3px; }
+.dashboard :is(input, textarea, select) { scroll-margin-block: 18px; }
+.dashboard[data-keyboard-open] .dashboard-editor-top { position: static; }
+.dashboard-image-description { display: grid; gap: 7px; padding: 12px; }
+.dashboard-image-description > span { font-size: .85rem; line-height: 1.6; color: var(--dash-text); }
+.dashboard-image-description textarea { inline-size: 100%; min-inline-size: 0; resize: vertical; font-size: 16px; line-height: 1.65; }
+.dashboard-image-grid figure:has(.dashboard-image-description) { align-self: start; }
+.dashboard-dictation-context { min-inline-size: 0; }
+@media (max-width: 640px) {
+  .dashboard-edit-heading > div, .dashboard-list-card-top > strong { min-inline-size: 0; }
+  .dashboard-edit-heading h2, .dashboard-edit-heading p { overflow-wrap: break-word; }
+  .dashboard-edit-card__body .dictated-field > :is(input, textarea), .dashboard-image-description textarea { font-size: max(1rem, 16px); min-block-size: 48px; }
+  .dashboard-structured-list .dictated-field { inline-size: 100%; }
+  .dashboard-link-list > div { min-inline-size: 0; }
+  .dashboard-preview-modal > header h2 { min-inline-size: 0; overflow-wrap: break-word; }
+  .dashboard-preview-modal > header .dashboard-icon-button { flex-shrink: 0; min-inline-size: 44px; min-block-size: 44px; }
+}
+@media (max-width: 400px) { .dashboard-image-grid:has(.dashboard-image-description) { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .dashboard :is(button, summary, input, textarea, select) { transition: none !important; } }
+
+.dashboard-upload > button { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; inline-size: 100%; min-block-size: 44px; padding: 0; color: var(--dash-text); background: transparent; border: 0; border-radius: 10px; font: inherit; }
+.dashboard-upload > button:focus-visible { outline: 3px solid var(--dash-accent); outline-offset: 4px; }
+.dashboard-image-grid .dashboard-described-image { block-size: auto; height: auto; min-inline-size: 0; align-self: start; overflow: visible; }
+.dashboard-image-grid .dashboard-described-image > img { block-size: 142px; inline-size: 100%; object-fit: cover; border-radius: 12px 12px 0 0; }
+.dashboard-image-grid .dashboard-described-image .dictation-button { position: static; }
+.dashboard-structured-list article > .dictated-field { margin-block-start: 13px; }
+
+.dashboard .dictation-options-body select { font-size: max(1rem, 16px); min-block-size: 44px; }
+.dashboard-image-grid:has(.dashboard-described-image) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }

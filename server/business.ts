@@ -69,6 +69,7 @@ type Profile = {
   notes: string;
   skillImages: string[];
   workImages: string[];
+  imageDescriptions?: Record<string, string>;
   socials: Array<string | { label: string; url: string }>;
   buttons: Array<string | { label: string; url: string }>;
   hidden: string[];
@@ -92,7 +93,7 @@ const PROFILE_KEYS = new Set([
   'photo', 'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
   'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'notes', 'skillImages',
   'workImages', 'socials', 'buttons', 'hidden', 'searchable', 'allowContact',
-  'itemIds', 'hiddenItems', 'translations',
+  'itemIds', 'hiddenItems', 'imageDescriptions', 'translations',
 ]);
 const PUBLIC_PROFILE_KEYS = new Set([
   'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
@@ -343,6 +344,13 @@ function mediaList(value: unknown, field: string, maximum: number): string[] {
   return value.map((item) => mediaUrl(item, field));
 }
 
+function imageDescriptions(value: unknown, sources: string[], editing: boolean): Record<string, string> {
+  if (value === undefined) return {};
+  if (!isRecord(value) || Object.keys(value).length > 20) apiError(422, 'أكمل أوصاف الصور بشكل موجز.', 'VALIDATION');
+  const allowed = new Set(sources.filter(Boolean));
+  return Object.fromEntries(Object.entries(value).filter(([url]) => allowed.has(url)).map(([url, description]) => [url, profileText(description, 'imageDescriptions', 600, false, editing)]));
+}
+
 function linkList(value: unknown, field: string, maximum: number, editing = false): Array<string | { label: string; url: string }> {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > maximum) {
@@ -406,6 +414,7 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
   profile.socials = linkList(value.socials, 'socials', 12, editing);
   profile.buttons = linkList(value.buttons, 'buttons', 3, editing);
 
+  profile.imageDescriptions = imageDescriptions(value.imageDescriptions, [profile.photo,profile.cover,...profile.skillImages,...profile.workImages], editing);
   const sourceIds = profileItemIds(value);
   if (value.itemIds !== undefined && (!isRecord(value.itemIds) || Object.keys(value.itemIds).some(key => !listFields.includes(key as typeof listFields[number])))) apiError(422, 'itemIds is invalid', 'VALIDATION');
   profile.itemIds = Object.fromEntries(listFields.map(field => {

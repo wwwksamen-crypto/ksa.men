@@ -204,7 +204,9 @@ function MediaGallery({
   items,
   title,
   onPreview,
+  descriptions = {},
 }: {
+  descriptions?: Record<string, unknown>;
   items: unknown[];
   title: string;
   onPreview: (preview: MediaPreview) => void;
@@ -217,10 +219,10 @@ function MediaGallery({
       type="button"
       className="identity-gallery__item"
       key={`${src}-${index}`}
-      onClick={() => onPreview({ src, alt: `${title} ${index + 1}` })}
-      aria-label={`${title} ${index + 1}`}
+      onClick={() => onPreview({ src, alt: stringValue(descriptions[src]) || `${title} ${index + 1}` })}
+      aria-label={stringValue(descriptions[src]) || `${title} ${index + 1}`}
     >
-      <img loading="lazy" src={src} alt={`${title} ${index + 1}`}/>
+      <img loading="lazy" src={src} alt={stringValue(descriptions[src]) || `${title} ${index + 1}`}/>
       <span><ImageIcon size={18}/></span>
     </button>)}
   </div>;
@@ -359,7 +361,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
       </picture>
       <div className="identity-hero__wash" aria-hidden="true"/>
       <div className="identity-hero__content">
-        <div className={`identity-hero__portrait ${useInitials ? 'identity-hero__portrait--initials' : ''}`}>{useInitials ? <span aria-label={displayName}>{initials || 'K'}</span> : <img src={profilePhoto} alt={displayName}/>}</div>
+        <div className={`identity-hero__portrait ${useInitials ? 'identity-hero__portrait--initials' : ''}`}>{useInitials ? <span aria-label={displayName}>{initials || 'K'}</span> : <img src={profilePhoto} alt={stringValue((profile.imageDescriptions as Record<string,unknown>)?.[mediaSource(profile.photo)]) || displayName}/>}</div>
         <div className="identity-hero__copy">
           <div className="identity-hero__meta">
             <span>KSA.MEN / {t('هوية مهنية', 'PROFESSIONAL IDENTITY')}</span>
@@ -422,10 +424,10 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
         {(skillImages.length > 0 || workImages.length > 0 || videoId) && <div className="identity-group">
           <div className="identity-group__label"><ImageIcon size={17}/><span>{t('شواهد مختارة', 'SELECTED EVIDENCE')}</span></div>
           {skillImages.length > 0 && <ProfileSection id="skill-evidence" icon={BadgeCheck} title={t('توثيق المهارات', 'Skill evidence')}>
-            <MediaGallery items={skillImages} title={t('توثيق المهارات', 'Skill evidence')} onPreview={setPreview}/>
+            <MediaGallery items={skillImages} title={t('توثيق المهارات', 'Skill evidence')} onPreview={setPreview} descriptions={profile.imageDescriptions && typeof profile.imageDescriptions === 'object' ? profile.imageDescriptions as Record<string,unknown> : {}}/>
           </ProfileSection>}
           {workImages.length > 0 && <ProfileSection id="work-samples" icon={ImageIcon} title={t('نماذج الأعمال', 'Selected work')}>
-            <MediaGallery items={workImages} title={t('نماذج الأعمال', 'Selected work')} onPreview={setPreview}/>
+            <MediaGallery items={workImages} title={t('نماذج الأعمال', 'Selected work')} onPreview={setPreview} descriptions={profile.imageDescriptions && typeof profile.imageDescriptions === 'object' ? profile.imageDescriptions as Record<string,unknown> : {}}/>
           </ProfileSection>}
           {videoId && <ProfileSection id="video" icon={Play} title={t('تعرّف عليّ', 'Meet me')}>
             {video ? <iframe

@@ -75,7 +75,7 @@
 
 .identity-hero__wash {
   background:
-    linear-gradient(90deg, color-mix(in srgb, var(--bg, #07120f) 89%, transparent) 0%, color-mix(in srgb, var(--bg, #07120f) 76%, transparent) 43%, color-mix(in srgb, var(--bg, #07120f) 42%, transparent) 100%),
+    linear-gradient(90deg, color-mix(in srgb, var(--bg, #07120f) 82%, transparent) 0%, color-mix(in srgb, var(--bg, #07120f) 68%, transparent) 43%, color-mix(in srgb, var(--bg, #07120f) 36%, transparent) 100%),
     linear-gradient(0deg, var(--bg, #07120f) 0%, transparent 47%);
   z-index: -1;
 }
@@ -457,7 +457,7 @@
 
 .identity-timeline__period {
   color: var(--identity-gold);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1.45;
   margin-block: 0 6px;
@@ -855,3 +855,17 @@ dialog.identity-lightbox::backdrop { background: #031009e8; backdrop-filter: blu
   .identity-social-icons { gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .identity-social-icons a { transition: none; } }
+
+/* A date stays in normal flow in portrait RTL and LTR; it cannot move onto its timeline dot. */
+.identity-timeline__entry { min-inline-size: 0; }
+.identity-timeline__period { position: static; min-inline-size: 0; max-inline-size: 100%; line-height: 1.7; gap: 5px 8px; padding-block: 4px; font-variant-numeric: tabular-nums; }
+.identity-timeline__period > bdi { min-inline-size: 0; max-inline-size: 100%; word-break: normal; overflow-wrap: break-word; }
+.identity-timeline__entry::before { inset-block-start: 9px; }
+.identity-hero__copy { text-shadow: 0 1px 10px color-mix(in srgb, var(--bg) 36%, transparent); }
+.identity-gallery__item:focus-visible { outline: 3px solid var(--identity-accent); outline-offset: 4px; }
+@media (max-width: 640px) {
+  .identity-timeline__entry { padding-inline: 18px 0; }
+  .identity-timeline__period { inline-size: fit-content; font-size: 14px; margin-block-end: 8px; }
+  .identity-timeline__entry h3 { clear: both; }
+}
+@media (prefers-reduced-motion: reduce) { .identity-page *, .identity-page *::before, .identity-page *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }

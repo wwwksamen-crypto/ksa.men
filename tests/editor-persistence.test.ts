@@ -40,7 +40,7 @@ afterAll(() => vi.restoreAllMocks());
 
 describe.sequential('complete draft content — local D1 and R2 only', () => {
   it('retains every section, blank row, partial URL/email, whitespace and private note on save/reopen', async () => {
-    const draft = { ...fixture, name: '', email: 'unfinished@', experience: [{ ...item, title: '' }, { title:'',organization:'',start:'',end:'',description:'' }], skills: ['مهارة', ''], socials: [{ label:'',url:'https://x.' }, { label:'',url:'' }], buttons: [{ label:'',url:'' }], youtube: 'https://youtu.', bio: 'نص مع مسافة  ', skillImages: ['/api/media/saved-skill'], workImages: ['/api/media/saved-work'] };
+    const draft = { ...fixture, name: '', email: 'unfinished@', experience: [{ ...item, title: '' }, { title:'',organization:'',start:'',end:'',description:'' }], skills: ['مهارة', ''], socials: [{ label:'',url:'https://x.' }, { label:'',url:'' }], buttons: [{ label:'',url:'' }], youtube: 'https://youtu.', bio: 'نص مع مسافة  ', skillImages: ['/api/media/saved-skill'], workImages: ['/api/media/saved-work'], imageDescriptions: {'/api/media/saved-skill':'وصف شهادة محلية', '/api/media/saved-work':'وصف مشروع محلي'} };
     const saved = await request(`/api/sites/${siteId}/draft`, 'member', 'PUT', { version:0, draft }); expect(saved.status).toBe(200);
     const reopened = await request(`/api/sites/${siteId}`, 'member'); expect(reopened.status).toBe(200);
     const parsed = parseDraft(reopened.data.site.draft);
@@ -68,7 +68,7 @@ describe.sequential('complete draft content — local D1 and R2 only', () => {
     expect(normalized.skillRadar).toEqual(fixture.skillRadar); expect(normalized.skills).toEqual(legacy.skills);
   });
   it('freezes every completed section for review/publication while leaving private notes in the editable copy only', async () => {
-    const draft = { ...fixture, skillImages:['/api/media/saved-skill'], workImages:['/api/media/saved-work'], translations:{en:{...fixture,name:'Local identity',notes:'PRIVATE ENGLISH NOTE'}} };
+    const draft = { ...fixture, skillImages:['/api/media/saved-skill'], workImages:['/api/media/saved-work'], imageDescriptions:{'/api/media/saved-skill':'وصف شهادة محلية','/api/media/saved-work':'وصف مشروع محلي'}, translations:{en:{...fixture,name:'Local identity',notes:'PRIVATE ENGLISH NOTE'}} };
     const saved = await request(`/api/sites/${siteId}/draft`,'member','PUT',{version:1,draft}); expect(saved.status).toBe(200);
     expect((await request(`/api/sites/${siteId}/submit`,'member','POST',{version:1})).status).toBe(409);
     const submitted = await request(`/api/sites/${siteId}/submit`,'member','POST',{version:2}); expect(submitted.status).toBe(201);
@@ -79,7 +79,8 @@ describe.sequential('complete draft content — local D1 and R2 only', () => {
     const approved = await request(`/api/admin/reviews/${submitted.data.review.id}/decision`,'owner','POST',{decision:'approve'}); expect(approved.status).toBe(200);
     const publicProfile = await request('/api/public/profile',undefined,'GET',undefined,'editor-local.ksa.men'); expect(publicProfile.status).toBe(200);
     const content = publicProfile.data.profile;
-    for (const field of ['name','title','bio','phone','whatsapp','city','country','photo','cover','experience','education','training','skills','skillRadar','memberships','languages','hobbies','achievements','timeline','skillImages','workImages','youtube','blog']) expect(content[field],field).toEqual((publicationProfile(draft) as any)[field]);
+    for (const field of ['name','title','bio','phone','whatsapp','city','country','photo','cover','experience','education','training','skills','skillRadar','memberships','languages','hobbies','achievements','timeline','skillImages','workImages','youtube','blog','imageDescriptions']) expect(content[field],field).toEqual((publicationProfile(draft) as any)[field]);
+    expect(content.imageDescriptions['/api/media/saved-skill']).toBe('وصف شهادة محلية');
     expect(content.socials[0].url).toBe(draft.socials[0].url); expect(content.buttons[0].url).toBe(draft.buttons[0].url);
     expect(content).not.toHaveProperty('email'); expect(content).not.toHaveProperty('notes'); expect(content).not.toHaveProperty('translations');
     const current = (await request(`/api/sites/${siteId}`,'member')).data.site.draft; expect(current.notes).toBe('ملاحظتي الأحدث'); expect(current.translations.en.notes).toBe('PRIVATE ENGLISH NOTE');
