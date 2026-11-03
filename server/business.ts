@@ -1,3 +1,4 @@
+import { submissionNotice } from './publication-notice';
 import { webUrl } from '../shared/profile-content';
 import { profileItemIds, draftWithIdentities, listFields, pathValue, visibilityFields, type ItemIds } from '../shared/profile-visibility';
 import { siteVisibility } from './visibility';
@@ -783,7 +784,7 @@ export function registerBusiness(app: App): void {
          FROM services s LEFT JOIN user_services us ON us.key=s.key AND us.user_id=? ORDER BY s.key`,
         userId,
       ),
-      all<Record<string, unknown>>(c, 'SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100', userId),
+      all<Record<string, unknown>>(c, 'SELECT * FROM notifications WHERE user_id=? AND dismissed_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 100', userId),
       all<Record<string, unknown>>(
         c,
         'SELECT * FROM quick_links WHERE user_id=? AND expires_at>? ORDER BY created_at DESC LIMIT 100',
@@ -890,6 +891,7 @@ export function registerBusiness(app: App): void {
         id: notification.id,
         title: notification.title,
         body: notification.body,
+        action_url: notification.action_url || null,
         read_at: notification.read_at ?? null,
         readAt: notification.read_at ?? null,
         created_at: Number(notification.created_at),
@@ -1256,58 +1258,33 @@ export function registerBusiness(app: App): void {
     return c.json({ site: toSite(saved), version: saved.draft_version, savedAt: updatedAt });
   });
 
-  app.post('/api/sites/:id/submit', async (c) => {
+  app.post('/api/sites/:id/submit', async c => {
     const user = me(c) as unknown as Record<string, unknown>;
-    const site = await editableSiteFor(c, c.req.param('id'), user);
-    const existing = await one<{ id: string }>(
-      c,
-      "SELECT r.id FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL",
-      site.id,
-      site.draft_version,
-    );
-    if (existing) apiError(409, 'This draft version is already under review', 'REVIEW_PENDING');
-
-    const snapshot = JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft), site.published ? JSON.parse(site.published) : undefined), String(user.name ?? '')));
-    const body = await c.req.json().catch(() => ({})) as { version?: unknown };
-    if (body.version !== undefined && body.version !== site.draft_version) apiError(409, 'تغيّرت المسودة قبل الإرسال. احفظها ثم أعد المحاولة.', 'DRAFT_CONFLICT');
-    const reviewId = uid();
-    const createdAt = now();
-    try {
-      const result = await run(
-        c,
-        `INSERT INTO reviews(id,site_id,user_id,snapshot,draft_version,base_version,status,kind,created_at)
-         SELECT ?,id,?,?,?,?,?,'content',?
-         FROM sites WHERE id=? AND draft_version=?`,
-        reviewId,
-        Number(user.id),
-        snapshot,
-        Number(site.draft_version),
-        Number(site.published_version),
-        'pending',
-        createdAt,
-        site.id,
-        Number(site.draft_version),
-      );
-      if (changes(result) !== 1) apiError(409, 'This draft has changed. Reload before submitting.', 'DRAFT_CONFLICT');
-    } catch (error) {
-      if (error instanceof HTTPException) throw error;
-      const pending = await one<{ id: string }>(
-        c,
-        "SELECT r.id FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL",
-        site.id,
-        site.draft_version,
-      );
-      if (pending) apiError(409, 'This draft version is already under review', 'REVIEW_PENDING');
-      apiError(409, 'The review request could not be created', 'REVIEW_CONFLICT');
+    const site = await editableSiteFor(c,c.req.param('id'),user);
+    const body = await c.req.json().catch(()=>({})) as {version?:unknown};
+    if(body.version!==undefined && body.version!==site.draft_version) apiError(409,'تغيّرت المسودة قبل الإرسال. احفظها ثم أعد المحاولة.','DRAFT_CONFLICT');
+    const findPending = () => one<{id:string}>(c,"SELECT r.id FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL",site.id,site.draft_version);
+    const currentResult = async (reviewId:string,idempotent:boolean) => {
+      const row=await one<Record<string,unknown>>(c,'SELECT * FROM reviews WHERE id=?',reviewId);
+      if(!row) apiError(500,'Review request could not be loaded','REVIEW_CREATE_FAILED');
+      await submissionNotice(c,reviewId);
+      return c.json({review:toReview(row!),idempotent,message:'شكراً لك، وصلنا ما أعددته لهويتك المهنية. موقعك الآن تحت المراجعة، وسنبلغك هنا وبالبريد فور اعتماده ونشره. يمكنك متابعة العمل في مساحتك.'},idempotent?200:201);
+    };
+    const existing=await findPending();if(existing)return currentResult(existing.id,true);
+    if(site.status==='published'&&site.published_version===site.draft_version){
+      return c.json({alreadyPublished:true,message:'موقعك معتمد بالفعل. يمكنك متابعة تطويره؛ أرسل طلباً جديداً بعد حفظ تعديلك.'});
     }
-    if (!site.published) {
-      await run(c, "UPDATE sites SET status='pending',updated_at=? WHERE id=? AND published IS NULL", createdAt, site.id);
-    }
-    const review = await one<Record<string, unknown>>(c, 'SELECT * FROM reviews WHERE id=?', reviewId);
-    if (!review) apiError(500, 'Review request could not be loaded', 'REVIEW_CREATE_FAILED');
-    await recordConsent(c, 'public_profile', 'review-submission', true);
-    await audit(c, 'site.submit', site.id, { reviewId, draftVersion: site.draft_version });
-    return c.json({ review: toReview(review) }, 201);
+    const snapshot=JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft),site.published?JSON.parse(site.published):undefined),String(user.name??'')));
+    const reviewId=uid(),clock=now();
+    try{
+      const result=await run(c,`INSERT INTO reviews(id,site_id,user_id,snapshot,draft_version,base_version,status,kind,created_at)
+        SELECT ?,id,?,?,?,?,?,'content',? FROM sites WHERE id=? AND draft_version=?`,reviewId,Number(user.id),snapshot,Number(site.draft_version),Number(site.published_version),'pending',clock,site.id,Number(site.draft_version));
+      if(changes(result)!==1) apiError(409,'تغيّر الملف. احفظ أحدث تعديل ثم أرسله.','DRAFT_CONFLICT');
+    }catch(error){if(error instanceof HTTPException)throw error;const pending=await findPending();if(pending)return currentResult(pending.id,true);apiError(409,'تعذر إرسال الطلب. عملك محفوظ؛ حاول من جديد.','REVIEW_CONFLICT');}
+    if(!site.published)await run(c,"UPDATE sites SET status='pending',updated_at=? WHERE id=? AND published IS NULL",clock,site.id);
+    await recordConsent(c,'public_profile','review-submission',true);
+    await audit(c,'site.submit',site.id,{reviewId,draftVersion:site.draft_version});
+    return currentResult(reviewId,false);
   });
 
   app.post('/api/sites/:id/lock', async (c) => {

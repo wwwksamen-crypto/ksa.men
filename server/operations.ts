@@ -1,4 +1,5 @@
 import { background } from './managed';
+import { publicationNotice } from './publication-notice';
 import { HTTPException } from "hono/http-exception";
 import type { App, Ctx } from "./core";
 import { all, audit, auditRowHash, finance, fresh, hashSecret, me, now, one, role, run, siteFor, uid } from "./core";
@@ -487,18 +488,10 @@ type MemberDecisionNotice = {
 };
 
 async function notifyMemberDecision(c: Ctx, notice: MemberDecisionNotice) {
-  const target = await one<{ email: string; name: string }>(c, "SELECT email,name FROM users WHERE id=?", notice.targetId);
+  const target = await one<{id:number}>(c, "SELECT id FROM users WHERE id=?", notice.targetId);
   if (!target) return { delivered: false, channel: 'unavailable' as const };
-  await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at) VALUES(?,?,?,?,?)", uid(), notice.targetId, notice.title, notice.body, now());
-  return deliverDecisionEmail(c.env, {
-    to: target.email,
-    name: target.name,
-    subject: `${notice.title} — KSA.MEN`,
-    title: notice.title,
-    message: notice.body,
-    actionLabel: notice.actionLabel,
-    actionUrl: `https://${c.env.ROOT_DOMAIN}${notice.actionPath}`,
-  });
+  await run(c, "INSERT INTO notifications(id,user_id,title,body,created_at,action_url) VALUES(?,?,?,?,?,?)", uid(), notice.targetId, notice.title, notice.body, now(), notice.actionPath);
+  return { delivered: true, channel: 'in_app' as const };
 }
 
 async function governanceSnapshot(c: Ctx) {
@@ -537,7 +530,7 @@ async function governanceSnapshot(c: Ctx) {
 export function registerOperations(app: App): void {
   app.get("/api/admin/overview", async (c) => {
     const user = actor(c);
-    const unread = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL", user.id);
+    const unread = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND dismissed_at IS NULL AND read_at IS NULL", user.id);
     if (user.role === "moderator") {
       const pending = await one<{ count: number }>(c, "SELECT COUNT(*) AS count FROM reviews r WHERE r.status='pending' AND r.kind<>'redirect' AND NOT EXISTS(SELECT 1 FROM review_decisions d WHERE d.review_id=r.id)");
       const metrics = {
@@ -931,7 +924,11 @@ export function registerOperations(app: App): void {
     );
     if (!review) fail(404, "Review not found", "not_found");
     const reviewer = await reviewScope(c, review);
-    if (review.status !== "pending" || review.decision_status) fail(409, "This review is no longer pending", "review_stale");
+    if (review.status !== "pending" || review.decision_status) {
+      if ((review.decision_status || review.status) !== decision) fail(409, "The request already has a different decision", "review_stale");
+      if (decision === 'approved') await background(c, publicationNotice(c,review.id));
+      return c.json({ published:decision==='approved', idempotent:true, review:{id:review.id,status:decision} });
+    }
     const decidedAt = now();
     try {
       await run(
@@ -946,18 +943,12 @@ export function registerOperations(app: App): void {
     } catch {
       // The migration triggers atomically reject duplicate decisions and a changed
       // published base. Do not disclose which competing actor caused the conflict.
+      const previous = await one<{status:string}>(c, "SELECT status FROM review_decisions WHERE review_id=?",review.id);
+      if(previous?.status===decision){if(decision==='approved')await background(c,publicationNotice(c,review.id));return c.json({published:decision==='approved',idempotent:true,review:{id:review.id,status:decision}});}
       fail(409, "This review is no longer pending or its published base is stale", "review_stale");
     }
-    const notice = notifyMemberDecision(c, {
-      targetId: review.user_id,
-      title: decision === "approved" ? "تم اعتماد موقعك" : "تحديث بشأن طلب موقعك",
-      body: decision === "approved"
-        ? "تم اعتماد اللقطة التي أرسلتها، وأصبح موقعك متاحاً وفق إعداداتك."
-        : reason || "يحتاج طلبك إلى تعديل قبل إرساله من جديد للمراجعة.",
-      actionLabel: decision === "approved" ? "فتح موقعك" : "تعديل الطلب",
-      actionPath: decision === "approved" ? "/dashboard?tab=editor" : "/dashboard?tab=editor",
-    });
-    await background(c, notice);
+    if(decision==='approved') await background(c,publicationNotice(c,review.id));
+    else await notifyMemberDecision(c,{targetId:Number((await one<{user_id:number}>(c,'SELECT user_id FROM sites WHERE id=?',review.site_id))?.user_id||review.user_id),title:body.requestChanges===true?'لمسة أخيرة لهويتك':'تحديث بشأن طلب موقعك',body:reason||'يمكنك متابعة تعديل هويتك وإرسالها من جديد.',actionLabel:'تعديل الطلب',actionPath:'/dashboard?tab=editor'});
     await audit(c, "review.decision", `review:${review.id}`, { decision, reason, siteId: review.site_id, baseVersion: review.base_version, responsibility: 'administration' });
     const updated = await one<DecidedReviewRow>(
       c,
@@ -1820,7 +1811,7 @@ export function registerOperations(app: App): void {
 
   app.post("/api/notifications/:id/read", async (c) => {
     const user = me(c) as Actor;
-    const result = await run(c, "UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND read_at IS NULL", now(), c.req.param("id"), user.id);
+    const result = await run(c, "UPDATE notifications SET read_at=? WHERE id=? AND user_id=? AND dismissed_at IS NULL AND read_at IS NULL", now(), c.req.param("id"), user.id);
     if (!changed(result)) {
       const exists = await one<{ id: string }>(c, "SELECT id FROM notifications WHERE id=? AND user_id=?", c.req.param("id"), user.id);
       if (!exists) fail(404, "Notification not found", "not_found");

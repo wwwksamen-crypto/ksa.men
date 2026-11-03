@@ -18,6 +18,7 @@ export type DecisionEmailInput = Omit<TransactionalEmailInput, 'html' | 'text'> 
 export type DeliveryResult = {
   delivered: boolean;
   channel: 'resend' | 'cloudflare_email' | 'unavailable';
+  uncertain?: boolean;
 };
 
 function escapeHtml(value: string): string {
@@ -52,8 +53,10 @@ export async function deliverTransactionalEmail(env: Env, input: TransactionalEm
         signal: controller.signal,
       });
       if (response.ok) return { delivered: true, channel: 'resend' };
+      if (response.status >= 500) return { delivered: false, channel: 'resend', uncertain: true };
     } catch {
-      // Continue to the native backup route without surfacing provider internals.
+      // A lost response may follow provider acceptance. Never send a second copy.
+      return { delivered: false, channel: 'resend', uncertain: true };
     } finally {
       clearTimeout(timeout);
     }
@@ -64,7 +67,7 @@ export async function deliverTransactionalEmail(env: Env, input: TransactionalEm
       await env.CLOUDFLARE_EMAIL.send({ to: input.to, from, subject: input.subject, html: input.html, text: input.text });
       return { delivered: true, channel: 'cloudflare_email' };
     } catch {
-      // The caller exposes a clear service-level message only if both routes fail.
+      return { delivered: false, channel: 'cloudflare_email', uncertain: true };
     }
   }
   return { delivered: false, channel: 'unavailable' };

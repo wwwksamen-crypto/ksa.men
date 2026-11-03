@@ -1,6 +1,7 @@
 import { siteVisibility } from './visibility';
 import { registerVisibility } from './visibility';
 import { registerManaged } from './managed';
+import { registerNotifications } from './notifications';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { getCookie, setCookie } from 'hono/cookie';
@@ -118,7 +119,7 @@ registerAuth(app);
 registerPublic(app);
 registerVisibility(app);
 registerBusiness(app);
-registerOperations(app);registerManaged(app);
+registerOperations(app);registerManaged(app);registerNotifications(app);
 registerIntelligence(app);
 app.get('/robots.txt', async c => {
   const lock: any = await setting(c, 'lock');

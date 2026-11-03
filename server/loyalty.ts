@@ -1,6 +1,5 @@
 import type { Env } from './core';
 import { appendAudit, now, uid } from './core';
-import { deliverDecisionEmail } from './decision-email';
 
 export const AGE_BANDS = ['student', 'early_career', 'established', 'expert', 'prefer_not_to_say'] as const;
 export type AgeBand = typeof AGE_BANDS[number];
@@ -170,7 +169,7 @@ function seasonCopy(occasion: string): { title: string; body: string; subject: s
 
 /**
  * Runs from the existing Worker cron. Each opted-in member receives one in-app notice per
- * configured season and year. E-mail is attempted only after the internal notice is durable.
+ * configured season and year. No occasion email is sent under the current in-app-only policy.
  */
 export async function runSeasonalNotices(env: Env, clock = now()): Promise<{ occasion: string | null; notified: number }> {
   const setting = await env.DB.prepare("SELECT value FROM settings WHERE key='season'").first<{ value: string }>();
@@ -209,11 +208,7 @@ export async function runSeasonalNotices(env: Env, clock = now()): Promise<{ occ
         .bind(notificationId, userId, copy.title, copy.body, clock).run();
       await env.DB.prepare('UPDATE occasion_notices SET notification_id=?,notified_at=? WHERE id=? AND notified_at IS NULL')
         .bind(notificationId, clock, noticeId).run();
-      const delivery = await deliverDecisionEmail(env, {
-        to: String(recipient.email), name: String(recipient.name || 'عضو KSA.MEN'), subject: copy.subject,
-        title: copy.title, message: copy.body, actionLabel: 'فتح مساحتي', actionUrl: `https://${env.ROOT_DOMAIN}/dashboard?tab=settings`,
-      });
-      await env.DB.prepare('UPDATE occasion_notices SET email_status=? WHERE id=?').bind(delivery.channel, noticeId).run();
+      await env.DB.prepare("UPDATE occasion_notices SET email_status='in_app_only' WHERE id=?").bind(noticeId).run();
       notified += 1;
     } catch {
       // Leave the durable internal notice as the source of truth and avoid exposing provider detail.

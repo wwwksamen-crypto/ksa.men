@@ -46,10 +46,16 @@ export async function api<T=any>(path:string,options:RequestInit={}):Promise<T>{
   if(options.method&&options.method!=='GET')headers.set('X-CSRF-Token',csrf);
   const response=await fetch(path,{...options,headers,credentials:'same-origin',cache:'no-store'});
   const data:any=await response.json().catch(()=>({error:'تعذر قراءة الاستجابة'}));
-  if(!response.ok)throw new APIError(readableError(data,response.status),response.status,String(data.code||''));
+  if(!response.ok){
+    if(typeof window!=='undefined'&&!path.startsWith('/api/auth/')&&!options.signal?.aborted){
+      if(response.status===401||(response.status===403&&String(data.error||'')==='فشل التحقق من أمان الطلب'))window.dispatchEvent(new CustomEvent('ksa:session-required',{detail:{reason:'login'}}));
+      else if(response.status===403&&String(data.error||data.message||'')==='أعد التحقق من البريد لإتمام الإجراء الحساس')window.dispatchEvent(new CustomEvent('ksa:session-required',{detail:{reason:'reauth'}}));
+    }
+    throw new APIError(readableError(data,response.status),response.status,String(data.code||''));
+  }
   return data;
 }
-export const AppContext=createContext<{user:User|null,lang:'ar'|'en',t:(ar:string,en:string)=>string,refresh:()=>Promise<void>,notify:(message:string)=>void}>({user:null,lang:'ar',t:a=>a,refresh:async()=>{},notify:()=>{}});
+export const AppContext=createContext<{user:User|null,lang:'ar'|'en',t:(ar:string,en:string)=>string,refresh:(verifiedUser?:User)=>Promise<void>,notify:(message:string)=>void}>({user:null,lang:'ar',t:a=>a,refresh:async()=>{},notify:()=>{}});
 export const useApp=()=>useContext(AppContext);
 export function Button({children,className='',...props}:React.ButtonHTMLAttributes<HTMLButtonElement>){return <button {...props} className={'button '+className}>{children}</button>;}
 export const json=(value:any)=>JSON.stringify(value);

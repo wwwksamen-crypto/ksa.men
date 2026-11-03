@@ -89,7 +89,7 @@ describe.sequential('KSA.MEN integrated functional and security pass',()=>{
   const response=await worker.fetch(new Request('https://qa-concurrency.ksa.men/'),env,{} as any);
   expect(response.status).toBe(200);expect(response.headers.get('Content-Type')).toContain('text/html');
  });
- it('approved review cannot be repeated',async()=>{expect((await request('/api/admin/reviews/'+reviewA+'/decision','owner','POST',{decision:'approve'})).status).toBe(409);});
+ it('repeated approved review returns success without another decision',async()=>{const repeated=await request('/api/admin/reviews/'+reviewA+'/decision','owner','POST',{decision:'approve'});expect(repeated.status).toBe(200);expect(repeated.data.idempotent).toBe(true);});
 	 it('public profile strips hidden field from API',async()=>{const x=await worker.fetch(new Request('https://qa-concurrency.ksa.men/api/public/profile'),env,{} as any);expect(x.status).toBe(200);expect(await x.text()).not.toContain('private@unit.invalid');});
 	 it('public export is an approved snapshot and its vCard excludes hidden fields',async()=>{
 	  const visitor=await request('/api/public/export-data/qa-concurrency?kind=qr&lang=ar');

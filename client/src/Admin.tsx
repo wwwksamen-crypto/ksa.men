@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useRef, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   Banknote,
@@ -317,7 +317,7 @@ export default function Admin() {
   const managerOrOwner = owner || manager;
   const financialOperator = owner || (manager && Boolean(user?.financial));
 
-  const [tab, setTab] = useState<AdminTab>('overview');
+  const [tab, setTab] = useState<AdminTab>(()=>new URLSearchParams(location.search).get('tab')==='reviews'?'reviews':'overview');
   const [data, setData] = useState<AdminData>({});
   const [loadingTabs, setLoadingTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
   const [loadedTabs, setLoadedTabs] = useState<Partial<Record<AdminTab, boolean>>>({});
@@ -449,20 +449,24 @@ export default function Admin() {
   }, [financialOperator, handleFailure, managerOrOwner, owner, setTabError]);
 
   const loadBackups = useCallback(() => loadTab('backup'), [loadTab]);
+  useEffect(()=>{const restored=()=>{setFreshRequiredTabs({});setTabError(tab,'');void loadTab(tab);};window.addEventListener('ksa:session-restored',restored);return()=>window.removeEventListener('ksa:session-restored',restored);},[loadTab,tab,setTabError]);
 
+  const mutationRef=useRef(false);
   const mutate = useCallback(async <T,>(key: string, work: () => Promise<T>, options?: { fresh?: boolean; success?: string; reload?: boolean; reloadTab?: AdminTab }) => {
+    if(mutationRef.current)return; mutationRef.current=true;
     setBusy(key);
     setError('');
     try {
       const result = await work();
       if (options?.success) notify(options.success);
+      window.dispatchEvent(new Event('ksa:notifications-refresh'));
       if (options?.reload !== false) await loadTab(options?.reloadTab ?? tab);
       return result;
     } catch (failure) {
       handleFailure(failure, options?.fresh);
       return undefined;
     } finally {
-      setBusy(null);
+      mutationRef.current=false; setBusy(null);
     }
   }, [handleFailure, loadTab, notify, setError, tab]);
 
@@ -601,11 +605,11 @@ export default function Admin() {
     if (!id || !isPendingReview(review)) return;
     const reason = reviewReasons[id] ?? '';
     if ((decision === 'reject' || decision === 'changes') && !reason.trim()) {
-      setError(tr('سبب الرفض مطلوب لحماية مسار المراجعة.', 'A rejection reason is required for the review trail.'));
+      setError(tr('اكتب ما يحتاج إلى تعديل ليعرف العضو كيف يكمل هويته.', 'Describe what needs changing so the member can finish their identity.'));
       return;
     }
     void mutate(`review-${id}-${decision}`, () => api(`/api/admin/reviews/${encodeURIComponent(id)}/decision`, {
-      method: 'POST', body: JSON.stringify({ decision: decision === 'changes' ? 'reject' : decision, reason }),
+      method: 'POST', body: JSON.stringify({ decision: decision === 'changes' ? 'reject' : decision, requestChanges: decision==='changes', reason }),
     }), { fresh: false, success: decision === 'approve' ? tr('تم اعتماد اللقطة ونشرها.', 'The snapshot was approved and published.') : decision === 'changes' ? tr('أُرسل طلب التعديل مع السبب.', 'The change request was sent with its reason.') : tr('تم رفض اللقطة مع حفظ السبب.', 'The snapshot was rejected with its reason recorded.') });
   };
 
@@ -738,7 +742,7 @@ export default function Admin() {
 
   const renderUsers = () => (
     <div className="stack admin-stack">
-      <section className="admin-section-intro"><div><h1 className="page-title">{tr('المستخدمون وإدارة التفويض', 'Users & delegation')}</h1><p className="muted">{tr('لا تظهر إلا الحسابات الواقعة في نطاق المشرف المسؤول. تعديل الدور والإسناد محصوران بالمالك، بينما يبقى تحقق الخادم هو الحاسم.', 'Only accounts in a responsible manager’s scope are returned. Role and assignment changes are owner-only; server enforcement remains decisive.')}</p></div><span className="admin-server-note">{tr('العرض لا يمنح صلاحية', 'Visibility does not grant permission')}</span></section>
+      <section className="admin-section-intro"><div><h1 className="page-title">{tr('المستخدمون وإدارة التفويض', 'Users & delegation')}</h1><p className="muted">{tr('ابحث عن الحساب، ثم افتح هويته أو حدّث بياناته وخياراته من مكان واحد.', 'Find an account, then open its identity or update its details and options in one place.')}</p></div></section>
       <section className="card admin-request-filter"><label className="field"><span>{tr('البحث بالاسم أو البريد أو C# أو النطاق', 'Search name, email, C#, or subdomain')}</span><input value={userQuery} onChange={(event) => setUserQuery(event.target.value)} /></label><label className="field"><span>{tr('الحالة', 'Status')}</span><select value={userStatus} onChange={(event) => setUserStatus(event.target.value)}><option value="">{tr('كل الحالات', 'All statuses')}</option><option value="active">{tr('نشط', 'Active')}</option><option value="suspended">{tr('معلق', 'Suspended')}</option></select></label></section>
       <div className="admin-user-layout">
         <section className="admin-user-list stack">
@@ -754,7 +758,7 @@ export default function Admin() {
           }) : <Empty title={tr('لا توجد بيانات مستخدمين معروضة ضمن نطاقك.', 'No user data was returned in your scope.')} />}
         </section>
         <section className="card admin-user-detail">
-          {selectedUser ? <UserDetail item={selectedUser} lang={lang} tr={tr} services={services} users={users} points={points} setPoints={setPoints} grantDays={grantDays} setGrantDays={setGrantDays} serviceKey={serviceKey} setServiceKey={setServiceKey} role={role} setRole={setRole} financial={financial} setFinancial={setFinancial} assignedTo={assignedTo} setAssignedTo={setAssignedTo} busy={busy} owner={owner} financialOperator={financialOperator} onPublish={() => { const siteId = text(field(selectedUser, 'site_id'), ''); if (siteId) void mutate('publish-'+siteId, () => api(`/api/admin/sites/${siteId}/publish`, { method: 'POST' }), { success: tr('نُشر الموقع وأصبح متاحاً على رابطه.', 'The site is published and available at its address.') }); }} onAction={userAction} onAudit={() => switchTab('audit')} onNotify={(recipient) => { setNotification((value) => ({ ...value, recipient })); switchTab('overview'); }} /> : <Empty title={tr('اختر مستخدماً لرؤية البطاقة التفصيلية وإجراء العمليات المصرح بها.', 'Choose a user to view the detailed card and authorized actions.')} />}
+          {selectedUser ? <UserDetail item={selectedUser} lang={lang} tr={tr} services={services} users={users} points={points} setPoints={setPoints} grantDays={grantDays} setGrantDays={setGrantDays} serviceKey={serviceKey} setServiceKey={setServiceKey} role={role} setRole={setRole} financial={financial} setFinancial={setFinancial} assignedTo={assignedTo} setAssignedTo={setAssignedTo} busy={busy} owner={owner} financialOperator={financialOperator} onPublish={() => { const siteId = text(field(selectedUser, 'site_id'), ''); if (siteId) void mutate('publish-'+siteId, () => api(`/api/admin/sites/${siteId}/publish`, { method: 'POST' }), { fresh:false, success: tr('نُشر الموقع وأصبح متاحاً على رابطه.', 'The site is published and available at its address.') }); }} onAction={userAction} onAudit={() => switchTab('audit')} onNotify={(recipient) => { setNotification((value) => ({ ...value, recipient })); switchTab('overview'); }} /> : <Empty title={tr('اختر مستخدماً لرؤية البطاقة التفصيلية وإجراء العمليات المصرح بها.', 'Choose a user to view the detailed card and authorized actions.')} />}
         </section>
       </div>
     </div>
@@ -772,7 +776,7 @@ export default function Admin() {
         const baseVersion = field(review, 'baseVersion', 'base_version');
         const currentPublishedVersion = field(review, 'currentPublishedVersion', 'current_published_version', 'publishedVersion', 'published_version');
         const stale = knownBoolean(field(review, 'isStale', 'is_stale'));
-        const reviewBusy = busy === `review-${id}-approve` || busy === `review-${id}-reject` || busy === `review-${id}-changes`;
+        const reviewBusy = Boolean(busy);
         const preview = text(field(review, 'preview_url', 'snapshot_url'), id ? `/api/admin/reviews/${encodeURIComponent(id)}/preview` : '');
         const memberEmail = text(field(review, 'submitter_email', 'email'), '');
         const memberWhatsapp = text(field(review, 'submitter_whatsapp', 'whatsapp')).replace(/\D/g, '');
@@ -780,15 +784,7 @@ export default function Admin() {
         const publicSite = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(siteName) ? `https://${siteName}.ksa.men` : '';
         return <article className="card admin-review" key={id || text(field(review, 'submitted_at'))}>
           <div className="row admin-review-top"><div><h2>{text(field(review, 'site_name', 'name', 'title'))}</h2><p className="muted">{tr('المقدم', 'Submitted by')}: {text(field(review, 'submitter_name', 'user_name', 'email'))} · {asDate(field(review, 'submitted_at', 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(review, 'status'))}`}>{pending ? tr('بانتظار النشر', 'Awaiting publication') : tr('تم اتخاذ القرار', 'Decision recorded')}</span></div>
-          <details className="admin-review-comparison"><summary>{tr('تفاصيل الطلب', 'Request details')}</summary><dl className="admin-review-provenance" aria-label={tr('مصدر اللقطة وحالتها', 'Snapshot provenance and state')}>
-            <div><dt>{tr('العضو', 'Member')}</dt><dd>{memberId ? <bdi dir="ltr">C{memberId}</bdi> : tr('غير متاح', 'Unavailable')}</dd></div>
-            <div><dt>{tr('الاسم', 'Name')}</dt><dd>{text(field(review, 'submitter_name', 'user_name', 'name', 'email'), tr('غير متاح', 'Unavailable'))}</dd></div>
-            <div><dt>{tr('وقت الإرسال', 'Submitted')}</dt><dd>{asDate(field(review, 'submitted_at', 'created_at'), lang)}</dd></div>
-            <div><dt>{tr('إصدار الأساس', 'Base version')}</dt><dd><bdi dir="ltr">{text(baseVersion, tr('غير متاح', 'Unavailable'))}</bdi></dd></div>
-            <div><dt>{tr('إصدار النشر الحالي', 'Current published version')}</dt><dd><bdi dir="ltr">{text(currentPublishedVersion, tr('غير متاح', 'Unavailable'))}</bdi></dd></div>
-            <div><dt>{tr('حالة الأساس', 'Base state')}</dt><dd><span className={`admin-status ${stale === true ? 'danger' : stale === false ? 'success' : 'neutral'}`}>{stale === true ? tr('قديمة — تغيّر النشر', 'Stale — publication changed') : stale === false ? tr('مطابقة للنشر الحالي', 'Matches current publication') : tr('غير متاح', 'Unavailable')}</span></dd></div>
-          </dl></details>
-          <details className="admin-review-comparison"><summary className="admin-review-comparison-heading"><strong>{tr('عرض مقارنة اللقطة', 'View snapshot comparison')}</strong><span className="muted">{tr('افتح تفاصيل الحقول عند الحاجة؛ معاينة اللقطة والقرار مستقلان أدناه.', 'Expand field details as needed; preview and decision remain separately accessible below.')}</span></summary><SnapshotDiff review={review} tr={tr} /></details>
+          {stale===true&&<p className="muted">{tr('وصل إصدار أحدث لهذا الموقع. حدّث قائمة الطلبات قبل الاعتماد.', 'A newer site version is available. Refresh requests before approval.')}</p>}
           <div className="admin-actions">
             {pending && <button className="button" type="button" disabled={!id || reviewBusy || stale === true} onClick={() => decideReview(review, 'approve')}>{reviewBusy ? tr('جارٍ النشر', 'Publishing') : tr('اعتماد ونشر الموقع', 'Approve & publish site')}</button>}
             <button className="button button-quiet" type="button" onClick={() => setSelectedReview(expanded ? null : review)}>{expanded ? tr('إخفاء التفاصيل', 'Hide review details') : pending ? tr('طلب تعديل أو رفض', 'Request changes or reject') : tr('عرض تفاصيل القرار', 'View decision details')}</button>
@@ -797,7 +793,7 @@ export default function Admin() {
             {memberEmail && <a className="button button-quiet" href={`mailto:${memberEmail}`}>{tr('إرسال بريد', 'Email member')}</a>}
             {memberWhatsapp && <a className="button button-quiet" href={`https://wa.me/${memberWhatsapp}`} target="_blank" rel="noreferrer">{tr('فتح واتساب', 'Open WhatsApp')}</a>}
           </div>
-          {expanded && <div className="admin-review-detail stack">{pending ? <><label className="field"><span>{tr('سبب القرار أو طلب التعديل', 'Decision or change-request reason')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={!id || reviewBusy} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر الموقع', 'Approve & publish site')}</button><button className="button button-secondary" type="button" disabled={!id || reviewBusy} onClick={() => decideReview(review, 'changes')}>{tr('طلب تعديل', 'Request changes')}</button><button className="button button-danger" type="button" disabled={!id || reviewBusy} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div>{owner && <div className="admin-site-decision"><label className="field"><span>{tr('سبب تعليق الموقع أو طلب معالجة بياناته', 'Reason to suspend the site or request data handling')}</span><textarea rows={2} value={siteReasons[text(field(review, 'site_id', 'siteId'), '')] ?? ''} onChange={(event) => setSiteReasons((current) => ({ ...current, [text(field(review, 'site_id', 'siteId'), '')]: event.target.value }))} /></label><div className="admin-actions"><button className="button button-secondary" type="button" onClick={() => decideSite(review, 'suspend')}>{tr('تعليق الموقع بسبب', 'Suspend with reason')}</button><button className="button button-danger" type="button" onClick={() => decideSite(review, 'delete_request')}>{tr('تسجيل طلب معالجة البيانات', 'Record a data-handling request')}</button></div></div>}</> : <p className="admin-finality">{tr('لا تظهر أزرار القرار إلا عندما يعيد الخادم حالة «قيد المراجعة».', 'Decision controls are available only while the server returns a pending review.')}</p>}</div>}
+          {expanded && <div className="admin-review-detail stack">{pending ? <><label className="field"><span>{tr('سبب القرار أو طلب التعديل', 'Decision or change-request reason')}</span><textarea rows={2} value={reviewReasons[id] ?? ''} onChange={(event) => setReviewReasons((current) => ({ ...current, [id]: event.target.value }))} /></label><div className="admin-actions"><button className="button" type="button" disabled={!id || reviewBusy} onClick={() => decideReview(review, 'approve')}>{tr('اعتماد ونشر الموقع', 'Approve & publish site')}</button><button className="button button-secondary" type="button" disabled={!id || reviewBusy} onClick={() => decideReview(review, 'changes')}>{tr('طلب تعديل', 'Request changes')}</button><button className="button button-danger" type="button" disabled={!id || reviewBusy} onClick={() => decideReview(review, 'reject')}>{tr('رفض مع السبب', 'Reject with reason')}</button></div>{owner && <div className="admin-site-decision"><label className="field"><span>{tr('سبب تعليق الموقع أو طلب معالجة بياناته', 'Reason to suspend the site or request data handling')}</span><textarea rows={2} value={siteReasons[text(field(review, 'site_id', 'siteId'), '')] ?? ''} onChange={(event) => setSiteReasons((current) => ({ ...current, [text(field(review, 'site_id', 'siteId'), '')]: event.target.value }))} /></label><div className="admin-actions"><button className="button button-secondary" type="button" onClick={() => decideSite(review, 'suspend')}>{tr('تعليق الموقع بسبب', 'Suspend with reason')}</button><button className="button button-danger" type="button" onClick={() => decideSite(review, 'delete_request')}>{tr('تسجيل طلب معالجة البيانات', 'Record a data-handling request')}</button></div></div>}</> : <p className="admin-finality">{tr('تم اتخاذ القرار. يمكنك فتح الموقع أو متابعة طلبات جديدة.', 'The decision is complete. Open the site or continue with new requests.')}</p>}</div>}
         </article>;
       }) : <Empty title={tr('لا توجد لقطات قيد المراجعة.', 'No snapshots are awaiting review.')} />}
     </div>

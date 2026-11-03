@@ -1,5 +1,8 @@
+import AuthPanel from './AuthPanel';
+import NotificationCenter from './NotificationCenter';
+import SessionReturn from './SessionReturn';
 import { DictatedInput, VoiceButton } from './DictatedField';
-import React,{useEffect,useState,useRef,lazy,Suspense} from 'react';
+import React,{useEffect,useState,useRef,useCallback,lazy,Suspense} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ArrowUpLeft,ArrowUpRight,Search,Menu,X,Sun,Moon,Globe,ShieldCheck,LockKeyhole,UserRound,Download,Copy,Check,MapPin,BriefcaseBusiness,ScanLine,Sparkles,Wallet,MessageCircle,ChevronDown,ExternalLink,Mail,Phone,Play,ChartNoAxesCombined,Building2,HeartHandshake,GraduationCap,Target,Info,Share2,Linkedin,Instagram,Facebook,Github,Youtube,Twitter,Link2} from 'lucide-react';
 import {api,AppContext,setCSRF,type User,useApp,Button} from './lib';
@@ -29,12 +32,12 @@ function App(){
  const [user,setUser]=useState<User|null>(null),[platform,setPlatform]=useState<any>(null);
  const [toast,setToast]=useState(''),[menu,setMenu]=useState(false),[loading,setLoading]=useState(true);
  const [install,setInstall]=useState<any>(null),[update,setUpdate]=useState<ServiceWorker|null>(null),[error,setError]=useState('');
- const t=(ar:string,en:string)=>lang==='ar'?ar:en;
+ const t=useCallback((ar:string,en:string)=>lang==='ar'?ar:en,[lang]);
 	 const path=location.pathname,sub=location.hostname.endsWith('.ksa.men')&&location.hostname!=='www.ksa.men';
 	 const publicExport=path.startsWith('/export/')&&new URLSearchParams(location.search).has('public');
  const workspace=path==='/dashboard'||path==='/admin'||path.startsWith('/export/');
  const season=seasonalThemeEnabled?activeSeason(platform?.season):'';
- const refresh=async()=>{if(sub)return;const d:any=await api('/api/auth/me');setUser(d.user);setCSRF(d.csrf||'');};
+ const refresh=async(verifiedUser?:User)=>{if(sub)return;try{const d:any=await api('/api/auth/me');if(!d.user&&verifiedUser){setUser(verifiedUser);return;}setUser(d.user);setCSRF(d.csrf||'');}catch(error){if(verifiedUser)setUser(verifiedUser);else throw error;}};
  useEffect(()=>{document.documentElement.lang=lang;document.documentElement.dir=lang==='ar'?'rtl':'ltr';localStorage.setItem('ksa-lang',lang);},[lang]);
  useEffect(()=>{document.documentElement.dataset.theme=theme;localStorage.setItem('ksa-theme',theme);},[theme]);
  useEffect(()=>{if(season)document.documentElement.dataset.season=season;else delete document.documentElement.dataset.season;},[season]);
@@ -80,11 +83,12 @@ function App(){
     <a href={prefix+(user?'/dashboard':'/auth')} className="nav-main">{user?t('مساحتي','My space'):t('الدخول','Sign in')}<UserRound size={16}/></a>
     {user&&<button className="nav-logout" type="button" onClick={logout}>{t("تسجيل الخروج","Sign out")}</button>}
    </nav>
-   <div className="header-tools">{!sub&&<button className="icon-button sanad-header-open" type="button" onClick={()=>window.dispatchEvent(new Event("ksa:sanad-open"))} aria-label={t("فتح دليل سند","Open Sanad guide")}><MessageCircle size={19}/></button>}<button className="icon-button language-tool" onClick={()=>setLang(lang==='ar'?'en':'ar')} aria-label={t('English','العربية')}><Globe size={17}/><span>{lang==='ar'?'EN':'ع'}</span></button><button className="icon-button" onClick={()=>setTheme(theme==='dark'?'light':'dark')} aria-label={t('تبديل المظهر','Switch theme')}>{theme==='dark'?<Sun size={19}/>:<Moon size={19}/>}</button>{user&&<button className="icon-button logout" onClick={logout}>{t('خروج','Exit')}</button>}<button className="icon-button menu-button" onClick={()=>setMenu(!menu)} aria-label={t('القائمة','Menu')} aria-expanded={menu} aria-controls="main-nav">{menu?<X size={22}/>:<Menu size={22}/>}</button></div>
+   <div className="header-tools">{!sub&&user&&<NotificationCenter/>}{!sub&&<button className="icon-button sanad-header-open" type="button" onClick={()=>window.dispatchEvent(new Event("ksa:sanad-open"))} aria-label={t("فتح دليل سند","Open Sanad guide")}><MessageCircle size={19}/></button>}<button className="icon-button language-tool" onClick={()=>setLang(lang==='ar'?'en':'ar')} aria-label={t('English','العربية')}><Globe size={17}/><span>{lang==='ar'?'EN':'ع'}</span></button><button className="icon-button" onClick={()=>setTheme(theme==='dark'?'light':'dark')} aria-label={t('تبديل المظهر','Switch theme')}>{theme==='dark'?<Sun size={19}/>:<Moon size={19}/>}</button>{user&&<button className="icon-button logout" onClick={logout}>{t('خروج','Exit')}</button>}<button className="icon-button menu-button" onClick={()=>setMenu(!menu)} aria-label={t('القائمة','Menu')} aria-expanded={menu} aria-controls="main-nav">{menu?<X size={22}/>:<Menu size={22}/>}</button></div>
   </div></header>
   {update&&<div className="update-bar" role="status"><span>{t('تجربة أحدث جاهزة. احفظ عملك ثم حدّث.','A fresh experience is ready. Save your work before updating.')}</span><Button onClick={()=>{update.postMessage('SKIP_WAITING');navigator.serviceWorker.addEventListener('controllerchange',()=>location.reload(),{once:true});}}>{t('تحديث','Update')}</Button></div>}
   <main id="main-content"><Suspense fallback={<div className="loader"><span className="load-line"/><p>{t('جارٍ التحميل','Loading')}</p></div>}>{page}</Suspense></main>
   {!sub&&<Sanad/>}
+  {!sub&&user&&<SessionReturn/>}
   <div className="platform-controls">
    {install&&<button className="install-action" onClick={async()=>{await install.prompt();setInstall(null);}}><Download size={17}/>{t('ثبّت التطبيق','Install app')}</button>}
    {!sub&&/iPad|iPhone|iPod/.test(navigator.userAgent)&&!matchMedia('(display-mode: standalone)').matches&&<details className="ios-install"><summary>{t('ثبّت KSA.MEN على iPhone','Install KSA.MEN on iPhone')}</summary><p>{t('من Safari: مشاركة، ثم «إضافة إلى الشاشة الرئيسية».','In Safari: Share, then Add to Home Screen.')}</p></details>}
@@ -120,66 +124,8 @@ function Home({season}:{season:string}){
 }
 function FeatureCards(){const{t}=useApp();return <div className="feature-grid">{features.map((f,i)=><article className="feature-card" key={f.ar}><span className="feature-number">0{i+1}</span><f.icon size={28}/><h3>{t(f.ar,f.en)}</h3><p>{t(f.desc,f.eng)}</p></article>)}</div>;}
 function Features(){const{t,lang}=useApp();const content=useManagedContent('features');return <div className="page"><PageTitle title={content?.['title_'+lang]||t('كل ما تحتاجه لظهور يليق بك','Everything for a presence worthy of you')} subtitle={content?.['body_'+lang]||t('هوية رقمية مستقلة. أدوات مشاركة عملية. تحكم واضح في بياناتك.','An independent identity. Practical sharing tools. Clear control of your data.')}/><FeatureCards/><section className="card trial-card"><h2>{t('ابدأ بسبعة أيام كاملة','Start with seven full days')}</h2><p>{t('جميع الخدمات متاحة خلال التجربة. بعدها يبقى موقعك الأساسي وQR متاحين، وتخضع الخدمات الإضافية لاستحقاقك.','All services are available during your trial. Your basic site and QR remain available afterward; extra services follow your entitlement.')}</p><a href="/auth?register=1" className="button primary">{t('أنشئ هويتك','Create your identity')}</a></section></div>;}
-function Auth(){
- const{t,refresh,notify,user}=useApp();
- const[mode,setMode]=useState(new URLSearchParams(location.search).has('register')?'register':'login');
- const[email,setEmail]=useState(user?.email||''),[name,setName]=useState(''),[phone,setPhone]=useState('');
- const[agree,setAgree]=useState(false),[challenge,setChallenge]=useState(''),[code,setCode]=useState(''),[pin,setPin]=useState('');
- const[busy,setBusy]=useState(false),[err,setErr]=useState(''),[quick,setQuick]=useState(false),[showPin,setShowPin]=useState(false);
- useEffect(()=>{window.dispatchEvent(new CustomEvent('ksa:sanad-context',{detail:{section:'auth',step:quick?'pin':challenge?'verify':mode}}));},[mode,quick,challenge]);
- const changeMethod=(nextMode:string,nextQuick=false)=>{setMode(nextMode);setQuick(nextQuick);setChallenge('');setCode('');setPin('');setShowPin(false);setErr('');};
- const submit=async(e:React.FormEvent)=>{
-  e.preventDefault();if(busy)return;setBusy(true);setErr('');
-  try{
-   const normalizedEmail=email.trim().toLowerCase();
-   if(quick){
-    const d:any=await api('/api/auth/quick',{method:'POST',body:JSON.stringify({email:normalizedEmail,pin})});
-    setCSRF(d.csrf);await refresh();location.href=authDestination(d.user.role);return;
-   }
-   if(!challenge){
-    const body={email:normalizedEmail,account:new URLSearchParams(location.search).get('account')||undefined,purpose:mode,...(mode==='register'?{name:name.trim(),whatsapp:phone.trim(),consent:agree,ageConfirmed:agree,eligibilityConfirmed:agree,referral:new URLSearchParams(location.search).get('ref')||undefined}:{})};
-    const d:any=await api('/api/auth/request',{method:'POST',body:JSON.stringify(body)});
-    setEmail(normalizedEmail);setChallenge(d.challenge);notify(d.message);
-   }else{
-    const d:any=await api('/api/auth/verify',{method:'POST',body:JSON.stringify({challenge,code,...(mode==='register'&&pin?{pin}:{})})});
-    setCSRF(d.csrf);await refresh();location.href=authDestination(d.user.role);
-   }
-  }catch(e:any){setErr(e.message||t('تعذر الدخول، حاول مجددًا','Sign-in failed. Please try again.'));}
-  finally{setBusy(false);}
- };
- return <div className="auth-page">
-  <section className="auth-story">
-   <div className="auth-mark"><img src="/assets/logo-emblem.webp" alt=""/></div><span className="eyebrow">{t('الخطوة الأولى إلى حضورك','YOUR NEXT CHAPTER')}</span>
-   <h1>{t('اسمك عنوانك.','Your name. Your address.')}<br/><span>{t('والقصة قصتك.','The story is yours.')}</span></h1>
-   <p>{t('مساحة مهنية للرجال السعوديين والمقيمين والمحبين للمملكة، تبدأ بخطوة بسيطة.','A professional space for Saudi men, residents, and people who value the Kingdom. Start with one simple step.')}</p>
-   <img src="/assets/cover-720.webp?rev=launch20261028?rev=design20261028" alt=""/>
-   <div className="auth-benefits"><p><Check/>{t('عنوان مستقل يحمل اسمك','An independent address')}</p><p><Check/>{t('٧ أيام مجانية لجميع المزايا','7 free days with every feature')}</p><p><ShieldCheck/>{t('رمز بريد آمن، دون كلمة مرور عامة','Secure email verification')}</p></div>
-  </section>
-  <section className="auth-card card">
-   <div className="auth-card-top"><span className="eyebrow">{t('مساحتك الخاصة','YOUR OWN SPACE')}</span><ShieldCheck size={21}/></div>
-   <h2>{quick?t('الدخول السريع','Email & PIN sign-in'):challenge?t('تحقق من بريدك','Check your email'):mode==='register'?t('أنشئ موقعك','Create your site'):mode==='recover'?t('استرجاع الحساب','Recover your account'):t('عودًا مرحبًا','Welcome back')}</h2>
-   <p className="muted">{challenge?<>{mode==='register'?t('أرسلنا رمزًا إلى','A code was sent to'):t('إن كان بريدك مسجلاً، ستصلك رسالة التحقق:','If your email is registered, check for your code:')} <bdi dir="ltr">{email}</bdi></>:quick?t('بريد الحساب ورمزك الشخصي، على جهاز موثوق فقط.','Your account email and PIN, on a trusted device only.'):t('التحقق من البريد يحمي حسابك وبياناتك.','Email verification protects your account and data.')}</p>
-   {!challenge&&mode!=='register'&&<div className="auth-methods" role="group" aria-label={t('طريقة الدخول','Sign-in method')}><button type="button" aria-pressed={!quick} className={!quick?'selected':''} onClick={()=>changeMethod('login',false)}><Mail size={16}/>{t('رمز البريد','Email code')}</button><button type="button" aria-pressed={quick} className={quick?'selected':''} onClick={()=>changeMethod('login',true)}><LockKeyhole size={16}/><bdi>PIN</bdi></button></div>}
-   <form onSubmit={submit} className="stack">
-    {!challenge&&<label className="field">{t('البريد الإلكتروني','Email')}<input required type="email" name="email" autoComplete={quick?'username':'email'} value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" dir="ltr" autoCapitalize="none" spellCheck={false}/></label>}
-    {!quick&&!challenge&&mode==='register'&&<>
-     <label className="field">{t('اسمك','Your name')}<input required name="name" minLength={2} value={name} onChange={e=>setName(e.target.value)} autoComplete="name"/></label>
-     <label className="field">{t('رقم واتساب','WhatsApp')}<input required name="whatsapp" type="tel" value={phone} onChange={e=>setPhone(e.target.value)} autoComplete="tel" dir="ltr" placeholder="05xxxxxxxx"/></label>
-     <label className="check-label"><input type="checkbox" required checked={agree} onChange={e=>setAgree(e.target.checked)}/><span>{t('أقر ببلوغي 18 عاماً وانطباق فئة المنصة عليّ، وأوافق على','I confirm I am 18 or older, eligible to use the platform, and agree to the')} <a href="/privacy" target="_blank">{t('سياسة الخصوصية','privacy policy')}</a> {t('و','and')} <a href="/terms" target="_blank">{t('سياسة الاستخدام','terms')}</a>، {t('وأقر بصحة بياناتي.','and confirm my data is accurate.')}</span></label>
-    </>}
-    {challenge&&<label className="field">{t('رمز التحقق — ٦ أرقام','Verification code — 6 digits')}<input className="otp" name="code" required inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={e=>setCode(numericCode(e.target.value))} dir="ltr"/></label>}
-    {(quick||(challenge&&mode==='register'))&&<label className="field">{quick?'PIN':t('اختر PIN من ٦ أرقام للجهاز الموثوق','Choose a 6-digit PIN for your trusted device')}<input required name="pin" inputMode="numeric" type={showPin?'text':'password'} autoComplete={quick?'current-password':'new-password'} pattern="[0-9]{6}" maxLength={6} value={pin} onChange={e=>setPin(numericCode(e.target.value))} dir="ltr"/><button className="text-link" type="button" aria-pressed={showPin} onClick={()=>setShowPin(!showPin)}>{showPin?t('إخفاء PIN','Hide PIN'):t('إظهار PIN','Show PIN')}</button></label>}
-    {err&&<p className="error" role="alert">{err}</p>}
-    <Button disabled={busy} className="primary">{busy?t('لحظة من فضلك…','One moment…'):challenge?t('تحقق وادخل','Verify & sign in'):quick?t('دخول','Sign in'):t('أرسل رمز التحقق','Send verification code')}<ArrowUpLeft size={18}/></Button>
-   </form>
-   <div className="auth-links">{challenge?<button disabled={busy} onClick={()=>{setChallenge('');setCode('');setPin('');setErr('');}}>{t('إعادة إرسال الرمز','Request another code')}</button>:<>
-    <button disabled={busy} onClick={()=>changeMethod(mode==='register'?'login':'register')}>{mode==='register'?t('لديك حساب؟ ادخل','Already a member? Sign in'):t('أول زيارة؟ أنشئ حسابك','New here? Create an account')}</button>
-    <button disabled={busy} onClick={()=>changeMethod('recover')}>{t('استرجاع الحساب','Recover account')}</button>
-    <p className="auth-security-note"><ShieldCheck size={15}/>{t('رمز آمن. لا كلمة مرور مشتركة.','Secure verification. No shared password.')}</p>
-   </>}</div>
-  </section>
- </div>;
-}
+function Auth(){return <AuthPanel/>;}
+
 function Gate({platform,onSuccess}:{platform:any,onSuccess:()=>void}){const{t}=useApp();const[p,setP]=useState(''),[error,setError]=useState('');return <div className="gate card"><img src="/assets/logo.webp" alt="KSA.MEN"/><LockKeyhole size={28}/><h1>{platform.lock.reason||t('نهيئ تجربة تليق بك','Preparing a worthy experience')}</h1><p>{platform.lock.message}</p>{platform.lock.passwordEnabled&&<form onSubmit={async e=>{e.preventDefault();try{await api('/api/gate',{method:'POST',body:JSON.stringify({password:p})});onSuccess();}catch(e:any){setError(e.message);}}}><input value={p} type="password" onChange={e=>setP(e.target.value)} placeholder={t('كلمة مرور الدخول الخاص','Private access password')}/><Button className="primary">{t('دخول','Enter')}</Button></form>}{error&&<p className="error">{error}</p>}<a href="/auth" className="text-link">{t('دخول المالك والإدارة','Owner & administration sign-in')}</a></div>;}
 export function SearchPage(){
  const {t,notify,lang}=useApp();

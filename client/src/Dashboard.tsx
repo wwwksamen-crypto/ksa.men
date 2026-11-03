@@ -644,15 +644,17 @@ export default function Dashboard() {
     } catch (error) { if (activeTab === 'messages') notify(errorMessage(error)); }
   }, [activeTab, notify]);
 
-  const loadNotifications = useCallback(async () => {
-    try {
-      const response = await api<Pick<DashboardData, 'notifications'>>('/api/dashboard');
-      const nextNotifications = asArray<Notification>(response.notifications);
-      observeNotifications(nextNotifications);
-      // Notification polling intentionally merges only notifications: it never replaces an in-progress draft.
-      setDashboard((current) => current ? { ...current, notifications: nextNotifications } : current);
-    } catch { /* A background refresh must not disrupt the current dashboard. */ }
-  }, [observeNotifications]);
+  useEffect(() => {
+    const updated = (event: Event) => {
+      const detail=(event as CustomEvent).detail;
+      if(detail?.userId!==user?.id)return;
+      const notifications=asArray<Notification>(detail.notifications);
+      observeNotifications(notifications);
+      setDashboard(current=>current?{...current,notifications}:current);
+    };
+    window.addEventListener('ksa:notifications-updated',updated);
+    return()=>window.removeEventListener('ksa:notifications-updated',updated);
+  },[user?.id,observeNotifications]);
 
   const refreshSavedImages = async (siteId: string) => {
     try {
@@ -713,28 +715,6 @@ export default function Dashboard() {
 
   useEffect(() => { void loadDashboard(); void loadServices(); }, [loadDashboard, loadServices]);
   useEffect(() => { if (activeTab === 'messages') void loadMessages(); }, [activeTab, loadMessages]);
-  useEffect(() => {
-    let interval: number | undefined;
-    const stop = () => {
-      if (interval !== undefined) window.clearInterval(interval);
-      interval = undefined;
-    };
-    const start = () => {
-      if (document.visibilityState !== 'visible' || interval !== undefined) return;
-      interval = window.setInterval(() => {
-        if (document.visibilityState === 'visible') void loadNotifications();
-      }, 30_000);
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        void loadNotifications();
-        start();
-      } else stop();
-    };
-    start();
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => { stop(); document.removeEventListener('visibilitychange', onVisibilityChange); };
-  }, [loadNotifications]);
   const loadIdentityInsights = useCallback(async () => {
     if (!activeSite) { setIdentityInsights(null); return; }
     setInsightsLoading(true);
@@ -841,6 +821,7 @@ export default function Dashboard() {
     return !flush;
   }, [notify, tr]);
   flushSaveRef.current = saveDraft;
+  useEffect(()=>{const restored=()=>{if(dirtyRef.current&&!uploadSiteRef.current)void flushSaveRef.current(true,true);};window.addEventListener('ksa:session-restored',restored);return()=>window.removeEventListener('ksa:session-restored',restored);},[]);
 
   useEffect(() => {
     if (!dirtyRef.current) return;
@@ -861,19 +842,26 @@ export default function Dashboard() {
     return () => window.clearInterval(interval);
   }, [saveDraft]);
 
+  const [submissionMessage,setSubmissionMessage]=useState<{siteId:string;version:number;message:string}|null>(null);
+  const reviewingRef=useRef(false);
   const submitForReview = async () => {
-    if (!activeSite || submittingReview || openingSiteRef.current) return;
+    if (!activeSite || reviewingRef.current || submittingReview || openingSiteRef.current) return;
     if (uploadSiteRef.current) { notify(tr('نثبّت الصورة أولاً، ثم يمكنك طلب النشر.', 'Let your image finish saving before requesting publication.')); return; }
     const submittedSiteId = siteIdRef.current;
+    reviewingRef.current=true;
     setSubmittingReview(true);
     try {
       if (!(await saveDraft(true, true)) || dirtyRef.current || siteIdRef.current !== submittedSiteId) return;
-      const response = await api<{ review?: { id?: string }; id?: string }>(`/api/sites/${encodeURIComponent(submittedSiteId!)}/submit`, { method: 'POST', body: JSON.stringify({ version: versionRef.current }) });
+      const submittedVersion=versionRef.current;
+      const response = await api<{ review?: { id?: string }; id?: string; message?: string; alreadyPublished?: boolean }>(`/api/sites/${encodeURIComponent(submittedSiteId!)}/submit`, { method: 'POST', body: JSON.stringify({ version: versionRef.current }) });
       setPreviewOpen(false);
       await loadDashboard();
-      notify(response.review?.id || response.id ? tr('وصل طلب النشر إلى المشرف.', 'Your publishing request reached the administrator.') : tr('تم استلام طلب المراجعة.', 'Review request received.'));
+      const message=lang==='ar'&&response.message?response.message:response.alreadyPublished?tr('موقعك معتمد بالفعل. يمكنك متابعة تطويره.', 'Your site is already published. Continue developing it.'):tr('شكراً لك. موقعك تحت المراجعة، وسنبلغك هنا وبالبريد فور اعتماده ونشره.', 'Thank you for building your identity. Your site is under review. We will notify you here and by email when it is approved and published.');
+      setSubmissionMessage({siteId:submittedSiteId!,version:submittedVersion,message});
+      window.dispatchEvent(new Event('ksa:notifications-refresh'));
+      notify(message);
     } catch (error) { notify(errorMessage(error)); }
-    finally { setSubmittingReview(false); }
+    finally { reviewingRef.current=false; setSubmittingReview(false); }
   };
 
   const compressImage = async (file: File, initialMaxSide = 2200): Promise<File> => {
@@ -1206,11 +1194,6 @@ export default function Dashboard() {
     catch (error) { notify(errorMessage(error)); }
   };
 
-  const markNotificationRead = async (notification: Notification) => {
-    if (notification.read_at) return;
-    try { await api(`/api/notifications/${encodeURIComponent(notification.id)}/read`, { method: 'POST', body: JSON.stringify({}) }); setDashboard((current) => current ? { ...current, notifications: asArray<Notification>(current.notifications).map((item) => item.id === notification.id ? { ...item, read_at: Math.floor(Date.now() / 1000) } : item) } : current); }
-    catch (error) { notify(errorMessage(error)); }
-  };
 
   const balance = Number(dashboard?.wallet?.balance ?? (user as { balance?: number }).balance ?? 0);
   const memberPreferences = dashboard?.preferences ?? defaultMemberPreferences;
@@ -1218,7 +1201,7 @@ export default function Dashboard() {
   const siteAnalytics = (activeSite?.analytics ?? (dashboard?.analytics && activeSite ? (dashboard.analytics as Record<string, unknown>)[activeSite.id] : null)) as Record<string, unknown> | unknown[] | null;
   const analyticsEntries = siteAnalytics && typeof siteAnalytics === 'object' && !Array.isArray(siteAnalytics) ? Object.entries(siteAnalytics) : [];
   const reviews = asArray<Record<string, unknown>>(dashboard?.reviews).filter((review) => review.kind !== 'redirect' && (!activeSite || review.site_id === activeSite.id));
-  const notifications = asArray<Notification>(dashboard?.notifications);
+
   const conversations = asArray<Conversation>(messagesData?.conversations);
   const requests = asArray<Record<string, unknown>>(messagesData?.requests);
   const existingQuickLinks = asArray<QuickLink>(dashboard?.quickLinks);
@@ -1281,13 +1264,6 @@ export default function Dashboard() {
 
           <section className="dashboard-content">
 
-      {notifications.length > 0 && <section className="dashboard-notifications card" aria-label={tr('الإشعارات', 'Notifications')}>
-        <div className="dashboard-section-heading"><div><Bell size={18} /><h2>{tr('التنبيهات', 'Notifications')}</h2></div><span>{notifications.filter((item) => !item.read_at).length} {tr('غير مقروء', 'unread')}</span></div>
-        <div className="dashboard-notification-list">
-          {notifications.slice(0, 3).map((item) => <button key={item.id} className={!item.read_at ? 'is-unread' : ''} onClick={() => void markNotificationRead(item)}><Bell size={15}/><span><strong>{item.title}</strong>{item.body && <small>{item.body}</small>}</span><time>{formatDate(item.created_at, locale)}</time></button>)}
-        </div>
-      </section>}
-
       {activeTab === 'editor' && <section className="dashboard-editor">
         {!activeSite ? <>
           <InitialNameReservation
@@ -1303,7 +1279,7 @@ export default function Dashboard() {
         <div className="dashboard-editor-top card">
           <div className="dashboard-site-row">
             <div>
-              <p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير مفوّض ضمن صلاحيات حسابك', 'Delegated editing within your account scope') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p>
+              <p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير الهوية بإدارة الفريق', 'Team-managed identity editor') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p>
               <h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2>
             </div>
             {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} disabled={openingSite || Boolean(uploading) || submittingReview} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
@@ -1312,8 +1288,11 @@ export default function Dashboard() {
           </div>
           <div className="dashboard-editor-actions" role="group" aria-label={tr('إجراءات المسودة', 'Draft actions')}>
             <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><Eye size={17}/>{tr('معاينة', 'Preview')}</button>
+            <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><FileCheck2 size={17}/>{tr('مراجعة بياناتي', 'Review my details')}</button>
+            <button className="button" onClick={() => void submitForReview()} disabled={!activeSite || submittingReview || Boolean(uploading)}><FileCheck2 size={17}/>{submittingReview ? tr('جارٍ إرسال موقعك', 'Sending your site') : tr('طلب نشر موقعي', 'Request publication')}</button>
             <button className="button" onClick={() => void saveDraft(false, true)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{saveState === 'saving' ? tr('جارٍ الحفظ', 'Saving') : tr('حفظ', 'Save')}</button>
           </div>
+          {submissionMessage?.siteId===activeSite?.id&&!dirtyRef.current&&submissionMessage.version===versionRef.current&&<div className="dashboard-submission-status" role="status"><p>{submissionMessage.message}</p><button className="icon-button" aria-label={tr('إغلاق رسالة الطلب', 'Dismiss submission message')} onClick={()=>setSubmissionMessage(null)}><X size={18}/></button></div>}
           {saveError && <p className="dashboard-error" role="alert">{saveError}</p>}
         </div>
 

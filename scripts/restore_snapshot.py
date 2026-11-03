@@ -33,6 +33,7 @@ if data.get('format')!='ksa-men-backup-v2' or not data.get('schema'):raise Syste
 tables=data['tables']
 # Never restore account invitation capabilities.
 tables['managed_claim_tokens']=[]
+tables['auth_mail_daily_limits']=[]
 if args.tombstones:
  supplied=json.loads(args.tombstones.read_text())
  entries=supplied.get('deleted_tombstones',supplied) if isinstance(supplied,(dict,list)) else []
@@ -47,7 +48,7 @@ purge('users','account','id');purge('sites','site','id');purge('media','media','
 accounts={rid for typ,rid in tombstones if typ=='account'};sites={rid for typ,rid in tombstones if typ=='site'}
 conversations={rid for typ,rid in tombstones if typ=='conversation'}
 if isinstance(tables.get('messages'),list):tables['messages']=[r for r in tables['messages'] if str(r.get('conversation_id')) not in conversations]
-for table in ['managed_accounts','managed_claim_tokens','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','sessions','devices']:
+for table in ['mail_delivery_events','managed_creation_requests','managed_accounts','managed_claim_tokens','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','sessions','devices']:
  if isinstance(tables.get(table),list):tables[table]=[r for r in tables[table] if str(r.get('user_id')) not in accounts]
 for table in ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody']:
  if isinstance(tables.get(table),list):tables[table]=[r for r in tables[table] if str(r.get('site_id')) not in sites]

@@ -98,13 +98,14 @@ describe.sequential('trusted-device quick authentication', () => {
     expect(bridge({ sql: 'SELECT email FROM auth_codes ORDER BY created_at DESC LIMIT 1' }).results[0].email).toBe(accounts.alpha.email);
   });
 
-  it('keeps legacy empty names valid for login, recovery, and reauthentication', async () => {
+  it('keeps legacy empty names valid and requires a session for sensitive reauthentication', async () => {
     const resend = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => resendFixture());
-    for (const purpose of ['login', 'recover', 'reauth']) {
+    for (const purpose of ['login', 'recover']) {
       const result = await post('/api/auth/request', { email: accounts.alpha.email, name: '', purpose });
       expect(result.response.status).toBe(200);
     }
-    expect(resend).toHaveBeenCalledTimes(3);
+    expect((await post('/api/auth/request',{email:accounts.alpha.email,name:'',purpose:'reauth'})).response.status).toBe(401);
+    expect(resend).toHaveBeenCalledTimes(2);
   });
 
   it('requires a meaningful Arabic-facing name only for registration', async () => {
