@@ -372,7 +372,7 @@
 }
 .dashboard-editor-substeps button svg { flex: 0 0 auto; color: var(--dash-accent); }
 
-.dashboard-edit-card { min-height: 420px; padding: clamp(18px, 3vw, 28px); }
+.dashboard-edit-card { min-width: 0; min-height: 420px; padding: 0; }
 .dashboard-edit-heading {
   display: flex;
   align-items: flex-start;
@@ -805,7 +805,7 @@
   .dashboard-editor-group:last-child { grid-column: auto; }
   .dashboard-editor-group-label { display: flex; margin-inline: 2px; }
   .dashboard-editor-substeps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .dashboard-edit-card { min-height: 360px; padding: 18px; }
+  .dashboard-edit-card { min-height: 360px; padding: 0; }
   .dashboard-edit-heading { flex-direction: column; }
   .dashboard-edit-heading > :is(.button, .dashboard-upload) { align-self: stretch; }
   .dashboard-media-pair,
@@ -1090,3 +1090,30 @@ html[data-season] .dashboard-loyalty { box-shadow: inset 0 1px 0 color-mix(in sr
   .dashboard-editor-substeps { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) { .dashboard-editor-substeps > button { transition: none; } }
+
+/* Comfortable portrait editing; these rules stay scoped to the existing editor. */
+.dashboard-edit-card__body :is(label, .dashboard-dictated-field, .dashboard-structured-list, .dashboard-link-list) { min-inline-size: 0; }
+.dashboard-edit-card__body label > span { display: block; margin-block-end: 7px; font-size: .9rem; font-weight: 700; }
+.dashboard-field-hint { margin-block: 0 12px; color: var(--dash-muted); font-size: .84rem; line-height: 1.65; }
+.dashboard-editor-top { flex-wrap: wrap; }
+.dashboard-editor-top > .dashboard-error { flex-basis: 100%; margin: 0; }
+.dashboard-saved-images { margin-block-start: 18px; border-block-start: 1px solid var(--dash-border); padding-block-start: 14px; }
+.dashboard-saved-images > summary { display: flex; align-items: center; gap: 9px; min-height: 48px; color: var(--dash-accent); font-weight: 750; cursor: pointer; }
+.dashboard-saved-images .dashboard-image-grid { margin-block-start: 12px; }
+.dashboard-saved-images .dashboard-image-grid > button { min-inline-size: 0; display: grid; gap: 8px; padding: 8px; border: 1px solid var(--dash-border); border-radius: 14px; background: var(--dash-surface); color: var(--dash-text); cursor: pointer; }
+.dashboard-saved-images img { inline-size: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 9px; }
+.dashboard-saved-images button > span { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 32px; font-weight: 700; }
+.dashboard-saved-images button:focus-visible { outline: 3px solid var(--dash-accent); outline-offset: 2px; }
+.dashboard-saved-images button:disabled { opacity: .55; cursor: default; }
+@media (max-width: 640px) {
+  .dashboard-edit-card__body { padding: 16px; }
+  .dashboard-edit-card > summary { padding-inline: 16px; }
+  .dashboard-edit-card__body :is(input.field, textarea.field, select.field) { font-size: 16px; line-height: 1.65; min-height: 48px; }
+  .dashboard-edit-card__body textarea.field { min-height: 132px; }
+  .dashboard-edit-card__body .dashboard-textarea { min-height: 220px; }
+  .dashboard-structured-list article { padding: 14px 12px; }
+  .dashboard-edit-card__body .dashboard-settings-grid { gap: 16px; }
+  .dashboard-edit-card__body .dashboard-list-card-top { margin-block-end: 16px; }
+  .dashboard-edit-card__body .dashboard-edit-heading { gap: 12px; }
+  .dashboard-edit-card__body .dashboard-edit-heading .button { min-height: 48px; }
+}

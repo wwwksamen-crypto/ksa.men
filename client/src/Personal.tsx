@@ -190,14 +190,16 @@ function TimelineList({ items }: { items: unknown[] }) {
       if (!item || typeof item !== 'object') return null;
 
       const entry = item as ProfileRecord;
-      const period = [stringValue(entry.start) || stringValue(entry.date), stringValue(entry.end)].filter(Boolean).join(' — ');
+      const start = stringValue(entry.start) || stringValue(entry.date);
+      const end = stringValue(entry.end);
+      const period = start || end;
       const title = stringValue(entry.title) || stringValue(entry.name) || stringValue(entry.role);
       const organization = stringValue(entry.organization) || stringValue(entry.institution);
       const description = stringValue(entry.description);
       if (!period && !title && !organization && !description) return null;
 
       return <article className="identity-timeline__entry" key={`${title || organization || 'entry'}-${index}`}>
-        {period && <p className="identity-timeline__period">{period}</p>}
+        {period && <p className="identity-timeline__period">{start && <bdi dir="auto">{start}</bdi>}{start && end && <span>—</span>}{end && <bdi dir="auto">{end}</bdi>}</p>}
         {title && <h3>{title}</h3>}
         {organization && <p className="identity-timeline__organization">{organization}</p>}
         {description && <p className="identity-timeline__description">{description}</p>}

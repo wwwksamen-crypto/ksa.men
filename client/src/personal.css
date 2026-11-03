@@ -435,11 +435,11 @@
 
 .identity-timeline__entry {
   border-inline-start: 1px solid var(--identity-border);
-  padding: 0 0 25px 22px;
+  padding-block: 0 25px;
+  padding-inline: 22px 0;
   position: relative;
 }
 
-[dir="rtl"] .identity-timeline__entry { padding: 0 22px 25px 0; }
 
 .identity-timeline__entry:last-child { padding-bottom: 0; }
 
@@ -451,7 +451,7 @@
   height: 12px;
   inset-inline-start: -6px;
   position: absolute;
-  top: 4px;
+  inset-block-start: 4px;
   width: 12px;
 }
 
@@ -460,7 +460,16 @@
   font-size: 12px;
   font-weight: 700;
   line-height: 1.45;
-  margin-bottom: 4px;
+  margin-block: 0 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  align-items: baseline;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  direction: ltr;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
 }
 
 .identity-timeline__entry h3 {
@@ -753,8 +762,7 @@ dialog.identity-lightbox::backdrop { background: #031009e8; backdrop-filter: blu
   .identity-section__icon { border-radius: 9px; flex-basis: 35px; height: 35px; width: 35px; }
   .identity-section__heading h2 { font-size: 21px; }
   .identity-section__body { padding: 18px; }
-  .identity-timeline__entry { padding-inline-start: 18px; }
-  [dir="rtl"] .identity-timeline__entry { padding-inline-end: 18px; padding-inline-start: 0; }
+  .identity-timeline__entry { padding-inline: 22px 0; }
   .identity-timeline__entry h3 { font-size: 18px; }
   .identity-timeline__description,
   .identity-timeline__note { font-size: 14px; }

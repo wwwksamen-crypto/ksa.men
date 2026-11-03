@@ -202,7 +202,7 @@ export function registerPublic(app:App){
     if(media.purpose==='receipt'&&!authorized){
       authorized=!!user&&(user.role==='owner'||(user.role==='manager'&&!!user.financial));
     }
-    if(media.purpose!=='receipt'&&!authorized&&media.site_id&&user&&['owner','manager','moderator'].includes(user.role)){
+    if(media.purpose!=='receipt'&&!authorized&&media.site_id&&user){
       try{await siteFor(c,media.site_id);authorized=true;}catch{}
       if(!authorized&&user.role==='moderator')authorized=!!await one(c,"SELECT id FROM reviews WHERE site_id=? AND instr(snapshot,?)>0 LIMIT 1",media.site_id,'/api/media/'+media.id);
     }

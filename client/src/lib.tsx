@@ -8,6 +8,8 @@ export class APIError extends Error {
   constructor(message:string,status:number,code=''){super(message);this.name='APIError';this.status=status;this.code=code;}
 }
 const errorText:Record<string,[string,string]>={
+  INCOMPLETE_PROFILE:['حُفظت كتابتك. أكمل الاسم والعناوين وبيانات التواصل والروابط قبل طلب النشر.','Your work is saved. Complete the name, entry titles, contact details and links before requesting publication.'],
+  INCOMPLETE_LINK:['أكمل وجهة الرابط قبل طلب النشر؛ كتابتك محفوظة.','Complete the link destination before publishing; your work is saved.'],
   INVALID_INPUT:['تحقق من الحقول المدخلة وأكمل البيانات المطلوبة.','Check the fields and complete the required information.'],
   INVALID_BODY:['تعذر قراءة الطلب. أعد المحاولة.','The request could not be read. Please retry.'],
   INVALID_MESSAGE:['تحقق من نص الرسالة والرموز المسموح بها.','Check the message text and allowed emoji.'],

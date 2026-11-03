@@ -284,45 +284,46 @@ export function defaultProfile(name = ''): Profile {
   };
 }
 
-function structuredItem(value: unknown, field: string): string | Json {
-  if (typeof value === 'string') return asString(value, field, 500, true);
+function structuredItem(value: unknown, field: string, editing = false): string | Json {
+  if (typeof value === 'string') return profileText(value, field, 500, !editing, editing);
   if (!isRecord(value)) apiError(422, `${field} items must be strings or structured entries`, 'VALIDATION');
   const allowed = new Set(['title', 'organization', 'start', 'end', 'description']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) apiError(422, `${field} contains an unsupported entry field`, 'VALIDATION');
   }
   const item = {
-    title: asString(value.title, `${field}.title`, 240, true),
-    organization: asString(value.organization, `${field}.organization`, 240),
-    start: asString(value.start, `${field}.start`, 40),
-    end: asString(value.end, `${field}.end`, 40),
-    description: asString(value.description, `${field}.description`, 3000),
+    title: profileText(value.title, `${field}.title`, 240, !editing, editing),
+    organization: profileText(value.organization, `${field}.organization`, 240, false, editing),
+    start: profileText(value.start, `${field}.start`, 40, false, editing),
+    end: profileText(value.end, `${field}.end`, 40, false, editing),
+    description: profileText(value.description, `${field}.description`, 3000, false, editing),
   };
   return item;
 }
 
-function profileList(value: unknown, field: string, maximum = 30): Array<string | Json> {
+function profileList(value: unknown, field: string, maximum = 30, editing = false): Array<string | Json> {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > maximum) {
     apiError(422, `${field} must contain at most ${maximum} items`, 'VALIDATION');
   }
-  return value.map((item) => structuredItem(item, field));
+  const entries = editing ? value : value.filter((item) => typeof item === 'string' ? item.trim() : !isRecord(item) || Object.values(item).some((text) => typeof text !== 'string' || text.trim()));
+  return entries.map((item) => structuredItem(item, field, editing));
 }
 
-function stringList(value: unknown, field: string, maximum = 30): string[] {
+function stringList(value: unknown, field: string, maximum = 30, editing = false): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > maximum) apiError(422, `${field} must contain at most ${maximum} items`, 'VALIDATION');
-  return value.map((item) => asString(item, field, 180, true));
+  return value.map((item) => profileText(item, field, 180, !editing, editing));
 }
 
-function skillRadar(value: unknown): Profile['skillRadar'] {
+function skillRadar(value: unknown, editing = false): Profile['skillRadar'] {
   if (value === undefined) return { human: [], scientific: [], professional: [] };
   if (!isRecord(value)) apiError(422, 'skillRadar must be an object', 'VALIDATION');
   for (const key of Object.keys(value)) if (!['human', 'scientific', 'professional'].includes(key)) apiError(422, `skillRadar cannot include ${key}`, 'VALIDATION');
   return {
-    human: stringList(value.human, 'skillRadar.human'),
-    scientific: stringList(value.scientific, 'skillRadar.scientific'),
-    professional: stringList(value.professional, 'skillRadar.professional'),
+    human: stringList(editing ? value.human : (Array.isArray(value.human) ? value.human.filter((item) => typeof item !== 'string' || item.trim()) : value.human), 'skillRadar.human', 30, editing),
+    scientific: stringList(editing ? value.scientific : (Array.isArray(value.scientific) ? value.scientific.filter((item) => typeof item !== 'string' || item.trim()) : value.scientific), 'skillRadar.scientific', 30, editing),
+    professional: stringList(editing ? value.professional : (Array.isArray(value.professional) ? value.professional.filter((item) => typeof item !== 'string' || item.trim()) : value.professional), 'skillRadar.professional', 30, editing),
   };
 }
 
@@ -334,27 +335,40 @@ function mediaList(value: unknown, field: string, maximum: number): string[] {
   return value.map((item) => mediaUrl(item, field));
 }
 
-function linkList(value: unknown, field: string, maximum: number): Array<string | { label: string; url: string }> {
+function linkList(value: unknown, field: string, maximum: number, editing = false): Array<string | { label: string; url: string }> {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > maximum) {
     apiError(422, `${field} must contain at most ${maximum} links`, 'VALIDATION');
   }
-  return value.map((item) => {
-    if (typeof item === 'string') return httpUrl(item, field);
+  const links = editing ? value : value.filter((item) => typeof item === 'string' ? item.trim() : !isRecord(item) || Boolean(item.label || item.url));
+  return links.map((item) => {
+    if (typeof item === 'string') return editing ? profileText(item, field, 2048, false, true) : httpUrl(item, field);
     if (!isRecord(item)) apiError(422, `${field} entries must be URLs or {label,url}`, 'VALIDATION');
     const allowed = new Set(['label', 'url']);
     for (const key of Object.keys(item)) {
       if (!allowed.has(key)) apiError(422, `${field} contains an unsupported link field`, 'VALIDATION');
     }
+    const url = editing ? profileText(item.url, `${field}.url`, 2048, false, true) : httpUrl(item.url, `${field}.url`);
+    if (!editing && !url) apiError(422, 'أكمل وجهة الرابط قبل طلب النشر.', 'INCOMPLETE_LINK');
     return {
-      label: asString(item.label, `${field}.label`, 100, true),
-      url: httpUrl(item.url, `${field}.url`),
+      label: profileText(item.label, `${field}.label`, 100, false, editing) || (!editing && url ? new URL(url).hostname.replace(/^www\./, '') : ''),
+      url,
     };
   });
 }
 
+/** Draft text retains whitespace and incomplete input; it never becomes public without validation. */
+function profileText(value: unknown, field: string, maximum: number, required = false, editing = false): string {
+  const normalized = asString(value, field, maximum, required);
+  if (editing && typeof value === 'string') {
+    if (value.length > maximum) apiError(422, `${field} has an invalid length`, 'VALIDATION');
+    return value;
+  }
+  return normalized;
+}
+
 /** Normalizes the complete profile schema and rejects unrecognised content rather than storing it blindly. */
-export function normalizeProfile(value: unknown, fallbackName = '', nested = false): Profile {
+export function normalizeProfile(value: unknown, fallbackName = '', nested = false, editing = false): Profile {
   if (!isRecord(value)) apiError(422, 'draft must be a profile object', 'VALIDATION');
   for (const key of Object.keys(value)) {
     if (!PROFILE_KEYS.has(key) || (nested && key === 'translations')) {
@@ -362,27 +376,27 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
     }
   }
   const profile = defaultProfile(fallbackName);
-  profile.name = asString(value.name ?? fallbackName, 'name', 160, true);
-  profile.title = asString(value.title, 'title', 180);
-  profile.bio = asString(value.bio, 'bio', 5000);
-  profile.email = emailValue(value.email, 'email');
-  profile.phone = phoneValue(value.phone, 'phone');
-  profile.whatsapp = phoneValue(value.whatsapp, 'whatsapp');
-  profile.city = asString(value.city, 'city', 120);
-  profile.country = asString(value.country ?? profile.country, 'country', 120);
+  profile.name = profileText(value.name ?? fallbackName, 'name', 160, !editing, editing);
+  profile.title = profileText(value.title, 'title', 180, false, editing);
+  profile.bio = profileText(value.bio, 'bio', 5000, false, editing);
+  profile.email = editing ? profileText(value.email, 'email', 254, false, true) : emailValue(value.email, 'email');
+  profile.phone = editing ? profileText(value.phone, 'phone', 32, false, true) : phoneValue(value.phone, 'phone');
+  profile.whatsapp = editing ? profileText(value.whatsapp, 'whatsapp', 32, false, true) : phoneValue(value.whatsapp, 'whatsapp');
+  profile.city = profileText(value.city, 'city', 120, false, editing);
+  profile.country = profileText(value.country ?? profile.country, 'country', 120, false, editing);
   profile.photo = mediaUrl(value.photo ?? profile.photo, 'photo');
   if (value.avatarMode !== undefined && value.avatarMode !== 'photo' && value.avatarMode !== 'monogram') apiError(422, 'avatarMode must be photo or monogram', 'VALIDATION');
   profile.avatarMode = value.avatarMode === 'monogram' ? 'monogram' : 'photo';
   profile.cover = mediaUrl(value.cover ?? profile.cover, 'cover');
-  profile.youtube = youtubeUrl(value.youtube);
-  for (const field of RESUME_LISTS) profile[field] = profileList(value[field], field);
-  profile.skillRadar = skillRadar(value.skillRadar);
-  profile.blog = asString(value.blog, 'blog', 12_000);
-  profile.notes = asString(value.notes, 'notes', 12_000);
+  profile.youtube = editing ? profileText(value.youtube, 'youtube', 2048, false, true) : youtubeUrl(value.youtube);
+  for (const field of RESUME_LISTS) profile[field] = profileList(value[field], field, 30, editing);
+  profile.skillRadar = skillRadar(value.skillRadar, editing);
+  profile.blog = profileText(value.blog, 'blog', 12_000, false, editing);
+  profile.notes = profileText(value.notes, 'notes', 12_000, false, editing);
   profile.skillImages = mediaList(value.skillImages, 'skillImages', 3);
   profile.workImages = mediaList(value.workImages, 'workImages', 4);
-  profile.socials = linkList(value.socials, 'socials', 12);
-  profile.buttons = linkList(value.buttons, 'buttons', 3);
+  profile.socials = linkList(value.socials, 'socials', 12, editing);
+  profile.buttons = linkList(value.buttons, 'buttons', 3, editing);
 
   if (value.hidden !== undefined) {
     if (!Array.isArray(value.hidden) || value.hidden.length > PUBLIC_PROFILE_KEYS.size) {
@@ -404,11 +418,26 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
       if (key !== 'ar' && key !== 'en') apiError(422, 'translations only supports ar and en', 'VALIDATION');
     }
     const translations: { ar?: Profile; en?: Profile } = {};
-    if (value.translations.ar !== undefined) translations.ar = normalizeProfile(value.translations.ar, profile.name, true);
-    if (value.translations.en !== undefined) translations.en = normalizeProfile(value.translations.en, profile.name, true);
+    if (value.translations.ar !== undefined) translations.ar = normalizeProfile(value.translations.ar, profile.name, true, editing);
+    if (value.translations.en !== undefined) translations.en = normalizeProfile(value.translations.en, profile.name, true, editing);
     profile.translations = translations;
   }
   return profile;
+}
+
+export function publicationProfile(value: unknown, fallbackName = ''): Record<string, unknown> {
+  const stripNotes = (profile: Profile): Record<string, unknown> => {
+    const { notes: _privateNotes, translations, ...content } = profile;
+    return { ...content, ...(translations ? { translations: {
+      ...(translations.ar ? { ar: stripNotes(translations.ar) } : {}),
+      ...(translations.en ? { en: stripNotes(translations.en) } : {}),
+    } } : {}) };
+  };
+  try { return stripNotes(normalizeProfile(value, fallbackName)); }
+  catch (error) {
+    if (error instanceof HTTPException && error.status === 422) apiError(422, 'حُفظت كتابتك. أكمل الاسم والعناوين وبيانات التواصل والروابط قبل طلب النشر.', 'INCOMPLETE_PROFILE');
+    throw error;
+  }
 }
 
 function mediaIds(profile: Profile): string[] {
@@ -1150,6 +1179,19 @@ export function registerBusiness(app: App): void {
     return c.json({ site: toSite(await withSiteName(c, site)) });
   });
 
+  app.get('/api/sites/:id/media', async (c) => {
+    const user = me(c) as unknown as Record<string, unknown>;
+    const site = await editableSiteFor(c, c.req.param('id'), user);
+    const rows = await all<{ id: string; purpose: string; bucket_key: string; created_at: number }>(c,
+      "SELECT id,purpose,bucket_key,created_at FROM media WHERE purpose IN ('skill','work') AND (site_id=? OR (site_id IS NULL AND owner_id=?)) ORDER BY created_at DESC LIMIT 50", site.id, site.user_id);
+    const items = [];
+    for (const row of rows) {
+      const object = await c.env.MEDIA.head(row.bucket_key);
+      if (object) items.push({ id: row.id, url: '/api/media/' + row.id, purpose: row.purpose, createdAt: row.created_at });
+    }
+    return c.json({ siteId: site.id, items });
+  });
+
   app.put('/api/sites/:id/draft', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const body = await requestBody(c);
@@ -1159,7 +1201,7 @@ export function registerBusiness(app: App): void {
       apiError(409, 'This draft has changed. Reload before saving.', 'DRAFT_CONFLICT');
     }
     const previous = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
-    const profile = normalizeProfile(body.draft, previous.name || String(user.name ?? ''));
+    const profile = normalizeProfile(body.draft, previous.name || String(user.name ?? ''), false, true);
     await assertProfileMediaEditable(c, profile, Number(user.id), site);
     const updatedAt = now();
     const result = await run(
@@ -1199,6 +1241,9 @@ export function registerBusiness(app: App): void {
     );
     if (existing) apiError(409, 'This draft version is already under review', 'REVIEW_PENDING');
 
+    const snapshot = JSON.stringify(publicationProfile(JSON.parse(site.draft), String(user.name ?? '')));
+    const body = await c.req.json().catch(() => ({})) as { version?: unknown };
+    if (body.version !== undefined && body.version !== site.draft_version) apiError(409, 'تغيّرت المسودة قبل الإرسال. احفظها ثم أعد المحاولة.', 'DRAFT_CONFLICT');
     const reviewId = uid();
     const createdAt = now();
     try {
@@ -1209,7 +1254,7 @@ export function registerBusiness(app: App): void {
          FROM sites WHERE id=? AND draft_version=?`,
         reviewId,
         Number(user.id),
-        site.draft,
+        snapshot,
         Number(site.draft_version),
         Number(site.published_version),
         'pending',

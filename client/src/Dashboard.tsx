@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useId, type ChangeEvent } from 'react';
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -52,12 +52,13 @@ import QRCode from 'qrcode';
 import { api, useApp } from './lib';
 import './dashboard.css';
 import { publicationLabel } from './publication';
+import { EditorRowKeys, appendImage, safeLink } from './editor-state';
 
 type Tab = 'editor' | 'wallet' | 'services' | 'messages' | 'subscription' | 'settings';
 type SaveState = 'saved' | 'unsaved' | 'saving' | 'error';
 type UploadPurpose = 'photo' | 'cover' | 'skill' | 'work';
 
-type ResumeItem = {
+export type ResumeItem = {
   title: string;
   organization: string;
   start: string;
@@ -68,7 +69,7 @@ type ResumeItem = {
 type Social = { label: string; url: string };
 type CustomButton = { label: string; url: string };
 type SkillRadar = { human: string[]; scientific: string[]; professional: string[] };
-type ProfileDraft = {
+export type ProfileDraft = {
   name: string;
   title: string;
   bio: string;
@@ -84,11 +85,11 @@ type ProfileDraft = {
   experience: ResumeItem[];
   education: ResumeItem[];
   training: ResumeItem[];
-  skills: string[];
-  memberships: string[];
-  languages: string[];
-  hobbies: string[];
-  achievements: string[];
+  skills: Array<string | ResumeItem>;
+  memberships: Array<string | ResumeItem>;
+  languages: Array<string | ResumeItem>;
+  hobbies: Array<string | ResumeItem>;
+  achievements: Array<string | ResumeItem>;
   timeline: ResumeItem[];
   skillRadar: SkillRadar;
   blog: string;
@@ -174,6 +175,7 @@ type Notification = {
 
 type QuickLink = { id: string; url?: string; expires_at?: number; revoked?: boolean | number; fields?: string[]; [key: string]: unknown };
 type UploadResult = { id: string; url: string };
+type SavedImage = UploadResult & { purpose: 'skill' | 'work'; createdAt: number };
 type Conversation = {
   id: string;
   status?: string;
@@ -272,25 +274,29 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return 'تعذر إتمام الطلب. حاول مرة أخرى.';
 }
-function parseDraft(source: unknown): ProfileDraft {
+export function parseDraft(source: unknown): ProfileDraft {
   let raw: Record<string, unknown> = {};
   try { raw = typeof source === 'string' ? JSON.parse(source) as Record<string, unknown> : (source ?? {}) as Record<string, unknown>; } catch { raw = {}; }
-  const normalizeStructured = (value: unknown): ResumeItem[] => asArray<Record<string, unknown>>(value).map((item) => ({
-    title: asText(item.title), organization: asText(item.organization), start: asText(item.start), end: asText(item.end), description: asText(item.description),
-  }));
+  const toResume = (item: unknown): ResumeItem => {
+    if (typeof item === 'string') return { ...blankItem(), title: item };
+    const entry = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+    return { title: asText(entry.title) || asText(entry.name) || asText(entry.role), organization: asText(entry.organization) || asText(entry.institution), start: asText(entry.start) || asText(entry.date), end: asText(entry.end), description: asText(entry.description) };
+  };
+  const normalizeStructured = (value: unknown): ResumeItem[] => asArray<unknown>(value).map(toResume);
   const normalizeStrings = (value: unknown): string[] => asArray<unknown>(value).filter((item): item is string => typeof item === 'string');
-  const normalizeLinks = (value: unknown): Social[] => asArray<Record<string, unknown>>(value).map((item) => ({ label: asText(item.label) || asText(item.name), url: asText(item.url) }));
+  const normalizeTextItems = (value: unknown): Array<string | ResumeItem> => asArray<unknown>(value).map((item) => typeof item === 'string' ? item : toResume(item));
+  const normalizeLinks = (value: unknown): Social[] => asArray<unknown>(value).map((item) => typeof item === 'string' ? { label: '', url: item } : { label: asText((item as Social)?.label) || asText((item as { name?: string })?.name), url: asText((item as Social)?.url) });
   return {
     ...emptyDraft(),
     ...Object.fromEntries(Object.keys(emptyDraft()).map((key) => [key, raw[key] ?? (emptyDraft() as unknown as Record<string, unknown>)[key]])),
     name: asText(raw.name), title: asText(raw.title), bio: asText(raw.bio), email: asText(raw.email), phone: asText(raw.phone), whatsapp: asText(raw.whatsapp),
     city: asText(raw.city), country: asText(raw.country) || 'المملكة العربية السعودية', photo: asText(raw.photo) || DEFAULT_PROFILE_IMAGE, avatarMode: raw.avatarMode === 'monogram' ? 'monogram' : 'photo', cover: asText(raw.cover) || DEFAULT_COVER_IMAGE, youtube: asText(raw.youtube), blog: asText(raw.blog), notes: asText(raw.notes),
     experience: normalizeStructured(raw.experience), education: normalizeStructured(raw.education), training: normalizeStructured(raw.training), timeline: normalizeStructured(raw.timeline),
-    skills: normalizeStrings(raw.skills), memberships: normalizeStrings(raw.memberships), languages: normalizeStrings(raw.languages), hobbies: normalizeStrings(raw.hobbies), achievements: normalizeStrings(raw.achievements),
+    skills: normalizeTextItems(raw.skills), memberships: normalizeTextItems(raw.memberships), languages: normalizeTextItems(raw.languages), hobbies: normalizeTextItems(raw.hobbies), achievements: normalizeTextItems(raw.achievements),
     skillRadar: {
       human: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.human),
       scientific: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.scientific),
-      professional: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.professional ?? raw.skills),
+      professional: normalizeStrings((raw.skillRadar as Record<string, unknown> | undefined)?.professional),
     },
     skillImages: normalizeStrings(raw.skillImages).slice(0, 3), workImages: normalizeStrings(raw.workImages).slice(0, 4), hidden: normalizeStrings(raw.hidden),
     socials: normalizeLinks(raw.socials), buttons: normalizeLinks(raw.buttons).slice(0, 3), searchable: asBool(raw.searchable, true), allowContact: asBool(raw.allowContact, true),
@@ -442,6 +448,12 @@ export default function Dashboard() {
     try { return window.localStorage.getItem(notificationSoundStorageKey) === 'on'; } catch { return false; }
   });
 
+  const [savedImages, setSavedImages] = useState<SavedImage[]>([]);
+  const [openingSite, setOpeningSite] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const openingSiteRef = useRef(false);
+  const uploadSiteRef = useRef<string | null>(null);
+  const flushSaveRef = useRef<(quiet?: boolean, flush?: boolean) => Promise<boolean>>(async () => false);
   const draftRef = useRef(draft);
   const siteIdRef = useRef<string | null>(null);
   const versionRef = useRef(0);
@@ -591,7 +603,8 @@ export default function Dashboard() {
         if (current) setActiveSite((existing) => existing ? { ...existing, ...current } : existing);
       }
     } catch (error) {
-      setLoadError(errorMessage(error));
+      if (!siteIdRef.current) setLoadError(errorMessage(error));
+      else notify(errorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -624,42 +637,41 @@ export default function Dashboard() {
     } catch { /* A background refresh must not disrupt the current dashboard. */ }
   }, [observeNotifications]);
 
-  const openSite = useCallback(async (summary: Site) => {
-    siteIdRef.current = summary.id;
+  const refreshSavedImages = async (siteId: string) => {
     try {
+      const response = await api<{ siteId: string; items: SavedImage[] }>(`/api/sites/${encodeURIComponent(siteId)}/media`);
+      if (siteIdRef.current === siteId && response.siteId === siteId) setSavedImages(response.items);
+    } catch { /* Restoration is optional; a failed listing must never change a draft. */ }
+  };
+  const openSite = useCallback(async (summary: Site) => {
+    if (openingSiteRef.current || summary.id === siteIdRef.current) return;
+    if (uploadSiteRef.current) { notify(tr('انتظر تثبيت الصورة قبل تبديل الموقع.', 'Wait until your image is saved before switching sites.')); return; }
+    openingSiteRef.current = true;
+    setOpeningSite(true);
+    try {
+      if (siteIdRef.current && !(await flushSaveRef.current(true, true))) return;
       const response = await api<Site | { site?: Site }>(`/api/sites/${encodeURIComponent(summary.id)}`);
       const site = ('site' in response && response.site ? response.site : response) as Site;
+      // Never switch to a dashboard summary or clear the previous draft after a failed read.
+      if (site.id !== summary.id || site.draft === undefined) throw new Error(tr('تعذر فتح الموقع. بقي عملك في مكانه.', 'Could not open the site. Your work is still here.'));
+      if (uploadSiteRef.current) { notify(tr('انتظر تثبيت الصورة قبل تبديل الموقع.', 'Wait until your image is saved before switching sites.')); return; }
+      if (dirtyRef.current && !(await flushSaveRef.current(true, true))) return;
+      siteIdRef.current = site.id;
       setActiveSite(site);
       setLockForm({ enabled: Boolean(site.lock?.enabled), password: '', message: asText(site.lock?.message) });
       const nextDraft = parseDraft(site.draft);
-      setDraft(nextDraft);
       draftRef.current = nextDraft;
+      setDraft(nextDraft);
       versionRef.current = Number(site.draft_version ?? site.version ?? 0);
       revisionRef.current = 0;
       dirtyRef.current = false;
       setSaveState('saved');
-    } catch (error) {
-      // Dashboard summaries can offer a safe local fallback. A delegated URL has no draft and must not become a fake editable site.
-      if (summary.draft !== undefined) {
-        setActiveSite(summary);
-        setLockForm({ enabled: Boolean(summary.lock?.enabled), password: '', message: asText(summary.lock?.message) });
-        const nextDraft = parseDraft(summary.draft);
-        setDraft(nextDraft);
-        draftRef.current = nextDraft;
-        versionRef.current = Number(summary.draft_version ?? summary.version ?? 0);
-      } else {
-        siteIdRef.current = null;
-        setActiveSite(null);
-        const nextDraft = emptyDraft();
-        setDraft(nextDraft);
-        draftRef.current = nextDraft;
-        versionRef.current = 0;
-        dirtyRef.current = false;
-        setSaveState('saved');
-      }
-      notify(errorMessage(error));
-    }
-  }, [notify]);
+      setSaveError('');
+      setSavedImages([]);
+      void refreshSavedImages(site.id);
+    } catch (error) { notify(errorMessage(error)); }
+    finally { openingSiteRef.current = false; setOpeningSite(false); }
+  }, [notify, tr]);
 
   const reserveInitialName = async () => {
     if (!localNameCandidateValid || nameAvailability?.name !== normalizedNameCandidate || !nameAvailability.available || reservingName) return;
@@ -738,62 +750,60 @@ export default function Dashboard() {
   };
 
   const changeDraft = useCallback((patch: Partial<ProfileDraft> | ((current: ProfileDraft) => ProfileDraft)) => {
+    const current = draftRef.current;
+    const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
+    draftRef.current = next;
     revisionRef.current += 1;
     dirtyRef.current = true;
+    setDraft(next);
+    setSaveError('');
     setSaveState('unsaved');
-    setDraft((current) => {
-      const next = typeof patch === 'function' ? patch(current) : { ...current, ...patch };
-      draftRef.current = next;
-      return next;
-    });
   }, []);
 
-  const saveDraft = useCallback(async (quiet = false): Promise<boolean> => {
+  const saveDraft = useCallback(async (quiet = false, flush = false): Promise<boolean> => {
     const siteId = siteIdRef.current;
     if (!siteId) return false;
-    if (savingRef.current) {
-      for (let attempt = 0; attempt < 160 && savingRef.current; attempt++) await new Promise(resolve => window.setTimeout(resolve, 50));
-      if (savingRef.current) { notify(tr('انتظر اكتمال الحفظ ثم حاول مجدداً.', 'Wait for saving to finish, then try again.')); return false; }
-    }
-    if (!dirtyRef.current) return true;
-    const revision = revisionRef.current;
-    const version = versionRef.current;
-    const outgoing = draftRef.current;
-    savingRef.current = true;
-    setSaveState('saving');
-    try {
-      const response = await api<Site | { site?: Site; version?: number; draft_version?: number; draft?: ProfileDraft }>(`/api/sites/${encodeURIComponent(siteId)}/draft`, {
-        method: 'PUT',
-        body: JSON.stringify({ draft: outgoing, version }),
-      });
-      const saved = ('site' in response && response.site ? response.site : response) as Site;
-      const receivedVersion = Number(saved.draft_version ?? saved.version ?? (response as { version?: number; draft_version?: number }).draft_version ?? (response as { version?: number }).version ?? version + 1);
-      versionRef.current = receivedVersion;
-      setActiveSite((current) => current ? { ...current, ...saved, draft_version: receivedVersion } : current);
-      if (revisionRef.current === revision) {
-        dirtyRef.current = false;
-        setSaveState('saved');
-        if (saved.draft) {
-          const nextDraft = parseDraft(saved.draft);
-          setDraft(nextDraft);
-          draftRef.current = nextDraft;
+    for (let round = 0; round < (flush ? 12 : 1); round++) {
+      for (let wait = 0; savingRef.current && wait < 240; wait++) await new Promise(resolve => window.setTimeout(resolve, 50));
+      if (savingRef.current || siteIdRef.current !== siteId) return false;
+      if (!dirtyRef.current) return true;
+      const revision = revisionRef.current;
+      const version = versionRef.current;
+      const outgoing = draftRef.current;
+      savingRef.current = true;
+      setSaveState('saving');
+      try {
+        const response = await api<Site | { site?: Site; version?: number; draft_version?: number }>(`/api/sites/${encodeURIComponent(siteId)}/draft`, {
+          method: 'PUT', body: JSON.stringify({ draft: outgoing, version }),
+        });
+        if (siteIdRef.current !== siteId) return false;
+        const saved = ('site' in response && response.site ? response.site : response) as Site;
+        if (saved.id && saved.id !== siteId) throw new Error(tr('تعذر تأكيد الحفظ. احتفظنا بعملك هنا.', 'Could not confirm saving. Your work is still here.'));
+        const receivedVersion = Number(saved.draft_version ?? saved.version ?? version + 1);
+        if (!Number.isSafeInteger(receivedVersion) || receivedVersion <= version) throw new Error(tr('تعذر تأكيد الحفظ. حاول مجدداً.', 'Could not confirm saving. Try again.'));
+        versionRef.current = receivedVersion;
+        // Acknowledgement changes metadata only. Never trim/replace a mounted text input.
+        setActiveSite((current) => current?.id === siteId ? { ...current, draft_version: receivedVersion, status: saved.status ?? current.status } : current);
+        dirtyRef.current = revisionRef.current !== revision;
+        setSaveError('');
+        setSaveState(dirtyRef.current ? 'unsaved' : 'saved');
+        if (!quiet && !dirtyRef.current) notify(tr('تم حفظ عملك.', 'Your work is saved.'));
+      } catch (error) {
+        if (siteIdRef.current === siteId) {
+          const message = (error as { status?: number })?.status === 409
+            ? tr('هناك نسخة أحدث على جهاز آخر. بقيت تعديلاتك هنا؛ لا تغلق الصفحة وتواصل معنا للمساعدة.', 'A newer copy exists on another device. Your edits remain here; keep this page open and contact us for help.')
+            : tr('لم يكتمل الحفظ. بقي عملك هنا؛ تحقق من الاتصال واضغط حفظ للمحاولة مجدداً.', 'Saving did not finish. Your work is still here; check your connection and press Save to retry.');
+          setSaveError(message);
+          setSaveState('error');
+          if (!quiet) notify(message);
         }
-      } else {
-        setSaveState('unsaved');
-      }
-      if (!quiet) notify(tr('تم حفظ المسودة بأمان.', 'Draft saved securely.'));
-      return true;
-    } catch (error) {
-      setSaveState('error');
-      notify(errorMessage(error));
-      return false;
-    } finally {
-      savingRef.current = false;
-      if (dirtyRef.current && revisionRef.current !== revision && siteIdRef.current === siteId) {
-        window.setTimeout(() => { void saveDraft(true); }, 350);
-      }
+        return false;
+      } finally { savingRef.current = false; }
+      if (!dirtyRef.current) return true;
     }
+    return !flush;
   }, [notify, tr]);
+  flushSaveRef.current = saveDraft;
 
   useEffect(() => {
     if (!dirtyRef.current) return;
@@ -802,16 +812,26 @@ export default function Dashboard() {
   }, [draft, saveDraft]);
   useEffect(() => () => { siteIdRef.current = null; }, []);
   useEffect(() => {
+    const beforeLeave = (event: BeforeUnloadEvent) => {
+      if (!dirtyRef.current && !uploadSiteRef.current) return;
+      event.preventDefault(); event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', beforeLeave);
+    return () => window.removeEventListener('beforeunload', beforeLeave);
+  }, []);
+  useEffect(() => {
     const interval = window.setInterval(() => { if (dirtyRef.current) void saveDraft(true); }, 15_000);
     return () => window.clearInterval(interval);
   }, [saveDraft]);
 
   const submitForReview = async () => {
-    if (!activeSite) return;
+    if (!activeSite || submittingReview || openingSiteRef.current) return;
+    if (uploadSiteRef.current) { notify(tr('نثبّت الصورة أولاً، ثم يمكنك طلب النشر.', 'Let your image finish saving before requesting publication.')); return; }
+    const submittedSiteId = siteIdRef.current;
     setSubmittingReview(true);
     try {
-      if (!(await saveDraft(true))) return;
-      const response = await api<{ review?: { id?: string }; id?: string }>(`/api/sites/${encodeURIComponent(activeSite.id)}/submit`, { method: 'POST', body: JSON.stringify({}) });
+      if (!(await saveDraft(true, true)) || dirtyRef.current || siteIdRef.current !== submittedSiteId) return;
+      const response = await api<{ review?: { id?: string }; id?: string }>(`/api/sites/${encodeURIComponent(submittedSiteId!)}/submit`, { method: 'POST', body: JSON.stringify({ version: versionRef.current }) });
       setPreviewOpen(false);
       await loadDashboard();
       notify(response.review?.id || response.id ? tr('وصل طلب النشر إلى المشرف.', 'Your publishing request reached the administrator.') : tr('تم استلام طلب المراجعة.', 'Review request received.'));
@@ -854,31 +874,45 @@ export default function Dashboard() {
     return new File([best], `${file.name.replace(/\.[^.]+$/, '') || 'image'}.webp`, { type: 'image/webp' });
   };
 
-  const uploadImage = async (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, onUploaded: (upload: UploadResult) => void) => {
+  const attachImage = async (siteId: string, purpose: UploadPurpose, image: UploadResult) => {
+    if (siteIdRef.current !== siteId) return false;
+    changeDraft((current) => {
+      if (purpose === 'photo' || purpose === 'cover') return { ...current, [purpose]: image.url };
+      const key = purpose === 'skill' ? 'skillImages' : 'workImages';
+      return { ...current, [key]: appendImage(current[key], image.url, purpose === 'skill' ? 3 : 4) };
+    });
+    return saveDraft(true, true);
+  };
+  const uploadImage = async (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (!file) return;
-    if (!activeSite) {
-      notify(tr('احجز أو اختر موقعاً قبل رفع ملفات الهوية.', 'Reserve or choose a site before uploading identity files.'));
-      return;
-    }
+    if (!file || uploadSiteRef.current) return;
+    const siteId = siteIdRef.current;
+    if (!siteId) { notify(tr('اختر موقعك أولاً.', 'Choose your site first.')); return; }
+    uploadSiteRef.current = siteId;
     setUploading(purpose);
     try {
       if (!file.type.startsWith('image/')) throw new Error(tr('اختر صورة صالحة من جهازك.', 'Choose a valid image from your device.'));
       const compressed = await compressImage(file, purpose === 'cover' ? 2600 : 1800);
       const body = new FormData();
-      body.append('file', compressed);
-      body.append('purpose', purpose);
-      if (activeSite) body.append('siteId', activeSite.id);
+      body.append('file', compressed); body.append('purpose', purpose); body.append('siteId', siteId);
       const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
-      if (!result?.id || !result?.url) throw new Error(tr('لم يعُد الخادم بمعرّف وارتباط للملف.', 'The server did not return a file ID and URL.'));
-      onUploaded(result);
-      notify(tr('تم تجهيز الصورة ورفعها بصيغة WebP.', 'Your image was prepared and uploaded as WebP.'));
-    } catch (error) {
-      const message = errorMessage(error);
-      notify(message);
-    }
-    finally { setUploading(''); }
+      if (!result?.id || !result?.url) throw new Error(tr('تعذر تأكيد رفع الصورة.', 'Could not confirm the image upload.'));
+      if (siteIdRef.current !== siteId) return;
+      if (await attachImage(siteId, purpose, result)) notify(tr('تمت إضافة الصورة وحفظها.', 'Your image was added and saved.'));
+      else notify(tr('وصلت الصورة، لكن لم يكتمل حفظها في الملف. اضغط حفظ للمحاولة مجدداً.', 'Your image arrived, but its profile link was not saved. Press Save to retry.'));
+    } catch (error) { notify(errorMessage(error) === 'IMAGE_LIST_FULL' ? tr('اكتمل عدد الصور. يمكنك اختيارها من صورك المحفوظة بعد إزالة صورة.', 'The image list is full. Remove an image to choose another from your saved images.') : errorMessage(error)); }
+    finally { uploadSiteRef.current = null; setUploading(''); void refreshSavedImages(siteId); }
+  };
+  const restoreImage = async (image: SavedImage) => {
+    const siteId = siteIdRef.current;
+    if (!siteId || uploadSiteRef.current || !savedImages.some((item) => item.id === image.id)) return;
+    uploadSiteRef.current = siteId;
+    setUploading(image.purpose);
+    try {
+      if (await attachImage(siteId, image.purpose, image)) notify(tr('تمت استعادة الصورة وحفظها في ملفك.', 'Your image was restored and saved to your profile.'));
+    } catch (error) { notify(errorMessage(error) === 'IMAGE_LIST_FULL' ? tr('أزل صورة من القائمة أولاً لتتمكن من استعادة أخرى.', 'Remove an image first to restore another.'):errorMessage(error)); }
+    finally { uploadSiteRef.current = null; setUploading(''); }
   };
 
   const doTransfer = async () => {
@@ -911,12 +945,15 @@ export default function Dashboard() {
   };
 
   const translateDraft = async () => {
-    if (!activeSite || !translationConsent) return;
+    if (!activeSite || !translationConsent || uploadSiteRef.current) return;
+    const translationSiteId = siteIdRef.current;
+    if (!(await saveDraft(true, true))) return;
     try {
       const response = await api<{ draft?: ProfileDraft; site?: Site; version?: number; draft_version?: number }>('/api/translate', {
         method: 'POST',
-        body: JSON.stringify({ siteId: activeSite.id, target: translationTarget, consent: true }),
+        body: JSON.stringify({ siteId: translationSiteId, target: translationTarget, consent: true }),
       });
+      if (siteIdRef.current !== translationSiteId) return;
       const received = response.draft ?? response.site?.draft;
       if (!received) throw new Error(tr('لم يعُد الخادم بمسودة مترجمة قابلة للتحقق.', 'The server did not return a verifiable translated draft.'));
       const returnedDraft = parseDraft(received);
@@ -1229,14 +1266,15 @@ export default function Dashboard() {
               <p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير مفوّض ضمن صلاحيات حسابك', 'Delegated editing within your account scope') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p>
               <h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2>
             </div>
-            {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
+            {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} disabled={openingSite || Boolean(uploading) || submittingReview} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
               {asArray<Site>(dashboard?.sites).map((site) => <option key={site.id} value={site.id}>{site.name || site.id}</option>)}
             </select>}
           </div>
           <div className="dashboard-editor-actions" role="group" aria-label={tr('إجراءات المسودة', 'Draft actions')}>
             <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><Eye size={17}/>{tr('معاينة', 'Preview')}</button>
-            <button className="button" onClick={() => void saveDraft(false)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{saveState === 'saving' ? tr('جارٍ الحفظ', 'Saving') : tr('حفظ', 'Save')}</button>
+            <button className="button" onClick={() => void saveDraft(false, true)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{saveState === 'saving' ? tr('جارٍ الحفظ', 'Saving') : tr('حفظ', 'Save')}</button>
           </div>
+          {saveError && <p className="dashboard-error" role="status">{saveError}</p>}
         </div>
 
           <div className="dashboard-editor-layout">
@@ -1252,7 +1290,7 @@ export default function Dashboard() {
             </aside>
             <details id="identity-editor-section" className="dashboard-edit-card card" ref={editorCardRef} open>
               <summary><span><PencilLine size={16}/>{tr(editorSectionMap[editorSection].ar, editorSectionMap[editorSection].en)}</span><ChevronDown size={18}/></summary>
-              <div className="dashboard-edit-card__body">
+              <div className="dashboard-edit-card__body" key={`${activeSite.id}-${editorSection}`}>
                 <EditorGuide section={editorSection} tr={tr}/>
                 {editorSection === 'identity' && <IdentitySection draft={draft} tr={tr} uploading={uploading} onChange={changeDraft} onUpload={uploadImage} lang={lang}/>}
                 {editorSection === 'bio' && <TextSection label={tr('النبذة التعريفية', 'Professional biography')} hint={tr('اكتب تعريفاً واضحاً ومهماً لجمهور موقعك.', 'Write a clear, meaningful introduction for your site audience.')} value={draft.bio} multiline onChange={(bio) => changeDraft({ bio })} lang={lang}/>}
@@ -1265,13 +1303,13 @@ export default function Dashboard() {
                 {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} lang={lang}/>}
                 {editorSection === 'hobbies' && <StringList title={tr('الاهتمامات والهوايات', 'Interests')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} lang={lang}/>}
                 {editorSection === 'achievements' && <MilestonesSection draft={draft} onChange={changeDraft} tr={tr} lang={lang}/>}
-                {editorSection === 'skillImages' && <MediaSection title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('يمكنك اختيار أي صورة يعرضها متصفحك؛ تجهز بصيغة WebP قبل الرفع.', 'Choose any image your browser can display; it is prepared as WebP before upload.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
-                {editorSection === 'workImages' && <MediaSection title={tr('نماذج الأعمال', 'Work samples')} hint={tr('يمكنك اختيار أي صورة يعرضها متصفحك؛ تجهز بصيغة WebP قبل الرفع.', 'Choose any image your browser can display; it is prepared as WebP before upload.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
+                {editorSection === 'skillImages' && <MediaSection savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
+                {editorSection === 'workImages' && <MediaSection savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('نماذج الأعمال', 'Work samples')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
                 {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
                 {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('استخدم رابطاً كاملاً وآمناً يبدأ بـ https://', 'Use a complete secure URL beginning with https://')} value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
                 {editorSection === 'buttons' && <LinkList title={tr('الأزرار الخارجية', 'External buttons')} hint={tr('حتى 3 أزرار؛ تحقق من الوجهة قبل الحفظ.', 'Up to 3 buttons; verify each destination before saving.')} value={draft.buttons} onChange={(buttons) => changeDraft({ buttons })} max={3} tr={tr} />}
-                {editorSection === 'blog' && <TextSection label={tr('المدونة الشخصية', 'Personal journal')} hint={tr('اكتب فقرة أو مقالة مختصرة تريد ظهورها في موقعك.', 'Write a short thought or article you want to appear on your site.')} value={draft.blog} multiline onChange={(blog) => changeDraft({ blog })} lang={lang}/>}
-                {editorSection === 'notes' && <TextSection label={tr('ملاحظات خاصة', 'Private notes')} hint={tr('ملاحظاتك هنا تبقى داخل المسودة ولا تظهر في موقعك المنشور.', 'These notes stay inside your draft and never appear on your published site.')} value={draft.notes} multiline onChange={(notes) => changeDraft({ notes })} lang={lang}/>}
+                {editorSection === 'blog' && <TextSection label={tr('المدونة الشخصية', 'Personal journal')} hint={tr('اكتب فقرة أو مقالة مختصرة تريد ظهورها في موقعك.', 'Write a short thought or article you want to appear on your site.')} value={draft.blog} maxLength={12000} multiline onChange={(blog) => changeDraft({ blog })} lang={lang}/>}
+                {editorSection === 'notes' && <TextSection label={tr('ملاحظات خاصة', 'Private notes')} hint={tr('ملاحظاتك هنا تبقى داخل المسودة ولا تظهر في موقعك المنشور.', 'These notes stay inside your draft and never appear on your published site.')} value={draft.notes} maxLength={12000} multiline onChange={(notes) => changeDraft({ notes })} lang={lang}/>}
                 {editorSection === 'privacy' && <PrivacySection draft={draft} tr={tr} onChange={changeDraft} />}
               </div>
             </details>
@@ -1380,10 +1418,12 @@ function speechRecognitionConstructor() {
   return browser.SpeechRecognition ?? browser.webkitSpeechRecognition;
 }
 
-function VoiceButton({ value, onAppend, lang, tr }: { value: string; onAppend: (next: string) => void; lang: 'ar' | 'en'; tr: (ar: string, en: string) => string }) {
+export function VoiceButton({ value, onAppend, lang, tr }: { value: string; onAppend: (next: string) => void; lang: 'ar' | 'en'; tr: (ar: string, en: string) => string }) {
   const [listening, setListening] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const latestRef = useRef({ value, onAppend });
+  latestRef.current = { value, onAppend };
   useEffect(() => () => recognitionRef.current?.stop(), []);
   const toggle = () => {
     if (listening) { recognitionRef.current?.stop(); return; }
@@ -1394,9 +1434,19 @@ function VoiceButton({ value, onAppend, lang, tr }: { value: string; onAppend: (
     recognition.lang = lang === 'ar' ? 'ar-SA' : 'en-US';
     recognition.continuous = false;
     recognition.interimResults = false;
+    let processed = 0;
     recognition.onresult = (event) => {
-      const spoken = Array.from(event.results).slice(event.resultIndex).map((result) => result[0]?.transcript || '').join(' ').trim();
-      if (spoken) onAppend(`${value}${value && !/\s$/.test(value) ? ' ' : ''}${spoken}`);
+      for (let index = Math.max(processed, event.resultIndex); index < event.results.length; index++) {
+        const result = event.results[index];
+        if (result.isFinal === false) continue;
+        processed = index + 1;
+        const spoken = (result[0]?.transcript || '').trim();
+        if (!spoken) continue;
+        const latest = latestRef.current;
+        const next = `${latest.value}${latest.value && !/\s$/.test(latest.value) ? ' ' : ''}${spoken}`;
+        latestRef.current = { ...latest, value: next };
+        latest.onAppend(next);
+      }
     };
     recognition.onerror = () => setUnavailable(true);
     recognition.onend = () => { setListening(false); recognitionRef.current = null; };
@@ -1446,40 +1496,47 @@ function EditorGuide({ section, tr }: { section: EditorSection; tr: (ar: string,
   return <aside className="dashboard-editor-guide"><CircleHelp size={17}/><p>{tr(...copy[section])}</p><button type="button" onClick={() => { try { window.localStorage.setItem(key, 'dismissed'); } catch {} setVisible(false); }} aria-label={tr('إغلاق الإرشاد', 'Dismiss guidance')}><X size={16}/></button></aside>;
 }
 
-function TextSection({ label, hint, value, multiline = false, onChange, lang }: { label: string; hint: string; value: string; multiline?: boolean; onChange: (value: string) => void; lang: 'ar' | 'en' }) {
+function TextSection({ label, hint, value, multiline = false, onChange, lang, maxLength = 5000 }: { label: string; hint: string; value: string; multiline?: boolean; maxLength?: number; onChange: (value: string) => void; lang: 'ar' | 'en' }) {
   const { t } = useApp();
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><PencilLine size={15}/>{label}</p><h2>{label}</h2><p className="muted">{hint}</p></div></header>{multiline ? <DictatedTextarea className="dashboard-textarea" rows={10} value={value} onChange={onChange} lang={lang} tr={t}/> : <DictatedInput value={value} onChange={onChange} lang={lang} tr={t}/>}</>;
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><PencilLine size={15}/>{label}</p><h2>{label}</h2><p className="muted">{hint}</p></div></header>{multiline ? <DictatedTextarea maxLength={maxLength} className="dashboard-textarea" rows={10} value={value} onChange={onChange} lang={lang} tr={t}/> : <DictatedInput value={value} onChange={onChange} lang={lang} tr={t}/>}</>;
 }
 
-function IdentitySection({ draft, tr, uploading, onChange, onUpload, lang }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void; lang: 'ar' | 'en' }) {
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى', 'Name and title')}</h2><p className="muted">{tr('ابدأ ببيانات الهوية المطلوبة، ثم أضف الصورة والغلاف عندما تكون جاهزاً.', 'Start with the required identity details, then add a photo and cover when ready.')}</p></div></header><div className="dashboard-settings-grid"><label><span>{tr('الاسم', 'Name')}</span><DictatedInput autoComplete="name" value={draft.name} onChange={(name) => onChange({ name })} lang={lang} tr={tr}/></label><label><span>{tr('المسمى المهني', 'Professional title')}</span><DictatedInput value={draft.title} onChange={(title) => onChange({ title })} lang={lang} tr={tr}/></label></div><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo', (upload) => onChange({ photo: upload.url }))}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover', (upload) => onChange({ cover: upload.url }))}/></div></>;
+function IdentitySection({ draft, tr, uploading, onChange, onUpload, lang }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose) => void; lang: 'ar' | 'en' }) {
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى', 'Name and title')}</h2><p className="muted">{tr('ابدأ ببيانات الهوية المطلوبة، ثم أضف الصورة والغلاف عندما تكون جاهزاً.', 'Start with the required identity details, then add a photo and cover when ready.')}</p></div></header><div className="dashboard-settings-grid"><label><span>{tr('الاسم', 'Name')}</span><DictatedInput autoComplete="name" maxLength={160} value={draft.name} onChange={(name) => onChange({ name })} lang={lang} tr={tr}/></label><label><span>{tr('المسمى المهني', 'Professional title')}</span><DictatedInput maxLength={180} value={draft.title} onChange={(title) => onChange({ title })} lang={lang} tr={tr}/></label></div><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo')}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover')}/></div></>;
 }
 function ContactSection({ draft, tr, onChange, lang, siteName }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void; lang: 'ar' | 'en'; siteName?: string }) { const suggestion = siteName ? `${siteName}@ksa.men` : 'name@ksa.men'; return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Mail size={15}/>{tr('الخطوة 3', 'Step 3')}</p><h2>{tr('بيانات التواصل والموقع', 'Contact and location')}</h2><p className="muted">{tr('يمكنك لاحقاً التحكم في ظهور كل حقل ضمن إعدادات الخصوصية.', 'You can later control visibility for each field in privacy settings.')}</p></div></header><div className="dashboard-settings-grid">{([['email', tr('البريد الإلكتروني', 'Email'), 'email'], ['phone', tr('الهاتف', 'Phone'), 'tel'], ['whatsapp', tr('واتساب', 'WhatsApp'), 'tel'], ['city', tr('المدينة', 'City'), 'text'], ['country', tr('الدولة', 'Country'), 'text']] as const).map(([key, label, type]) => <label key={key}><span>{label}</span><DictatedInput type={type} value={draft[key]} onChange={(value) => onChange({ [key]: value })} lang={lang} tr={tr}/></label>)}</div><p className="dashboard-email-suggestion"><Mail size={15}/>{tr(`صيغة مقترحة لهويتك البريدية: ${suggestion}. هذا اقتراح فقط؛ لا تنشئ المنصة صندوق بريد أو وصولاً إليه.`, `A suggested professional format is ${suggestion}. This is only a format suggestion; the platform does not create or access a mailbox.`)}</p></>;
 }
-function StructuredList({ title, value, onChange, tr, timeline = false, lang }: { title: string; value: ResumeItem[]; onChange: (value: ResumeItem[]) => void; tr: (ar: string, en: string) => string; timeline?: boolean; lang: 'ar' | 'en' }) {
-  const update = (index: number, key: keyof ResumeItem, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item));
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><BookOpen size={15}/>{timeline ? tr('محطات زمنية', 'Milestones') : tr('قائمة منظمة', 'Structured list')}</p><h2>{title}</h2><p className="muted">{tr('أضف المعلومات التي يمكنك تأكيدها فقط. يمكنك ترك تاريخ النهاية فارغاً للحالة الحالية.', 'Add only information you can confirm. Leave the end date empty for a current item.')}</p></div><button className="button button--quiet" onClick={() => onChange([...value, blankItem()])}><Plus size={16}/>{tr('إضافة عنصر', 'Add item')}</button></header><div className="dashboard-structured-list">{value.length === 0 && <EmptyInline text={tr('لا توجد عناصر بعد.', 'No items yet.')} />}{value.map((item, index) => <article key={`${index}-${item.title}`}><div className="dashboard-list-card-top"><strong>{tr('عنصر', 'Item')} {index + 1}</strong><button className="dashboard-icon-button" aria-label={tr('حذف العنصر', 'Remove item')} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16}/></button></div><div className="dashboard-settings-grid"><label><span>{tr('العنوان أو المسمى', 'Title or role')}</span><DictatedInput value={item.title} onChange={(text) => update(index, 'title', text)} lang={lang} tr={tr}/></label><label><span>{tr('الجهة', 'Organization')}</span><DictatedInput value={item.organization} onChange={(text) => update(index, 'organization', text)} lang={lang} tr={tr}/></label><label><span>{tr('البداية', 'Start')}</span><DictatedInput value={item.start} onChange={(text) => update(index, 'start', text)} placeholder="2024-01" lang={lang} tr={tr}/></label><label><span>{tr('النهاية', 'End')}</span><DictatedInput value={item.end} onChange={(text) => update(index, 'end', text)} placeholder={tr('الحالي أو 2025-01', 'Current or 2025-01')} lang={lang} tr={tr}/></label></div><label><span>{tr('الوصف', 'Description')}</span><DictatedTextarea rows={3} value={item.description} onChange={(text) => update(index, 'description', text)} lang={lang} tr={tr}/></label></article>)}</div></>;
+function useEditorRowKeys(length: number) {
+  const registry = useRef<EditorRowKeys | null>(null);
+  if (!registry.current) registry.current = new EditorRowKeys();
+  return { keys: registry.current.resize(length), remove: (index: number) => registry.current!.remove(index) };
 }
-function StringList({ title, hint, value, onChange, tr, lang }: { title: string; hint?: string; value: string[]; onChange: (value: string[]) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Check size={15}/>{tr('قائمة قابلة للتحرير', 'Editable list')}</p><h2>{title}</h2>{hint && <p className="muted">{hint}</p>}</div><button className="button button--quiet" onClick={() => onChange([...value, ''])}><Plus size={16}/>{tr('إضافة', 'Add')}</button></header><div className="dashboard-string-list">{value.length === 0 && <EmptyInline text={tr('أضف أول عنصر لتبدأ.', 'Add your first item to start.')} />}{value.map((item, index) => <div key={`${index}-${item}`}><DictatedInput value={item} onChange={(next) => onChange(value.map((valueItem, valueIndex) => valueIndex === index ? next : valueItem))} lang={lang} tr={tr}/><button className="dashboard-icon-button" aria-label={tr('حذف', 'Remove')} onClick={() => onChange(value.filter((_, valueIndex) => valueIndex !== index))}><X size={16}/></button></div>)}</div></>;
+function textItem(item: string | ResumeItem) { return typeof item === 'string' ? item : item.title; }
+export function StructuredList({ title, value, onChange, tr, timeline = false, lang }: { title: string; value: ResumeItem[]; onChange: (value: ResumeItem[]) => void; tr: (ar: string, en: string) => string; timeline?: boolean; lang: 'ar' | 'en' }) {
+  const rows = useEditorRowKeys(value.length);
+  const update = (index: number, key: keyof ResumeItem, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item));
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><BookOpen size={15}/>{timeline ? tr('محطات زمنية', 'Milestones') : tr('قائمة منظمة', 'Structured list')}</p><h2>{title}</h2><p className="muted">{tr('أضف المعلومات التي يمكنك تأكيدها فقط. يمكنك ترك تاريخ النهاية فارغاً للحالة الحالية.', 'Add only information you can confirm. Leave the end date empty for a current item.')}</p></div><button className="button button--quiet" disabled={value.length >= 30} onClick={() => onChange([...value, blankItem()])}><Plus size={16}/>{tr('إضافة عنصر', 'Add item')}</button></header><div className="dashboard-structured-list">{value.length === 0 && <EmptyInline text={tr('لا توجد عناصر بعد.', 'No items yet.')} />}{value.map((item, index) => <article key={rows.keys[index]}><div className="dashboard-list-card-top"><strong>{tr('عنصر', 'Item')} {index + 1}</strong><button className="dashboard-icon-button" aria-label={tr('حذف العنصر', 'Remove item')} onClick={() => { rows.remove(index); onChange(value.filter((_, itemIndex) => itemIndex !== index)); }}><Trash2 size={16}/></button></div>{!item.title.trim() && <p className="dashboard-field-hint">{tr('يمكنك إكمال العنوان لاحقاً؛ سنحتفظ بما كتبته.', 'You can complete the title later; your work is kept.')}</p>}<div className="dashboard-settings-grid"><label><span>{tr('العنوان أو المسمى', 'Title or role')}</span><DictatedInput maxLength={240} value={item.title} onChange={(text) => update(index, 'title', text)} lang={lang} tr={tr}/></label><label><span>{tr('الجهة', 'Organization')}</span><DictatedInput maxLength={240} value={item.organization} onChange={(text) => update(index, 'organization', text)} lang={lang} tr={tr}/></label><label><span>{tr('البداية', 'Start')}</span><DictatedInput maxLength={40} value={item.start} onChange={(text) => update(index, 'start', text)} placeholder="2024-01" lang={lang} tr={tr}/></label><label><span>{tr('النهاية', 'End')}</span><DictatedInput maxLength={40} value={item.end} onChange={(text) => update(index, 'end', text)} placeholder={tr('الحالي أو 2025-01', 'Current or 2025-01')} lang={lang} tr={tr}/></label></div><label><span>{tr('الوصف', 'Description')}</span><DictatedTextarea rows={3} maxLength={3000} value={item.description} onChange={(text) => update(index, 'description', text)} lang={lang} tr={tr}/></label></article>)}</div></>;
+}
+export function StringList({ title, hint, value, onChange, tr, lang }: { title: string; hint?: string; value: Array<string | ResumeItem>; onChange: (value: Array<string | ResumeItem>) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) { const rows = useEditorRowKeys(value.length); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Check size={15}/>{tr('قائمة قابلة للتحرير', 'Editable list')}</p><h2>{title}</h2>{hint && <p className="muted">{hint}</p>}</div><button className="button button--quiet" disabled={value.length >= 30} onClick={() => onChange([...value, ''])}><Plus size={16}/>{tr('إضافة', 'Add')}</button></header><div className="dashboard-string-list">{value.length === 0 && <EmptyInline text={tr('أضف أول عنصر لتبدأ.', 'Add your first item to start.')} />}{value.map((item, index) => <div key={rows.keys[index]}><DictatedInput aria-label={`${title} ${index + 1}`} maxLength={typeof item === 'string' ? 500 : 240} value={textItem(item)} onChange={(next) => onChange(value.map((valueItem, valueIndex) => valueIndex === index ? (typeof valueItem === 'string' ? next : { ...valueItem, title: next }) : valueItem))} lang={lang} tr={tr}/><button className="dashboard-icon-button" aria-label={tr('حذف', 'Remove')} onClick={() => { rows.remove(index); onChange(value.filter((_, valueIndex) => valueIndex !== index)); }}><X size={16}/></button></div>)}</div></>;
 }
 function SkillRadarSection({ draft, onChange, tr, lang }: { draft: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) {
-  const update = (key: keyof SkillRadar, values: string[]) => { const skillRadar = { ...draft.skillRadar, [key]: values }; onChange({ skillRadar, skills: [...new Set(Object.values(skillRadar).flat().map((item) => item.trim()).filter(Boolean))] }); };
-  return <div className="dashboard-radar-editor"><StringList title={tr('رادار المهارات', 'Skills radar')} hint={tr('تظهر مهاراتك العامة في موقعك، ويمكنك تنظيمها هنا بثلاث زوايا.', 'Your combined skills appear on the site; organize them here through three lenses.')} value={draft.skills} onChange={(skills) => onChange({ skills })} tr={tr} lang={lang}/><div className="dashboard-radar-editor__groups"><StringList title={tr('إنسانية', 'Human')} hint={tr('مثل القيادة والتواصل والتعاون.', 'Such as leadership, communication and collaboration.')} value={draft.skillRadar.human} onChange={(values) => update('human', values)} tr={tr} lang={lang}/><StringList title={tr('علمية', 'Scientific')} hint={tr('مثل البحث والتحليل والمنهجية.', 'Such as research, analysis and methodology.')} value={draft.skillRadar.scientific} onChange={(values) => update('scientific', values)} tr={tr} lang={lang}/><StringList title={tr('مهنية', 'Professional')} hint={tr('مثل التخصصات والأدوات والممارسات.', 'Such as specialties, tools and practices.')} value={draft.skillRadar.professional} onChange={(values) => update('professional', values)} tr={tr} lang={lang}/></div></div>;
+  const update = (key: keyof SkillRadar, values: string[]) => { const skillRadar = { ...draft.skillRadar, [key]: values }; onChange({ skillRadar }); };
+  return <div className="dashboard-radar-editor"><StringList title={tr('رادار المهارات', 'Skills radar')} hint={tr('تظهر مهاراتك العامة في موقعك، ويمكنك تنظيمها هنا بثلاث زوايا.', 'Your combined skills appear on the site; organize them here through three lenses.')} value={draft.skills} onChange={(skills) => onChange({ skills })} tr={tr} lang={lang}/><div className="dashboard-radar-editor__groups"><StringList title={tr('إنسانية', 'Human')} hint={tr('مثل القيادة والتواصل والتعاون.', 'Such as leadership, communication and collaboration.')} value={draft.skillRadar.human} onChange={(values) => update('human', values.map(textItem))} tr={tr} lang={lang}/><StringList title={tr('علمية', 'Scientific')} hint={tr('مثل البحث والتحليل والمنهجية.', 'Such as research, analysis and methodology.')} value={draft.skillRadar.scientific} onChange={(values) => update('scientific', values.map(textItem))} tr={tr} lang={lang}/><StringList title={tr('مهنية', 'Professional')} hint={tr('مثل التخصصات والأدوات والممارسات.', 'Such as specialties, tools and practices.')} value={draft.skillRadar.professional} onChange={(values) => update('professional', values.map(textItem))} tr={tr} lang={lang}/></div></div>;
 }
 function MilestonesSection({ draft, onChange, tr, lang }: { draft: ProfileDraft; onChange: (patch: Partial<ProfileDraft>) => void; tr: (ar: string, en: string) => string; lang: 'ar' | 'en' }) { return <div className="dashboard-milestones-editor"><StringList title={tr('إنجازات مختصرة', 'Short achievements')} hint={tr('أضف الإنجازات التي تريد إبرازها في صورة نقاط واضحة.', 'Add achievements you want to highlight as clear points.')} value={draft.achievements} onChange={(achievements) => onChange({ achievements })} tr={tr} lang={lang}/><StructuredList title={tr('محطات المسيرة', 'Journey milestones')} value={draft.timeline} onChange={(timeline) => onChange({ timeline })} tr={tr} timeline lang={lang}/></div>; }
 
-function MediaSection({ title, hint, items, max, purpose, uploading, tr, onUpload, onChange }: { title: string; hint: string; items: string[]; max: number; purpose: 'skill' | 'work'; uploading: string; tr: (ar: string, en: string) => string; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose, cb: (upload: UploadResult) => void) => void; onChange: (items: string[]) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ImagePlus size={15}/>{items.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{items.length < max && <UploadControl label={tr('إضافة صورة', 'Add image')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={(event) => void onUpload(event, purpose, (upload) => onChange([...items, upload.url]))}/>}</header><div className="dashboard-image-grid">{items.length === 0 && <EmptyInline text={tr('لا توجد صور مرفوعة بعد.', 'No images uploaded yet.')} />}{items.map((url, index) => <figure key={url}><img src={url} alt=""/><button className="dashboard-icon-button" onClick={() => onChange(items.filter((_, imageIndex) => imageIndex !== index))} aria-label={tr('إزالة الصورة', 'Remove image')}><X size={16}/></button></figure>)}</div></>;
+function MediaSection({ title, hint, items, max, purpose, uploading, tr, onUpload, onChange, savedImages, onRestore }: { title: string; hint: string; items: string[]; savedImages: SavedImage[]; onRestore: (image: SavedImage) => void; max: number; purpose: 'skill' | 'work'; uploading: string; tr: (ar: string, en: string) => string; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose) => void; onChange: (items: string[]) => void }) { return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ImagePlus size={15}/>{items.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{items.length < max && <UploadControl label={tr('إضافة صورة', 'Add image')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={(event) => void onUpload(event, purpose)}/>}</header><div className="dashboard-image-grid">{items.length === 0 && <EmptyInline text={tr('لا توجد صور مرفوعة بعد.', 'No images uploaded yet.')} />}{items.map((url, index) => <figure key={url}><img src={url} alt=""/><button className="dashboard-icon-button" onClick={() => onChange(items.filter((_, imageIndex) => imageIndex !== index))} aria-label={tr('إزالة الصورة', 'Remove image')}><X size={16}/></button></figure>)}</div>{savedImages.some((image) => image.purpose === purpose && !items.includes(image.url)) && <details className="dashboard-saved-images"><summary><ImagePlus size={17}/>{tr('صورك المحفوظة — اختر لاستعادتها', 'Your saved images — choose to restore')}</summary><div className="dashboard-image-grid">{savedImages.filter((image) => image.purpose === purpose && !items.includes(image.url)).map((image, index) => <button key={image.id} type="button" disabled={Boolean(uploading) || items.length >= max} onClick={() => onRestore(image)} aria-label={`${tr('استعادة الصورة', 'Restore image')} ${index + 1}`}><img src={image.url} alt="" loading="lazy"/><span><Plus size={16}/>{tr('استعادة', 'Restore')}</span></button>)}</div></details>}</>;
 }
 function YoutubeSection({ value, onChange, tr }: { value: string; onChange: (value: string) => void; tr: (ar: string, en: string) => string }) { const valid = !value || /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(value); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Youtube size={15}/>{tr('فيديو اختياري', 'Optional video')}</p><h2>{tr('فيديو YouTube التعريفي', 'YouTube introduction')}</h2><p className="muted">{tr('يُحمّل مشغّل الفيديو في موقعك بعد تفاعل الزائر فقط.', 'The video player loads on your site only after visitor interaction.')}</p></div></header><label><span>{tr('رابط YouTube', 'YouTube URL')}</span><input className={`field ${!valid ? 'is-invalid' : ''}`} type="url" placeholder="https://youtu.be/..." value={value} onChange={(event) => onChange(event.target.value)}/></label>{!valid && <p className="dashboard-error">{tr('استخدم رابطاً صحيحاً من YouTube.', 'Use a valid YouTube URL.')}</p>}</>;
 }
-function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hint: string; value: Social[]; onChange: (value: Social[]) => void; max: number; tr: (ar: string, en: string) => string }) { const update = (index: number, key: keyof Social, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item)); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Link2 size={15}/>{value.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{value.length < max && <button className="button button--quiet" onClick={() => onChange([...value, { label: '', url: '' }])}><Plus size={16}/>{tr('إضافة رابط', 'Add link')}</button>}</header><div className="dashboard-link-list">{value.length === 0 && <EmptyInline text={tr('لا توجد روابط مضافة بعد.', 'No links added yet.')} />}{value.map((item, index) => <div key={`${index}-${item.url}`}><Globe2 size={17}/><input className="field" value={item.label} placeholder={tr('العنوان', 'Label')} onChange={(event) => update(index, 'label', event.target.value)}/><input className="field" type="url" value={item.url} placeholder="https://" onChange={(event) => update(index, 'url', event.target.value)}/>{item.url && <small>{socialHost(item.url)}</small>}<button className="dashboard-icon-button" onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))} aria-label={tr('حذف الرابط', 'Remove link')}><X size={16}/></button></div>)}</div></>;
+export function LinkList({ title, hint, value, onChange, max, tr }: { title: string; hint: string; value: Social[]; onChange: (value: Social[]) => void; max: number; tr: (ar: string, en: string) => string }) { const rows = useEditorRowKeys(value.length); const update = (index: number, key: keyof Social, text: string) => onChange(value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: text } : item)); return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Link2 size={15}/>{value.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>{value.length < max && <button className="button button--quiet" onClick={() => onChange([...value, { label: '', url: '' }])}><Plus size={16}/>{tr('إضافة رابط', 'Add link')}</button>}</header><div className="dashboard-link-list">{value.length === 0 && <EmptyInline text={tr('لا توجد روابط مضافة بعد.', 'No links added yet.')} />}{value.map((item, index) => <div key={rows.keys[index]}><Globe2 size={17}/><input className="field" maxLength={100} value={item.label} aria-label={tr('عنوان الرابط — اختياري', 'Link label — optional')} placeholder={tr('عنوان اختياري', 'Optional label')} onChange={(event) => update(index, 'label', event.target.value)}/><input className="field" type="url" dir="ltr" inputMode="url" maxLength={2048} aria-label={tr('الرابط', 'URL')} value={item.url} placeholder="https://" onChange={(event) => update(index, 'url', event.target.value)}/>{item.url && <small>{safeLink(item.url) ? socialHost(item.url) : tr('أكمل الرابط قبل طلب النشر؛ كتابتك محفوظة.', 'Complete the link before publishing; your work is saved.')}</small>}<button className="dashboard-icon-button" onClick={() => { rows.remove(index); onChange(value.filter((_, itemIndex) => itemIndex !== index)); }} aria-label={tr('حذف الرابط', 'Remove link')}><X size={16}/></button></div>)}</div></>;
 }
 function PrivacySection({ draft, tr, onChange }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void }) {
   const fields = [['email', tr('البريد الإلكتروني', 'Email')], ['phone', tr('الهاتف', 'Phone')], ['whatsapp', tr('واتساب', 'WhatsApp')], ['city', tr('المدينة', 'City')]];
   const toggleHidden = (key: string) => onChange({ hidden: draft.hidden.includes(key) ? draft.hidden.filter((item) => item !== key) : [...draft.hidden, key] });
   return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ShieldCheck size={15}/>{tr('الظهور العام', 'Public visibility')}</p><h2>{tr('الخصوصية والظهور', 'Privacy and discovery')}</h2><p className="muted">{tr('إخفاء الحقل يمنع عرضه في الموقع والبحث وQR والتصديرات العامة.', 'Hiding a field prevents it appearing on the site, search, QR, and public exports.')}</p></div></header><div className="dashboard-privacy-options"><label className="dashboard-check"><input type="checkbox" checked={draft.searchable} onChange={(event) => onChange({ searchable: event.target.checked })}/>{tr('السماح بظهور الموقع في البحث', 'Allow site discovery in search')}</label><label className="dashboard-check"><input type="checkbox" checked={draft.allowContact} onChange={(event) => onChange({ allowContact: event.target.checked })}/>{tr('السماح بطلبات التواصل', 'Allow contact requests')}</label>{fields.map(([key, label]) => <label className="dashboard-check" key={key}><input type="checkbox" checked={draft.hidden.includes(key)} onChange={() => toggleHidden(key)}/>{tr('إخفاء', 'Hide')} {label}</label>)}</div></>;
 }
-function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = `upload-${purpose}-${Math.random().toString(36).slice(2)}`; return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/></label>; }
+function UploadControl({ label, purpose, uploading, tr, preview, compact = false, onChange }: { label: string; purpose: UploadPurpose; uploading: string; tr: (ar: string, en: string) => string; preview?: string; compact?: boolean; onChange: (event: ChangeEvent<HTMLInputElement>) => void }) { const id = useId(); return <label className={`dashboard-upload ${compact ? 'is-compact' : ''}`} htmlFor={id}>{preview && <img src={preview} alt=""/>}<span>{uploading === purpose ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {uploading === purpose ? tr('جارٍ الرفع...', 'Uploading...') : label}</span><input id={id} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/></label>; }
 function ProfessionalPointsMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="Professional points"><Gift size={compact ? 13 : 16}/><span>{compact ? 'نقاط' : 'نقاط التميز'}</span></span>; }
 function ProfessionalPointsAmount({ value, locale }: { value: number; locale: string }) { return <span className="midpoint-amount"><strong>{value.toLocaleString(locale)}</strong><ProfessionalPointsMark compact/></span>; }
 function WalletPanel({ balance, ledger, transferForm, setTransferForm, onTransfer, onCopyReferral, busyOperation, loyalty, loyaltyBusy, competitionBusy, activeSiteUrl, onDailySubmit, onCompetitionEnter, locale, tr, notify }: { balance: number; ledger: Record<string, unknown>[]; transferForm: { recipient: string; amount: string }; setTransferForm: (value: { recipient: string; amount: string }) => void; onTransfer: () => void; onCopyReferral: () => void; busyOperation: WalletOperation | ''; loyalty?: LoyaltyData; loyaltyBusy: boolean; competitionBusy: boolean; activeSiteUrl: string; onDailySubmit: (challenge: DailyChallenge, answer: string) => void; onCompetitionEnter: () => void; locale: string; tr: (ar: string, en: string) => string; notify: (message: string) => void }) {
@@ -1628,7 +1685,7 @@ function TranslationEditor({ target, translation, onChange, tr }: { target: Tran
     { key: 'training', ar: 'التدريب', en: 'Training', titles: false },
     { key: 'timeline', ar: 'السجل الزمني', en: 'Timeline', titles: true },
   ];
-  return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
+  return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} maxLength={3000} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
 function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
@@ -1664,7 +1721,7 @@ function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit }: { draf
       {draft.photo && <img className="dashboard-preview-avatar" src={draft.photo} alt=""/>}
       <p className="dashboard-preview-title">{draft.title}</p>
       {draft.bio && <p>{draft.bio}</p>}
-      <div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill) => <span key={skill}>{skill}</span>)}</div>
+      <div className="dashboard-preview-tags">{draft.skills.slice(0, 6).map((skill, index) => <span key={index}>{textItem(skill)}</span>)}</div>
       {site && <small dir="ltr"><bdi>{site.name}</bdi></small>}
     </div>
     <footer>
