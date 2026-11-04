@@ -103,7 +103,7 @@ export function buildLandscapeProfile(input: unknown, context: ProfilePdfContext
         if (index === 0) header.push(column === 0 ? { ...heading(section.heading), fontSize: 15 } : { text: ' ', fontSize: 15, margin: [0, 17, 0, 9] });
         if (row.heading) header.push({ ...bodyText(row.heading, 12, cardWidth), color: INK, bold: true, margin: [0, 0, 0, 4] });
         if (row.organization) header.push({ ...bodyText(row.organization, 10.5, cardWidth), color: GREEN, margin: [0, 0, 0, 3] });
-        if (row.period) header.push({ text: row.period, color: MUTED, fontSize: 9, alignment, margin: [0, 0, 0, 4] });
+        if (row.period) header.push({ ...bodyText(row.period, 9, cardWidth), color: MUTED, margin: [0, 0, 0, 4] });
         const stack: Content[] = [{ stack: header, unbreakable: true }];
         if (row.description) stack.push({ ...bodyText(row.description, 10.5, cardWidth), lineHeight: 1.35, margin: [0, 0, 0, 4] });
         return { width: '*', stack };
@@ -146,7 +146,7 @@ export function buildLandscapeProfile(input: unknown, context: ProfilePdfContext
     defaultStyle: { font: 'Tajawal', fontSize: 10.5, color: INK, alignment, lineHeight: 1.3 },
     images: imageNodes,
     background: (_page, size) => ({ canvas: [{ type: 'rect', x: 0, y: 0, w: size.width, h: 5, color: GREEN }] }),
-    header: page => page === 1 ? { text: '' } : { columns: [{ text: 'KSA.MEN', color: GREEN, bold: true }, { ...bodyText(name, 9, 510), color: MUTED }], margin: [40, 12, 40, 0], fontSize: 9 },
+    header: page => page === 1 ? { text: '' } : { columns: [{ text: 'KSA.MEN', color: GREEN, bold: true, alignment: 'left' }, { ...bodyText(name, 9, 510), color: MUTED }], margin: [40, 12, 40, 0], fontSize: 9 },
     footer: (page, count) => ({ columns: [
       { text: url || 'KSA.MEN', ...(url ? { link: url } : {}), fontSize: 8, color: MUTED },
       { text: `${page} / ${count}`, fontSize: 8, color: MUTED, alignment: 'right' },

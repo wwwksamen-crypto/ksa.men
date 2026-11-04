@@ -50,5 +50,7 @@ describe('source-exact landscape professional profile — local only', () => {
   expect(document).toContain('Experience'); expect(document).toContain('Exact saved experience'); expect(document).not.toContain('الخبرات');
   const formatter = vi.fn((value:string) => value); buildLandscapeProfile({name:'اسم عربي محفوظ'},{...context,lang:'en'},assets,formatter);
   expect(formatter).toHaveBeenCalledWith('اسم عربي محفوظ',true,expect.any(Number),expect.any(Number));
+  buildLandscapeProfile({experience:[{title:'خبرة',start:'2020',end:'حتى الآن'}]},context,assets,formatter);
+  expect(formatter).toHaveBeenCalledWith('2020 – حتى الآن',true,expect.any(Number),9);
  });
 });
