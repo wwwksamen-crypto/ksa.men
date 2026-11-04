@@ -126,4 +126,40 @@ describe.sequential('approved visible identity and directory fields — local on
     expect(() => normalizeProfile({ name: 'عضو', specialty: 'a'.repeat(121) })).toThrow();
     expect(() => normalizeProfile({ name: 'عضو', specialty: 123 })).toThrow();
   });
+  it('finds eligible old profiles beyond 200 without returning full profiles or drafts', async () => {
+    const batch: { sql: string; params: unknown[] }[] = [];
+    for (let i=0;i<205;i++) {
+      const owner=100+i, id='bulk-local-'+i;
+      const profile={ name:'اختبار التوسع '+i,title:'مسمى اختبار',specialty:'اختبار الترقيم',city:'مدينة الاختبار',notes:'PRIVATE BULK',blog:'PUBLIC BLOG NOT DIRECTORY',allowContact:true };
+      batch.push({sql:'INSERT INTO users(id,email,name,created_at,trial_until,consent_at) VALUES(?,?,?,?,?,?)',params:[owner,'bulk'+i+'@local.invalid','bulk',now(),now()+86400,now()]});
+      batch.push({sql:"INSERT INTO sites(id,user_id,draft,published,published_version,status,created_at,updated_at) VALUES(?,?,?,?,1,'published',?,?)",params:[id,owner,JSON.stringify({...profile,specialty:'PRIVATE DRAFT BULK'}),JSON.stringify(profile),now(),now()+i+1]});
+      batch.push({sql:'INSERT INTO dns_names(name,owner_id,site_id,created_at) VALUES(?,?,?,?)',params:[id,owner,id,now()]});
+    }
+    sql({batch});
+    const oldest:any=await (await request('/api/search?q=identity-local')).json(); expect(oldest.items).toHaveLength(1);
+    const page:any=await (await request('/api/search?specialty='+encodeURIComponent('اختبار الترقيم')+'&offset=200')).json();
+    expect(page.total).toBe(205);expect(page.items).toHaveLength(5);
+    expect(page.items[4].name).toBe('bulk-local-0');
+    expect(Object.keys(page.items[0].profile).sort()).toEqual(['allowContact','city','name','specialty','title'].sort());
+    expect(JSON.stringify(page)).not.toContain('PRIVATE');expect(JSON.stringify(page)).not.toContain('PUBLIC BLOG');
+    expect((await (await request('/api/search?q=PRIVATE%20DRAFT%20BULK')).json() as any).items).toHaveLength(0);
+    const invalid:any=await (await request('/api/search?offset=NaN')).json();expect(invalid.items).toHaveLength(20);
+    const negative:any=await (await request('/api/search?offset=-10')).json();expect(negative.items).toEqual(invalid.items);
+    const injection:any=await (await request('/api/search?q='+encodeURIComponent("' OR 1=1 --"))).json();expect(injection.items).toHaveLength(0);
+    expect((await (await request('/api/search?q=%25')).json() as any).items).toHaveLength(0);
+  });
+  it('keeps a hidden or locked old profile out of matching and facets after the directory grows',async()=>{
+    policy(['title','specialty','city','photo']);
+    const data:any=await (await request('/api/search?q=identity-local')).json();expect(data.items[0].profile).toEqual({name:base.name,allowContact:base.allowContact});
+    expect(data.specialties).not.toContain(base.specialty);expect(data.cities).not.toContain(base.city);
+    expect((await (await request('/api/search?q='+encodeURIComponent(base.title))).json() as any).items).toHaveLength(0);
+    policy([]);sql({sql:'UPDATE sites SET lock_hash=? WHERE id=?',params:['local-lock','share-test-site']});
+    expect((await (await request('/api/search?q=identity-local')).json() as any).total).toBe(0);
+    sql({sql:'UPDATE sites SET lock_hash=NULL WHERE id=?',params:['share-test-site']});
+  });
+  it('disables automatic invocation URL logs and redacts query strings without disabling observability or the audit ledger',()=>{
+    const config=JSON.parse(readFileSync('wrangler.jsonc','utf8').replace(/^\s*\/\/.*$/gm,''));
+    expect(config.observability).toMatchObject({enabled:true,redact_query_string:true,logs:{enabled:true,invocation_logs:false}});
+    expect(config.triggers.crons).toEqual(['0 * * * *']);expect(config.d1_databases[0].database_id).toBe('dd006d15-8b4c-4469-9809-af08cbb42ad4');
+  });
 });
