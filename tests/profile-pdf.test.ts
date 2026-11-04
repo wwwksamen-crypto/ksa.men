@@ -54,3 +54,11 @@ describe('source-exact landscape professional profile — local only', () => {
   expect(formatter).toHaveBeenCalledWith('2020 – حتى الآن',true,expect.any(Number),9);
  });
 });
+
+describe('localized automatic provider labels',()=>{
+ it('localizes inferred brands but preserves explicit member labels and English exports',()=>{
+  expect(profilePdfLinks({youtube:'https://www.youtube.com/watch?v=dQw4w9WgXcQ'},'ar')[0].label).toBe('يوتيوب');
+  expect(profilePdfLinks({youtube:'https://www.youtube.com/watch?v=dQw4w9WgXcQ'},'en')[0].label).toBe('YouTube');
+  expect(profilePdfLinks({socials:[{url:'https://www.youtube.com/watch?v=dQw4w9WgXcQ',label:'My own title'}]},'ar')[0].label).toBe('My own title');
+ });
+});

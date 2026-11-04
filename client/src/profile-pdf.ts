@@ -47,11 +47,16 @@ export function profilePdfSections(input: unknown, lang: 'ar' | 'en'): ProfilePd
   return sections.filter(section => section.entries.length);
 }
 
-export function profilePdfLinks(input: unknown) {
+export function profilePdfLinks(input: unknown, lang: 'ar' | 'en' = 'en') {
   const profile = sanitizeProfile(input);
   const sources = [...list(profile.socials), ...list(profile.buttons), ...(text(profile.youtube) ? [{ url: profile.youtube }] : [])];
   const seen = new Set<string>();
-  return sources.map(socialLink).filter((item): item is NonNullable<ReturnType<typeof socialLink>> => Boolean(item)).filter(item => {
+  const arabicLabels: Record<string, string> = { youtube: 'يوتيوب', x: 'إكس', twitter: 'إكس', linkedin: 'لينكدإن', instagram: 'إنستغرام', facebook: 'فيسبوك', tiktok: 'تيك توك', snapchat: 'سناب شات', telegram: 'تلغرام', whatsapp: 'واتساب' };
+  return sources.map(source => {
+    const link = socialLink(source), row = record(source);
+    if (link && lang === 'ar' && !text(row.label) && !text(row.title) && arabicLabels[link.brand]) return { ...link, label: arabicLabels[link.brand] };
+    return link;
+  }).filter((item): item is NonNullable<ReturnType<typeof socialLink>> => Boolean(item)).filter(item => {
     if (seen.has(item.url)) return false; seen.add(item.url); return true;
   });
 }
@@ -60,7 +65,7 @@ export function profilePdfLinks(input: unknown) {
 export function buildLandscapeProfile(input: unknown, context: ProfilePdfContext, assets: ProfilePdfAssets, format: PdfTextFormatter): TDocumentDefinitions {
   const profile = sanitizeProfile(input), labels = copy[context.lang], rtl = context.lang === 'ar';
   const alignment = rtl ? 'right' : 'left', name = text(profile.name) || text(context.name) || 'KSA.MEN';
-  const sections = profilePdfSections(profile, context.lang), links = profilePdfLinks(profile);
+  const sections = profilePdfSections(profile, context.lang), links = profilePdfLinks(profile, context.lang);
   const imageLists = (['skillImages', 'workImages'] as const).map(key => ({ key, values: list(profile[key]).filter(value => Boolean(mediaSource(value))) }));
   const bio = text(profile.bio), blog = text(profile.blog);
   const sourceLength = JSON.stringify({ sections, bio, blog, links }).length;
