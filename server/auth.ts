@@ -1,3 +1,4 @@
+import { resolveReferrer } from './referrals';
 import type { App,Ctx,User } from './core';
 import {now,uid,one,run,rate,hmac,digest,hashSecret,verifySecret,me,fresh,audit,safeUser,recordConsent} from './core';
 import {HTTPException} from 'hono/http-exception';
@@ -68,7 +69,7 @@ export function registerAuth(app:App){
   const consumed=await run(c,'UPDATE auth_codes SET consumed=1 WHERE id=? AND consumed=0 AND expires_at>=? AND attempts<=5',challenge,now());if(!consumed.meta.changes)throw new HTTPException(400,{message:'الرمز مستخدم'});
   let u=await authUser(c,row.email,payload.account);let created=false;
   if(payload.account&&(!u||u.id!==payload.managedUserId))throw new HTTPException(403,{message:'رابط الحساب غير متاح'});
-  if(!u){let referral:number|null=null;if(payload.referral){const n=String(payload.referral);const ref:any=/^C\d+$/.test(n)?await one(c,'SELECT id,email FROM users WHERE id=?',Number(n.slice(1))):await one(c,'SELECT u.id,u.email FROM dns_names n JOIN users u ON u.id=n.owner_id WHERE n.name=?',n.toLowerCase());if(ref&&ref.email!==row.email)referral=ref.id;}
+  if(!u){const referral=await resolveReferrer(c,payload.referral,row.email);
    const owner=row.email===c.env.OWNER_EMAIL&&!await one(c,"SELECT id FROM users WHERE role='owner'");await run(c,'INSERT INTO users(email,name,whatsapp,role,created_at,trial_until,referrer_id,consent_at,last_active) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(email) DO NOTHING',row.email,payload.name||(owner?'التميمي':'عضو KSA.MEN'),payload.whatsapp||'',owner?'owner':'user',now(),now()+7*86400,referral,now(),now());u=await one<User>(c,'SELECT * FROM users WHERE email=?',row.email);created=true;
   }
   if(!u||u.status!=='active')throw new HTTPException(403,{message:'الحساب معلق'});if(payload.expectedUserId!==undefined&&payload.expectedUserId!==u.id)throw new HTTPException(401,{message:'ادخل بالحساب الذي كنت تعمل به لمتابعة عملك'});if(pin)await run(c,'UPDATE users SET pin_hash=? WHERE id=?',await hashSecret(pin),u.id);

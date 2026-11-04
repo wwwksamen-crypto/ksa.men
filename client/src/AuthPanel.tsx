@@ -1,3 +1,4 @@
+import { captureReferral, clearReferral, trackReferral } from './referral-source';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUpLeft, Check, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
 import { api, Button, setCSRF, useApp, type User } from './lib';
@@ -12,7 +13,9 @@ function destination(role: string) {
 export default function AuthPanel({ embedded = false, purpose, initialEmail, account, expectedUserId, onAuthenticated }: Props) {
   const { user, t, refresh, notify } = useApp();
   const params = new URLSearchParams(location.search), accountName = account ?? params.get('account') ?? '';
-  const [mode, setMode] = useState(purpose || (params.has('reauth') ? 'reauth' : params.has('register') ? 'register' : 'login'));
+  const [referral, setReferral] = useState(() => embedded ? '' : captureReferral(location.search));
+  const [mode, setMode] = useState(purpose || (params.has('reauth') ? 'reauth' : !user && (params.has('register') || referral) ? 'register' : 'login'));
+  useEffect(() => { if (referral && !embedded && !user) void trackReferral(referral, code => api('/api/public/referral-visit', { method: 'POST', body: JSON.stringify({ code }) })); }, [referral, embedded, user?.id]);
   const [email, setEmail] = useState(initialEmail ?? user?.email ?? ''), [name, setName] = useState(''), [phone, setPhone] = useState('');
   const [agree, setAgree] = useState(false), [challenge, setChallenge] = useState(''), [code, setCode] = useState(''), [pin, setPin] = useState('');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [quick, setQuick] = useState(embedded && purpose !== 'reauth'), [showPin, setShowPin] = useState(false), [backupUsed, setBackupUsed] = useState(false);
@@ -25,12 +28,13 @@ export default function AuthPanel({ embedded = false, purpose, initialEmail, acc
   }
   async function finish(result: { csrf: string; user: User }) {
     if (expectedUserId !== undefined && result.user?.id !== expectedUserId) throw new Error(t('ادخل بالحساب الذي كنت تعمل به لمتابعة عملك.', 'Use the account you were editing with to continue.'));
+    if (!embedded) clearReferral();
     setCSRF(result.csrf); await refresh({ ...result.user, email: email.trim().toLowerCase(), ...(accountName ? { account: accountName } : {}) });
     if (onAuthenticated) await onAuthenticated(result.user); else location.assign(destination(result.user.role));
   }
   async function requestCode(backup = false) {
     const normalized = email.trim().toLowerCase();
-    const result = await api<{ challenge: string; message: string; backup?: boolean }>('/api/auth/request', { method: 'POST', body: JSON.stringify({ email: normalized, account: accountName || undefined, expectedUserId, purpose: mode, backup, previousChallenge: backup ? challenge : undefined, ...(mode === 'register' ? { name: name.trim(), whatsapp: phone.trim(), consent: agree, ageConfirmed: agree, eligibilityConfirmed: agree, referral: params.get('ref') || undefined } : {}) }) });
+    const result = await api<{ challenge: string; message: string; backup?: boolean }>('/api/auth/request', { method: 'POST', body: JSON.stringify({ email: normalized, account: accountName || undefined, expectedUserId, purpose: mode, backup, previousChallenge: backup ? challenge : undefined, ...(mode === 'register' ? { name: name.trim(), whatsapp: phone.trim(), consent: agree, ageConfirmed: agree, eligibilityConfirmed: agree, referral: referral || undefined } : {}) }) });
     setEmail(normalized); setChallenge(result.challenge); setCode(''); if (backup) setBackupUsed(true); notify(result.message);
   }
   async function submit(event: FormEvent) {
@@ -51,6 +55,7 @@ export default function AuthPanel({ embedded = false, purpose, initialEmail, acc
     {!embedded && <div className="auth-card-top"><span className="eyebrow">{t('مساحتك الخاصة', 'YOUR OWN SPACE')}</span><ShieldCheck size={21}/></div>}
     <h2>{quick ? t('الدخول السريع', 'Email & PIN sign-in') : challenge ? t('تحقق من بريدك', 'Check your email') : mode === 'register' ? t('أنشئ موقعك', 'Create your site') : mode === 'recover' ? t('استرجاع الحساب', 'Recover your account') : mode === 'reauth' ? t('أكمل تأكيد حسابك', 'Confirm your account') : t('عوداً مرحباً', 'Welcome back')}</h2>
     <p className="muted">{challenge ? <>{t('تحقق من رسالة الرمز في بريدك:', 'Check your email for the code:')} <bdi dir="ltr">{email}</bdi></> : quick ? t('بريد الحساب وPIN على جهازك الموثوق.', 'Your account email and PIN on your trusted device.') : t('يُستخدم رمز البريد لإثبات أن الحساب لك.', 'An email code confirms that this account belongs to you.')}</p>
+    {!challenge && mode === 'register' && referral && <div className="auth-referral-notice"><ShieldCheck size={17}/><p>{t('وصلت عبر دعوة إلى KSA.MEN. يُحفظ مصدرها لإتمام التسجيل فقط، حتى 30 يوماً. لا يؤثر ذلك في سعر عضويتك.', 'You arrived through a KSA.MEN invitation. Its source is retained only to complete registration, for up to 30 days. It does not change your membership price.')}</p><button type="button" disabled={busy} onClick={() => { clearReferral(); setReferral(''); }}>{t('إزالة الدعوة', 'Remove invitation')}</button></div>}
     {!challenge && !['register', 'reauth'].includes(mode) && <div className="auth-methods" role="group" aria-label={t('طريقة الدخول', 'Sign-in method')}><button type="button" disabled={busy} aria-pressed={!quick} className={!quick ? 'selected' : ''} onClick={() => changeMethod('login')}><Mail size={16}/>{t('رمز البريد', 'Email code')}</button><button type="button" disabled={busy} aria-pressed={quick} className={quick ? 'selected' : ''} onClick={() => changeMethod('login', true)}><LockKeyhole size={16}/><bdi>PIN</bdi></button></div>}
     <form onSubmit={submit} className="stack" aria-busy={busy}>
       {!challenge && <label className="field"><span>{t('البريد الإلكتروني', 'Email')}</span><input ref={emailInput} required readOnly={embedded && Boolean(initialEmail)} type="email" name="email" autoComplete={quick ? 'username' : 'email'} value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" dir="ltr" autoCapitalize="none" spellCheck={false}/></label>}

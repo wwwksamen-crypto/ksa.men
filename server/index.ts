@@ -1,3 +1,4 @@
+import { registerReferrals } from './referrals';
 import { registerSEO, rootHTML, knownRootPage } from './seo';
 import { siteVisibility } from './visibility';
 import { registerVisibility } from './visibility';
@@ -124,6 +125,7 @@ registerAuth(app);
 registerPublic(app);
 registerVisibility(app);
 registerBusiness(app);
+registerReferrals(app);
 registerOperations(app);registerManaged(app);registerNotifications(app);
 registerIntelligence(app);
 registerSEO(app);
