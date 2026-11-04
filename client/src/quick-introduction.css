@@ -1,0 +1,12 @@
+.quick-introduction{padding-block:clamp(24px,6vw,64px)}
+.quick-introduction__card{max-width:580px;margin-inline:auto;display:flex;flex-direction:column;align-items:center;text-align:center;gap:16px;padding:clamp(22px,6vw,42px);overflow-wrap:anywhere}
+.quick-introduction__logo{display:block;width:120px;height:120px;object-fit:contain;margin-bottom:8px}
+.quick-introduction__card h1{font-size:clamp(25px,6vw,36px);line-height:1.5;margin:0}
+.quick-introduction__card p{margin:0;line-height:1.8}
+.quick-introduction__role{color:var(--muted);font-size:18px}
+.quick-introduction__actions{display:flex;flex-direction:column;gap:12px;width:100%;margin-block:12px;min-width:0}
+.quick-introduction__actions .button{width:100%;min-height:48px;white-space:normal;overflow-wrap:anywhere;min-width:0;line-height:1.6}
+.quick-introduction__actions bdi{min-width:0;overflow-wrap:anywhere}
+.quick-introduction__expiry,.quick-introduction__privacy{display:flex;gap:9px;align-items:flex-start;justify-content:center;color:var(--muted);font-size:14px;max-width:100%}
+.quick-introduction__expiry svg,.quick-introduction__privacy svg{flex-shrink:0;margin-top:4px}
+.quick-introduction__privacy{padding-top:16px;border-top:1px solid var(--line);width:100%}

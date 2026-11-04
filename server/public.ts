@@ -1,5 +1,6 @@
 import { profileItemIds, draftWithIdentities, expandedHiddenItems, withVisibility } from '../shared/profile-visibility';
 import { siteVisibility, visibleSiteProfile } from './visibility';
+import { readQuickLink } from './quick-links';
 import type {App,Ctx} from './core';
 import {one,all,run,now,uid,me,siteFor,service,publicProfile,rate,verifySecret,hmac} from './core';
 import {HTTPException} from 'hono/http-exception';
@@ -137,14 +138,9 @@ export function registerPublic(app:App){
     });
   });
 
-  app.get('/api/public/quick/:id',async c=>{
-    const link:any=await one(c,'SELECT * FROM quick_links WHERE id=? AND revoked=0 AND expires_at>?',c.req.param('id'),now());
-    if(!link)throw new HTTPException(404,{message:'انتهت صلاحية رابط التعارف أو ألغي'});
-    const payload=JSON.parse(link.payload);
-    let profile=payload.values||payload;
-    const site:any=await one(c,'SELECT * FROM sites WHERE user_id=? ORDER BY created_at LIMIT 1',link.user_id);
-    if(site){const policy=await siteVisibility(c,site);if(!policy.visible)throw new HTTPException(404);profile=publicProfile(withVisibility(profile,policy));}
-    return c.json({profile:{...profile,url:profile.url||profile.site},mode:payload.mode||'professional',expiresAt:link.expires_at});
+  app.get('/api/public/quick/:id', async c => {
+    c.header('X-Robots-Tag', 'noindex, nofollow');
+    return c.json(await readQuickLink(c, c.req.param('id')));
   });
 
   // A visitor can receive only the approved published snapshot, never an editable draft.

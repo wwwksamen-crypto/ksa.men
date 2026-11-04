@@ -24,7 +24,8 @@ const escape = (text: string) => text.replace(/[&<>"']/g, character => ({ '&': '
 const staticPath = (path: string) => path.startsWith('/assets/') || ['/favicon.ico', '/sw.js', '/manifest.webmanifest', '/offline.html', '/gate.js', '/bootstrap.js'].includes(path);
 function security(c: any, isStatic = false) {
   c.header('X-Content-Type-Options', 'nosniff');
-  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  const sensitiveLink = /^\/(?:q|quick)\//.test(new URL(c.req.url).pathname) || new URL(c.req.url).pathname.startsWith('/api/public/quick/');
+  c.header('Referrer-Policy', sensitiveLink ? 'no-referrer' : 'strict-origin-when-cross-origin');
   c.header('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
   c.header('Strict-Transport-Security', 'max-age=31536000');
   c.header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; media-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self'; frame-src https://www.youtube-nocookie.com https://www.youtube.com; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'");

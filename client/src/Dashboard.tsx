@@ -1,3 +1,4 @@
+import QuickLinkShare from './QuickLinkShare';
 import LoadingState from './LoadingState';
 import { useMobileViewport } from './mobile-viewport';
 import { DictatedInput, DictatedTextarea } from './DictatedField';
@@ -449,7 +450,7 @@ export default function Dashboard() {
   const [deletionConfirmed, setDeletionConfirmed] = useState(false);
   const [deletionAction, setDeletionAction] = useState<'archive'|'schedule'|'destroy'>('archive');
   const [deletionSchedule, setDeletionSchedule] = useState('');
-  const [quickFields, setQuickFields] = useState<Record<string, boolean>>({ name: true, title: true, whatsapp: false, email: false, site: true });
+  const [quickFields, setQuickFields] = useState<Record<string, boolean>>({ name: true, title: true, phone: false, whatsapp: false, email: false, site: true });
   const [quickDays, setQuickDays] = useState('7');
   const [quickMode, setQuickMode] = useState<QuickMode>('professional');
   const [exportLanguage, setExportLanguage] = useState<'ar' | 'en'>('ar');
@@ -1026,7 +1027,7 @@ export default function Dashboard() {
     const expiresDays = Number(quickDays);
     if (!fields.length || !Number.isInteger(expiresDays) || expiresDays < 1) { notify(tr('اختر حقلاً واحداً على الأقل ومدة صالحة.', 'Choose at least one field and a valid lifetime.')); return; }
     try {
-      const response = await api<QuickLink>('/api/quick-links', { method: 'POST', body: JSON.stringify({ fields, expiresDays }) });
+      const response = await api<QuickLink>(`/api/quick-links?siteId=${encodeURIComponent(activeSite.id)}`, { method: 'POST', body: JSON.stringify({ mode: quickMode, fields, expiresDays }) });
       setQuickLink(response);
       notify(tr('تم إنشاء رابط تعارف محدود البيانات.', 'Limited-data introduction link created.'));
     } catch (error) { notify(errorMessage(error)); }
@@ -1615,7 +1616,7 @@ function GiftQrPanel({ activeSiteUrl, tr, notify }: { activeSiteUrl: string; tr:
 }
 
 function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activeLink, existing, onCreate, onRevoke, tr }: { mode: QuickMode; setMode: (value: QuickMode) => void; fields: Record<string, boolean>; setFields: (value: Record<string, boolean>) => void; days: string; setDays: (value: string) => void; activeLink: QuickLink | null; existing: QuickLink[]; onCreate: () => void; onRevoke: (id: string) => void; tr: (ar: string, en: string) => string }) {
-  const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] };
+  const labels: Record<string, [string, string]> = { name: ['الاسم', 'Name'], title: ['المسمى', 'Title'], phone: ['الهاتف', 'Phone'], whatsapp: ['واتساب', 'WhatsApp'], email: ['البريد', 'Email'], site: ['رابط الموقع', 'Site link'] };
   const modes: Array<{ key: QuickMode; ar: string; en: string; fields: string[] }> = [
     { key: 'professional', ar: 'مهني', en: 'Professional', fields: ['name', 'title', 'email', 'site'] },
     { key: 'business', ar: 'تجاري', en: 'Business', fields: ['name', 'title', 'whatsapp', 'site'] },
@@ -1623,7 +1624,7 @@ function QuickLinkPanel({ mode, setMode, fields, setFields, days, setDays, activ
   ];
   const chooseMode = (next: typeof modes[number]) => { setMode(next.key); setFields(Object.fromEntries(Object.keys(fields).map((key) => [key, next.fields.includes(key)]))); };
   const links = activeLink ? [activeLink] : existing.filter((item) => !item.revoked);
-  return <article className="card dashboard-quick-link"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('بطاقة ورابط التعارف', 'Introduction card and link')}</h2></div></div><p className="muted">{tr('اختر وضعاً ثم راجع الحقول المشتركة. الرابط مستقل عن خصوصية موقعك الأساسي ويمكن إلغاؤه فوراً.', 'Choose a mode, then review the shared fields. The link is independent of core-site privacy and can be revoked immediately.')}</p><div className="dashboard-intro-modes" role="group" aria-label={tr('وضع التعارف', 'Introduction mode')}>{modes.map((item) => <button key={item.key} className={`button button--quiet ${mode === item.key ? 'is-active' : ''}`} aria-pressed={mode === item.key} onClick={() => chooseMode(item)}><UsersRound size={15}/>{tr(item.ar, item.en)}</button>)}</div><div className="dashboard-quick-fields">{Object.keys(fields).map((key) => <label key={key}><input type="checkbox" checked={fields[key]} onChange={(event) => setFields({ ...fields, [key]: event.target.checked })}/>{tr(...labels[key])}</label>)}</div><div className="dashboard-inline-form"><input className="field" type="number" min="1" value={days} onChange={(event) => setDays(event.target.value)} aria-label={tr('مدة الصلاحية بالأيام', 'Lifetime in days')}/><button className="button" onClick={onCreate}><Link2 size={16}/>{tr('إنشاء الرابط', 'Create link')}</button></div>{links.map((link) => <div className="dashboard-created-link" key={link.id}><a href={link.url} target="_blank" rel="noreferrer">{link.url || link.id}</a><button className="dashboard-icon-button" onClick={() => onRevoke(link.id)} aria-label={tr('إلغاء الرابط', 'Revoke link')}><Ban size={16}/></button></div>)}</article>;
+  return <article className="card dashboard-quick-link"><div className="dashboard-section-heading"><div><Link2 size={18}/><h2>{tr('بطاقة ورابط التعارف', 'Introduction card and link')}</h2></div></div><p className="muted">{tr('اختر البيانات ومدة المشاركة. تحصل على رابط قصير باسم المنصة؛ ويمكنك إبطاله متى شئت. إخفاء بياناتك لاحقاً يطبق على الرابط أيضاً.', 'Choose the details and lifetime. Share a short link on KSA.MEN and revoke it anytime. Later privacy changes also apply to the link.')}</p><div className="dashboard-intro-modes" role="group" aria-label={tr('وضع التعارف', 'Introduction mode')}>{modes.map((item) => <button key={item.key} className={`button button--quiet ${mode === item.key ? 'is-active' : ''}`} aria-pressed={mode === item.key} onClick={() => chooseMode(item)}><UsersRound size={15}/>{tr(item.ar, item.en)}</button>)}</div><div className="dashboard-quick-fields">{Object.keys(fields).map((key) => <label key={key}><input type="checkbox" checked={fields[key]} onChange={(event) => setFields({ ...fields, [key]: event.target.checked })}/>{tr(...labels[key])}</label>)}</div><div className="dashboard-inline-form"><input className="field" type="number" min="1" value={days} onChange={(event) => setDays(event.target.value)} aria-label={tr('مدة الصلاحية بالأيام', 'Lifetime in days')}/><button className="button" onClick={onCreate}><Link2 size={16}/>{tr('إنشاء الرابط', 'Create link')}</button></div>{links.map((link) => <div className="dashboard-created-link" key={link.id}><a href={link.url} target="_blank" rel="noreferrer"><bdi dir="ltr">{link.url || link.id}</bdi></a><QuickLinkShare url={link.url || ''} expiresAt={Number(link.expires_at ?? link.expiresAt ?? 0)}/><button className="dashboard-icon-button" onClick={() => onRevoke(link.id)} aria-label={tr('إلغاء الرابط', 'Revoke link')}><Ban size={16}/></button></div>)}</article>;
 }
 function MessageRetention({ retention, tr }: { retention: unknown; tr: (ar: string, en: string) => string }) {
   const values = retention && typeof retention === 'object' && !Array.isArray(retention) ? retention as Record<string, unknown> : {};

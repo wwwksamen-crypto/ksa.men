@@ -3,6 +3,8 @@ import { all, one, setting } from './core';
 import { HTTPException } from 'hono/http-exception';
 import { siteVisibility } from './visibility';
 import { shareSite } from './og';
+import { readQuickLink } from './quick-links';
+import { isQuickPath, quickMetadata } from '../shared/quick-link';
 import { decorateHTML, htmlEscape as e, type Locale } from '../shared/seo';
 const pages:Record<string,[string,string,string,string]>={
  '/':['ظهور رقمي يليق بك','A digital presence worthy of you','اسمك عنوانك. وخبرتك قصة تستحق أن تُرى.','Your name is your address. Your expertise deserves to be seen.'],
@@ -14,7 +16,7 @@ const pages:Record<string,[string,string,string,string]>={
  '/terms':['شروط الاستخدام','Terms of use','شروط واضحة لخدمة حضور وهوية مهنية شخصية على نطاق فرعي.','Clear terms for a personal professional presence and identity service on a subdomain.'],
  '/qr':['شارك حضورك بلمسة','One scan. Your whole story.','QR وبطاقة اتصال. هدية من المنصة، دون تسجيل.','QR and contact cards. A gift from us. No account needed.']
 };
-export function knownRootPage(path:string){return path in pages||['/auth','/admin','/dashboard','/search','/radar'].includes(path)||/^\/(export|quick)\/[^/]+$/.test(path);}
+export function knownRootPage(path:string){return path in pages||['/auth','/admin','/dashboard','/search','/radar'].includes(path)||(/^\/export\/[^/]+$/.test(path)||isQuickPath(path));}
 export async function rootHTML(c:Ctx,html:string,open:boolean){
  const url=new URL(c.req.url),path=url.pathname==='/index.html'?'/':url.pathname;
  const lang:Locale=url.searchParams.get('lang')==='en'?'en':'ar',english=lang==='en';
@@ -38,11 +40,26 @@ const eligible=`FROM sites s JOIN dns_names n ON n.site_id=s.id JOIN users u ON 
 const PAGE_SIZE=1000;
 async function publiclyIndexable(c:Ctx){return c.get('platformLockMode')==='open';}
 export function registerSEO(app:App){
+ const quickDocument = async (c:Ctx) => {
+  if(new URL(c.req.url).hostname!==c.env.ROOT_DOMAIN)throw new HTTPException(404);
+  c.header('X-Robots-Tag','noindex, nofollow');
+  const asset=await c.env.ASSETS.fetch(new Request(new URL('/index.html',c.req.url),c.req.raw));
+  const html=await asset.text();
+  if(c.get('platformLockMode')!=='open')return c.html(await rootHTML(c,html,false));
+  let available=true;
+  try{await readQuickLink(c,c.req.param('id')||'');}catch(error){if(!(error instanceof HTTPException)||error.status!==404)throw error;available=false;}
+  const lang=c.req.query('lang')==='en'?'en':'ar';
+  const page=quickMetadata(new URL(c.req.url).pathname,lang,c.env.ROOT_DOMAIN,available);
+  const body=`<header><img src="/assets/logo-emblem.webp" alt="KSA.MEN" width="120" height="120"><h1>${e(page.title)}</h1></header><p>${e(page.description)}</p>`;
+  return c.html(decorateHTML(html,page,body),available?200:404);
+ };
+ app.get('/q/:id',quickDocument);
+ app.get('/quick/:id',quickDocument);
  app.get('/robots.txt',async c=>{
   if(!await publiclyIndexable(c))return c.text('User-agent: *\nDisallow: /\n');
   const host=new URL(c.req.url).hostname,root=c.env.ROOT_DOMAIN;
   if(host!==root){try{const site=await shareSite(c,host.slice(0,-root.length-1));const policy=await siteVisibility(c,site);if(site.lock_hash||!policy.indexable)return c.text('User-agent: *\nDisallow: /\n');}catch{return c.text('User-agent: *\nDisallow: /\n');}}
-  return c.text('User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /auth\nDisallow: /api/\nDisallow: /export/\nDisallow: /quick/\nDisallow: /radar\nDisallow: /search\nSitemap: https://'+host+'/sitemap.xml\n');
+  return c.text('User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /auth\nDisallow: /api/\nDisallow: /export/\nDisallow: /quick/\nDisallow: /q/\nDisallow: /radar\nDisallow: /search\nSitemap: https://'+host+'/sitemap.xml\n');
  });
  app.get('/sitemap.xml',async c=>{
   if(!await publiclyIndexable(c))return c.body(urlset([]),200,{'Content-Type':'application/xml; charset=utf-8'});

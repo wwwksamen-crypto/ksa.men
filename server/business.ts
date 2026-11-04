@@ -1,7 +1,10 @@
+import { rate } from './core';
 import { submissionNotice } from './publication-notice';
 import { webUrl } from '../shared/profile-content';
 import { profileItemIds, draftWithIdentities, listFields, pathValue, visibilityFields, type ItemIds } from '../shared/profile-visibility';
 import { siteVisibility } from './visibility';
+import { newQuickToken } from './quick-links';
+import { quickFields, quickURL } from '../shared/quick-link';
 import { HTTPException } from 'hono/http-exception';
 import type { App } from './core';
 import {
@@ -108,7 +111,7 @@ const RESUME_LISTS = [
   'experience', 'education', 'training', 'skills', 'memberships', 'languages',
   'hobbies', 'achievements', 'timeline',
 ] as const;
-const QUICK_FIELDS = new Set(['name', 'title', 'whatsapp', 'email', 'site']);
+const QUICK_FIELDS = new Set<string>(quickFields);
 const QUICK_LINK_MODES = new Set(['professional', 'business', 'quick']);
 
 function apiError(status: number, error: string, code?: string): never {
@@ -735,7 +738,7 @@ function toQuickLink(row: Record<string, unknown>, rootDomain: string): Json {
   const mode = typeof payload.mode === 'string' && QUICK_LINK_MODES.has(payload.mode) ? payload.mode : 'professional';
   return {
     id: row.id,
-    url: `https://${rootDomain}/quick/${row.id}`,
+    url: quickURL(String(row.id), rootDomain),
     mode,
     fields,
     expires_at: Number(row.expires_at),
@@ -1468,6 +1471,7 @@ export function registerBusiness(app: App): void {
   app.post('/api/quick-links', async (c) => {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
+    await rate(c, 'quick-create:' + userId, 30, 3600);
     await service(c, 'quick_link', userId);
     const body = await requestBody(c);
     const mode = body.mode === undefined ? 'professional' : asString(body.mode, 'mode', 32, true).toLowerCase();
@@ -1489,19 +1493,21 @@ export function registerBusiness(app: App): void {
     const values: Json = {};
     for (const field of fields) {
       if (field === 'site') {
-        if (!site.name) apiError(409, 'Reserve a profile name before sharing a site link', 'NAME_REQUIRED');
-        values.site = `https://${site.name}.${c.env.ROOT_DOMAIN}`;
+        const reservedName = site.name || (await one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE site_id=? LIMIT 1', site.id))?.name;
+        if (!reservedName) apiError(409, 'Reserve a profile name before sharing a site link', 'NAME_REQUIRED');
+        values.site = `https://${reservedName}.${c.env.ROOT_DOMAIN}`;
       } else {
         const value = profile[field as keyof Profile];
         if (typeof value !== 'string' || !value) apiError(422, `The selected ${field} field has no value`, 'MISSING_SELECTED_FIELD');
         values[field] = value;
       }
     }
+    if (site.lock_hash || ['deleted', 'deletion_pending'].includes(site.status)) apiError(409, 'أعد إتاحة الموقع قبل إنشاء رابط التعارف.', 'SITE_UNAVAILABLE');
     const createdAt = now();
-    const id = uid();
+    const id = newQuickToken();
     const expiresAt = createdAt + expiresDays * 86_400;
-    // This payload is deliberately independent of hidden fields: the owner explicitly selected every item here.
-    const payload = { mode, fields, values };
+    // Keep only the explicitly selected snapshot; live privacy is enforced when the link is read.
+    const payload = { mode, fields, values, siteId: site.id };
     await run(c, 'INSERT INTO quick_links(id,user_id,payload,expires_at,revoked,created_at) VALUES(?,?,?,?,0,?)', id, userId, JSON.stringify(payload), expiresAt, createdAt);
     await audit(c, 'quick_link.create', id, { fields, expiresAt });
     return c.json(toQuickLink({ id, payload: JSON.stringify(payload), expires_at: expiresAt, created_at: createdAt, revoked: 0 }, c.env.ROOT_DOMAIN), 201);

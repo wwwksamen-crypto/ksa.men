@@ -1,3 +1,4 @@
+import { isQuickPath, quickMetadata } from '../../shared/quick-link';
 import { metadata, personSchema, type PageSEO, type Locale } from '../../shared/seo';
 const defaults:Record<string,[string,string,string,string]>={
  '/':['ظهور رقمي يليق بك','A digital presence worthy of you','اسمك عنوانك. وخبرتك قصة تستحق أن تُرى.','Your name is your address. Your expertise deserves to be seen.'],
@@ -15,6 +16,7 @@ function apply(page:PageSEO){
  const template=document.createElement('template');template.innerHTML=metadata(page);head.appendChild(template.content);
 }
 export function updateClientMetadata(path:string,lang:Locale,content?:Record<string,unknown>|null){
+ if(isQuickPath(path)){updateQuickMetadata(path,lang);return;}
  const base=defaults[path],root='https://ksa.men';
  const indexable=!!base&&!new URLSearchParams(location.search).has('recipient')&&document.querySelector('meta[name="robots"]')?.getAttribute('content')?.includes('noindex')!==true;
  if(!base){apply({title:'KSA.MEN — '+(lang==='ar'?'مساحتك':'Your space'),description:lang==='ar'?'مساحتك الخاصة في KSA.MEN.':'Your personal space on KSA.MEN.',lang,indexable:false});return;}
@@ -23,11 +25,17 @@ export function updateClientMetadata(path:string,lang:Locale,content?:Record<str
  if(!content&&currentLang===(lang==='ar'?'ar_SA':'en_US'))return;
  const title=String(content?.['title_'+lang]||base[lang==='ar'?0:1]),description=String(content?.['body_'+lang]||base[lang==='ar'?2:3]);
  const url=root+path+(lang==='en'?'?lang=en':'');
- apply({title:title+' — KSA.MEN',description,url,lang,indexable,image:root+'/assets/cover-1600.webp',alternate:root+path+(lang==='en'?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url,description:description.slice(0,160),inLanguage:lang}:undefined});
+ apply({title:title+' — KSA.MEN',description,url,lang,indexable,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(lang==='en'?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url,description:description.slice(0,160),inLanguage:lang}:undefined});
 }
 export function updateProfileMetadata(profile:Record<string,unknown>,name:string,lang:Locale,indexable:boolean){
  const url=`https://${name}.ksa.men/`+(lang==='en'?'?lang=en':'');
  const title=String(profile.name||name)+(profile.title?' — '+profile.title:'');
- apply({title,description:String(profile.bio||(lang==='ar'?'هوية مهنية سعودية — ظهور رقمي يليق بك':'A Saudi professional identity — a presence worthy of you')),url,lang,indexable,type:'profile',image:'https://ksa.men/api/public/og/'+encodeURIComponent(name)+'?lang='+lang,alternate:`https://${name}.ksa.men/`+(lang==='en'?'':'?lang=en'),schema:indexable?personSchema(profile,url):undefined});
+ const previous=document.querySelector('meta[property="og:image"]')?.getAttribute('content')||'';
+ const expected='https://ksa.men/api/public/og/'+encodeURIComponent(name);
+ let image=expected+'?lang='+lang;
+ try{const old=new URL(previous);if(old.origin==='https://ksa.men'&&old.pathname==='/api/public/og/'+name){old.searchParams.set('lang',lang);image=old.href;}}catch{/* No valid initial sharing image yet. */}
+ apply({title,description:String(profile.bio||(lang==='ar'?'هوية مهنية سعودية — ظهور رقمي يليق بك':'A Saudi professional identity — a presence worthy of you')),url,lang,indexable,type:'profile',image,alternate:`https://${name}.ksa.men/`+(lang==='en'?'':'?lang=en'),schema:indexable?personSchema(profile,url):undefined});
 }
 export function clearProfileMetadata(lang:Locale){apply({title:lang==='ar'?'KSA.MEN — هوية غير متاحة':'KSA.MEN — Identity unavailable',description:'KSA.MEN',lang,indexable:false});}
+
+export function updateQuickMetadata(path:string,lang:Locale,available=true){apply(quickMetadata(path,lang,'ksa.men',available));}
