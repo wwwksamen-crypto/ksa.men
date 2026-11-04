@@ -118,7 +118,7 @@ describe.sequential('KSA.MEN integrated functional and security pass',()=>{
 		const requestList=await request('/api/admin/subscription-requests','owner');expect(requestList.status).toBe(200);const pending=requestList.data.requests.find((item:any)=>item.id===extension.data.request.id);expect(pending).toBeTruthy();
 		const extendDecision=await request('/api/admin/subscription-requests/'+extension.data.request.id+'/decision','owner','POST',{decision:'approve',days:7});expect(extendDecision.status).toBe(200);
 		const annual=await request('/api/subscription-requests','alice','POST',{kind:'annual_contact',note:'تواصل اختباري'});expect(annual.status).toBe(201);
-		const annualDecision=await request('/api/admin/subscription-requests/'+annual.data.request.id+'/decision','owner','POST',{decision:'approve'});expect(annualDecision.status).toBe(200);
+		const annualDecision=await request('/api/admin/subscription-requests/'+annual.data.request.id+'/decision','owner','POST',{decision:'approve',settlement:'confirmed'});expect(annualDecision.status).toBe(200);
 		expect(bridge({sql:"SELECT COUNT(*) AS n FROM subscriptions WHERE user_id=? AND kind='annual_negotiated'",params:[users.alice.id]}).results[0].n).toBe(1);
 		expect(bridge({sql:"SELECT COUNT(*) AS n FROM entitlement_sources WHERE user_id=? AND source_kind='subscription'",params:[users.alice.id]}).results[0].n).toBe(1);
 		expect(bridge({sql:"SELECT title FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 1",params:[users.alice.id]}).results[0].title).toBe('تم تفعيل اشتراكك السنوي');
@@ -155,4 +155,85 @@ describe.sequential('KSA.MEN integrated functional and security pass',()=>{
  it('creates encrypted snapshot and keeps ordinary export free of private messages',async()=>{const x=await request('/api/admin/backups/create','owner','POST');expect(x.status).toBe(200);expect(x.data.encrypted).toBe(true);const download=await request('/api/admin/backups/'+x.data.id,'owner');expect(download.status).toBe(200);expect(download.data.tables.messages).toBeUndefined();expect(download.data.tables.users.every((u:any)=>u.pin_hash===undefined)).toBe(true);});
  it('trusted-device PIN is impossible on a new device',async()=>{expect((await request('/api/auth/quick',undefined,'POST',{email:users.alice.email,pin:'123456'})).status).toBe(401);});
  it('logout revokes only the inspection session',async()=>{expect((await request('/api/auth/logout','moderator','POST')).status).toBe(200);expect((await request('/api/admin/overview','moderator')).status).toBe(401);expect((await request('/api/admin/overview','owner')).status).toBe(200);});
+});
+
+describe.sequential('Simple owner membership approval — local SQLite only',()=>{
+ const scalar=(sql:string,...params:any[])=>bridge({sql,params}).results[0];
+ async function annual(name:string,referrer?:number){
+  const account=await makeUser(name);
+  if(referrer)bridge({sql:'UPDATE users SET referrer_id=? WHERE id=?',params:[referrer,account.id]});
+  const created=await request('/api/subscription-requests',name,'POST',{kind:'annual_contact'});
+  expect(created.status).toBe(201);
+  return {account,requestId:created.data.request.id,path:'/api/admin/subscription-requests/'+created.data.request.id+'/decision'};
+ }
+ it.each(['confirmed','strategic'])('approves %s without receipt, amount or note and records classification with one referral award',async settlement=>{
+  const ref=await makeUser('annual-ref-'+settlement),member=await annual('annual-member-'+settlement,ref.id);
+  const paymentsBefore=scalar('SELECT COUNT(*) AS n FROM payments').n;
+  const first=await request(member.path,'owner','POST',{decision:'approve',settlement});expect(first.status).toBe(200);
+  const sub=scalar('SELECT * FROM subscriptions WHERE id=?','annual-'+member.requestId);expect(sub.end_at-sub.start_at).toBe(365*86400);expect(sub.payment_id).toBeNull();
+  const source=scalar('SELECT * FROM entitlement_sources WHERE reference=?','subscription-annual-'+member.requestId);
+  expect(source.source_kind).toBe(settlement==='strategic'?'grant':'subscription');
+  expect(JSON.parse(source.detail)).toMatchObject({settlement,operatorId:users.owner.id,receiptRequired:false,amount:null});
+  expect(scalar('SELECT COUNT(*) AS n FROM payments').n).toBe(paymentsBefore);
+  expect(scalar('SELECT amount,kind,notes FROM ledger WHERE reference=?','referral-'+member.account.id)).toMatchObject({amount:1000,kind:'referral'});
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(1100);
+  const repeated=await request(member.path,'owner','POST',{decision:'approve',settlement});expect(repeated.status).toBe(200);expect(repeated.data.idempotent).toBe(true);
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(1100);
+  expect(scalar('SELECT COUNT(*) AS n FROM notifications WHERE id=?','membership-decision-'+member.requestId).n).toBe(1);
+  expect(scalar('SELECT COUNT(*) AS n FROM notifications WHERE id=?','referral-notice-'+member.account.id).n).toBe(1);
+  expect(scalar("SELECT COUNT(*) AS n FROM audit WHERE action='membership.decision' AND target=?",'membership:'+member.requestId).n).toBe(1);
+  const stats=await request('/api/referrals','annual-ref-'+settlement);expect(stats.data).toMatchObject({registered:1,eligible:1,rewarded:1,pointsIssued:1000});
+  const list=await request('/api/admin/subscription-requests?status=approved','owner');expect(list.data.requests.find((x:any)=>x.id===member.requestId).settlement).toBe(settlement);
+  expect((await request(member.path,'owner','POST',{decision:'approve',settlement:settlement==='strategic'?'confirmed':'strategic'})).status).toBe(409);
+ });
+ it('concurrent matching approvals produce one subscription, one award and one notification',async()=>{
+  const ref=await makeUser('concurrent-annual-ref'),member=await annual('concurrent-annual-member',ref.id);
+  const responses=await Promise.all([request(member.path,'owner','POST',{decision:'approve',settlement:'confirmed'}),request(member.path,'owner','POST',{decision:'approve',settlement:'confirmed'})]);
+  expect(responses.map(x=>x.status)).toEqual([200,200]);expect(responses.filter(x=>x.data.idempotent)).toHaveLength(1);
+  expect(scalar('SELECT COUNT(*) AS n FROM subscriptions WHERE id=?','annual-'+member.requestId).n).toBe(1);
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(1100);
+  expect(scalar('SELECT COUNT(*) AS n FROM notifications WHERE id=?','membership-decision-'+member.requestId).n).toBe(1);
+ });
+ it('trial extension does not earn referral rewards',async()=>{
+  const ref=await makeUser('extension-ref'),member=await makeUser('extension-member');bridge({sql:'UPDATE users SET referrer_id=? WHERE id=?',params:[ref.id,member.id]});
+  const created=await request('/api/subscription-requests','extension-member','POST',{kind:'trial_extension'});
+  expect((await request('/api/admin/subscription-requests/'+created.data.request.id+'/decision','owner','POST',{decision:'approve'})).status).toBe(200);
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(100);
+ });
+ it('self and suspended referrers never receive referral awards, and suspended members cannot be granted membership',async()=>{
+  const self=await annual('self-annual');bridge({sql:'UPDATE users SET referrer_id=? WHERE id=?',params:[self.account.id,self.account.id]});
+  expect((await request(self.path,'owner','POST',{decision:'approve',settlement:'strategic'})).status).toBe(200);
+  expect(scalar('SELECT COUNT(*) AS n FROM ledger WHERE reference=?','referral-'+self.account.id).n).toBe(0);
+  const ref=await makeUser('suspended-annual-ref'),member=await annual('suspended-ref-member',ref.id);bridge({sql:"UPDATE users SET status='suspended' WHERE id=?",params:[ref.id]});
+  expect((await request(member.path,'owner','POST',{decision:'approve',settlement:'confirmed'})).status).toBe(200);
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(100);
+  const suspended=await annual('suspended-annual-member');bridge({sql:"UPDATE users SET status='suspended' WHERE id=?",params:[suspended.account.id]});
+  expect((await request(suspended.path,'owner','POST',{decision:'approve',settlement:'strategic'})).status).toBe(404);
+  expect(scalar('SELECT status FROM subscription_requests WHERE id=?',suspended.requestId).status).toBe('pending');
+ });
+ it('a later payment and its same-second reversal cannot duplicate or recover the independent annual referral reward',async()=>{
+  const ref=await makeUser('annual-then-payment-ref'),member=await annual('annual-then-payment-member',ref.id);
+  expect((await request(member.path,'owner','POST',{decision:'approve',settlement:'strategic'})).status).toBe(200);
+  const awardedAt=scalar('SELECT created_at FROM ledger WHERE reference=?','referral-'+member.account.id).created_at;
+  bridge({sql:'INSERT INTO payments(id,user_id,amount,days,status,created_at,referrer_id) VALUES(?,?,?,?,?,?,?)',params:['after-annual-payment',member.account.id,20,2,'submitted',awardedAt,ref.id]});
+  bridge({sql:"UPDATE payments SET status='approved',reviewer_id=?,approved_at=? WHERE id=?",params:[users.owner.id,awardedAt,'after-annual-payment']});
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(1100);
+  const reverse=await request('/api/admin/payments/after-annual-payment/reverse','owner','POST',{justification:'Local reversal test, not real money'});expect(reverse.status).toBe(200);
+  expect(scalar('SELECT referral_recovered,referral_outstanding FROM payment_reversals WHERE payment_id=?','after-annual-payment')).toEqual({referral_recovered:0,referral_outstanding:0});
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(1100);
+ });
+ it('an existing payment referral award is never repeated by a new annual approval',async()=>{
+  const ref=await makeUser('paid-before-annual-ref'),member=await annual('paid-before-annual-member',ref.id);
+  bridge({sql:'INSERT INTO payments(id,user_id,amount,days,status,created_at,referrer_id) VALUES(?,?,?,?,?,?,?)',params:['before-annual-payment',member.account.id,20,2,'submitted',now(),ref.id]});
+  bridge({sql:"UPDATE payments SET status='approved',reviewer_id=?,approved_at=? WHERE id=?",params:[users.owner.id,now(),'before-annual-payment']});
+  expect((await request(member.path,'owner','POST',{decision:'approve',settlement:'confirmed'})).status).toBe(200);
+  expect(scalar('SELECT balance FROM wallets WHERE user_id=?',ref.id).balance).toBe(1100);
+  expect(scalar('SELECT COUNT(*) AS n FROM ledger WHERE reference=?','referral-'+member.account.id).n).toBe(1);
+  expect(scalar('SELECT COUNT(*) AS n FROM notifications WHERE id=?','referral-notice-'+member.account.id).n).toBe(0);
+ });
+ it('only the owner may approve a strategic membership and CSRF remains required',async()=>{
+  const member=await annual('owner-only-annual');expect((await request(member.path,'manager','POST',{decision:'approve',settlement:'strategic'})).status).toBe(403);
+  const r=await worker.fetch(new Request('https://ksa.men'+member.path,{method:'POST',headers:{Cookie:users.owner.cookie,Origin:'https://ksa.men','Content-Type':'application/json'},body:JSON.stringify({decision:'approve',settlement:'confirmed'})}),env,{} as any);expect(r.status).toBe(403);
+  expect(scalar('SELECT status FROM subscription_requests WHERE id=?',member.requestId).status).toBe('pending');
+ });
 });

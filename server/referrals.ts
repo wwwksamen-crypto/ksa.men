@@ -11,7 +11,9 @@ export async function resolveReferrer(c:Ctx,value:unknown,email?:string):Promise
 }
 export async function referralSummary(c:Ctx,id:number):Promise<ReferralSummary> {
   const totals=await one<{registered:number;eligible:number;rewarded:number;cancelled:number}>(c,`SELECT COUNT(*) AS registered,
-    COALESCE(SUM(EXISTS(SELECT 1 FROM payments p WHERE p.user_id=u.id AND p.status='approved' AND p.reversed_at IS NULL)),0) AS eligible,
+    COALESCE(SUM(EXISTS(SELECT 1 FROM payments p WHERE p.user_id=u.id AND p.status='approved' AND p.reversed_at IS NULL)
+      OR EXISTS(SELECT 1 FROM entitlement_sources e WHERE e.user_id=u.id AND e.revoked_at IS NULL AND
+        CASE WHEN json_valid(e.detail) THEN json_extract(e.detail,'$.basis') ELSE '' END='admin_annual_approval')),0) AS eligible,
     COALESCE(SUM(EXISTS(SELECT 1 FROM ledger l WHERE l.reference='referral-'||u.id AND l.to_id=?)),0) AS rewarded,
     COALESCE(SUM(EXISTS(SELECT 1 FROM payment_reversals pr JOIN payments p ON p.id=pr.payment_id WHERE p.user_id=u.id AND (pr.referral_recovered>0 OR pr.referral_outstanding>0))),0) AS cancelled
     FROM users u WHERE u.referrer_id=? AND u.id<>?`,id,id,id);

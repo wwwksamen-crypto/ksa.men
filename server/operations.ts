@@ -1,3 +1,4 @@
+import { decideMembershipRequest } from './membership-decisions';
 import { background } from './managed';
 import { publicationNotice } from './publication-notice';
 import { HTTPException } from "hono/http-exception";
@@ -1045,7 +1046,7 @@ export function registerOperations(app: App): void {
     const referral = payment.referrer_id && payment.approved_at
       ? await one<{ from_id: number; to_id: number; amount: number }>(
         c,
-        "SELECT from_id,to_id,amount FROM ledger WHERE reference=? AND created_at=?",
+        "SELECT from_id,to_id,amount FROM ledger WHERE reference=? AND created_at=? AND CASE WHEN json_valid(notes) THEN COALESCE(json_extract(notes,'$.basis'),'') ELSE '' END<>'admin_annual_approval'",
         `referral-${payment.user_id}`,
         payment.approved_at,
       )
@@ -1137,6 +1138,7 @@ export function registerOperations(app: App): void {
       c,
       `SELECT r.id,r.user_id,r.kind,r.status,r.member_note,r.admin_reason,r.created_at,r.decided_at,r.applied_until,
               u.name,u.email,u.whatsapp,u.trial_until,u.entitlement_until,
+              (SELECT CASE WHEN json_valid(es.detail) THEN json_extract(es.detail,'$.settlement') END FROM entitlement_sources es WHERE es.reference='subscription-annual-'||r.id) AS settlement,
               (SELECT n.name FROM dns_names n WHERE n.owner_id=u.id ORDER BY n.created_at LIMIT 1) AS subdomain
        FROM subscription_requests r JOIN users u ON u.id=r.user_id
        WHERE r.status LIKE ? ESCAPE '\\' AND r.kind LIKE ? ESCAPE '\\' AND (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR ('C'||u.id) LIKE ? ESCAPE '\\')
@@ -1149,41 +1151,7 @@ export function registerOperations(app: App): void {
   app.post("/api/admin/subscription-requests/:id/decision", async (c) => {
     const operator = owner(c);
     fresh(c);
-    const body = await input(c);
-    const decision = text(body.decision, "decision", { max: 32 }).toLowerCase();
-    if (!["approve", "reject", "changes_requested"].includes(decision)) fail(400, "Decision is invalid", "invalid_input");
-    const reason = text(body.reason ?? "", "reason", { min: decision === "approve" ? 0 : 1, max: 2_000, optional: decision === "approve" });
-    const request = await one<{ id: string; user_id: number; kind: "trial_extension" | "annual_contact"; status: string }>(c, "SELECT id,user_id,kind,status FROM subscription_requests WHERE id=?", c.req.param("id"));
-    if (!request) fail(404, "Membership request not found", "not_found");
-    if (request.status !== "pending") fail(409, "This membership request is no longer pending", "request_stale");
-    const at = now();
-    let appliedUntil: number | null = null;
-    if (decision === "approve") {
-      const account = await one<{ trial_until: number; entitlement_until: number }>(c, "SELECT trial_until,entitlement_until FROM users WHERE id=? AND status='active'", request.user_id);
-      if (!account) fail(404, "Member account is unavailable", "not_found");
-      const startsAt = Math.max(at, account.trial_until, account.entitlement_until);
-      const days = request.kind === "annual_contact" ? 365 : integer(body.days ?? 7, "extension days", 1, 365);
-      appliedUntil = startsAt + days * DAY;
-      const sourceId = `membership-source-${uid()}`;
-      const statements = [
-        c.env.DB.prepare("UPDATE subscription_requests SET status='approved',admin_reason=?,decided_by=?,decided_at=?,applied_until=? WHERE id=? AND status='pending'").bind(reason, operator.id, at, appliedUntil, request.id),
-        ...(request.kind === "trial_extension" ? [c.env.DB.prepare("INSERT INTO entitlement_sources(id,user_id,source_kind,starts_at,ends_at,reference,detail,created_by,created_at) VALUES(?,?, 'grant', ?,?,?,?, ?,?)").bind(sourceId, request.user_id, startsAt, appliedUntil, `membership-request-${request.id}`, `Approved trial extension of ${days} day(s)`, operator.id, at)] : []),
-        c.env.DB.prepare("UPDATE users SET entitlement_until=? WHERE id=?").bind(appliedUntil, request.user_id),
-        ...(request.kind === "annual_contact" ? [c.env.DB.prepare("INSERT INTO subscriptions(id,user_id,payment_id,kind,start_at,end_at,created_at) VALUES(?,?,NULL,'annual_negotiated',?,?,?)").bind(`annual-${request.id}`, request.user_id, startsAt, appliedUntil, at)] : []),
-      ];
-      const results = await c.env.DB.batch(statements);
-      if (!changed(results[0])) fail(409, "This membership request is no longer pending", "request_stale");
-    } else {
-      const nextStatus = decision === "changes_requested" ? "changes_requested" : "rejected";
-      const result = await run(c, "UPDATE subscription_requests SET status=?,admin_reason=?,decided_by=?,decided_at=? WHERE id=? AND status='pending'", nextStatus, reason, operator.id, at, request.id);
-      if (!changed(result)) fail(409, "This membership request is no longer pending", "request_stale");
-    }
-    const approved = decision === "approve";
-    const title = approved ? (request.kind === "annual_contact" ? "تم تفعيل اشتراكك السنوي" : "تم تمديد الفترة المجانية") : decision === "changes_requested" ? "مطلوب توضيح لطلبك" : "تحديث بشأن طلبك";
-    const bodyCopy = approved ? (request.kind === "annual_contact" ? "تم تفعيل عضويتك السنوية وفق الاتفاق الخارجي الموثق." : "تمت إضافة مدة مجانية إلى استحقاقك.") : reason;
-    const delivery = await notifyMemberDecision(c, { targetId: request.user_id, title, body: bodyCopy, actionLabel: approved ? "فتح لوحة العضوية" : "فتح الطلب", actionPath: "/dashboard?tab=subscription" });
-    await audit(c, "membership.decision", `membership:${request.id}`, { kind: request.kind, decision, appliedUntil, reason, delivery: delivery.channel });
-    return c.json({ requestId: request.id, status: approved ? "approved" : decision, appliedUntil });
+    return decideMembershipRequest(c, operator.id, await input(c));
   });
 
   app.get('/api/admin/competition-entries', async (c) => {
