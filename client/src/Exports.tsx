@@ -1,8 +1,14 @@
+import { pdfText } from './pdf-text';
+import type { PdfInlineText } from './pdf-text';
 import { generateVCard } from './vcard';
 export { generateVCard } from './vcard';
 import { sanitizeProfile } from '../../shared/profile-visibility';
 import { canRestorePublishedBadge, readPublishedBadge } from './export-offline';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { buildLandscapeProfile } from './profile-pdf';
+import { loadProfilePdfAssets } from './profile-pdf-assets';
+const ProfilePdfPreview = lazy(() => import('./ProfilePdfPreview'));
+type ProfilePdfFile = { bytes: Uint8Array; imagesUnavailable: number };
 import {
   BadgeCheck,
   Check,
@@ -76,7 +82,7 @@ type ExportData = {
 type PdfMaker = {
   addVirtualFileSystem: (vfs: Record<string, string>) => void;
   addFonts: (fonts: Record<string, unknown>) => void;
-  createPdf: (definition: unknown) => { download: (filename: string) => void };
+  createPdf: (definition: unknown) => { download: (filename: string) => void; getBuffer: (callback: (buffer: Uint8Array) => void) => void };
 };
 
 const knownKinds: ExportKind[] = ['profile', 'pdf', 'ats', 'badge', 'card', 'social', 'vcard', 'qr'];
@@ -137,7 +143,7 @@ function structuredLine(item: StructuredItem | string) {
   return [primary, organization, period, description].filter(Boolean).join(' — ');
 }
 
-function downloadable(data: string, filename: string, type: string) {
+function downloadable(data: BlobPart, filename: string, type: string) {
   const blob = new Blob([data], { type });
   const href = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
@@ -318,33 +324,6 @@ const labels = {
   },
 } as const;
 
-type PdfInlineText = string | Array<{ text: string }>;
-
-/** Wrap logical lines first; reorder Arabic word runs per line, preserving LTR phrases. */
-function pdfText(value: string, rtl: boolean, width = 500, size = 10.5): PdfInlineText {
-  if (!rtl || !/[\u0600-\u06ff]/u.test(value)) return value;
-  const canvas=document.createElement('canvas');const measure=canvas.getContext('2d');
-  if(measure)measure.font=`${size}px Tajawal`;
-  const lines:string[]=[];
-  for(const paragraph of value.split(/\r?\n/)){
-    let line='';
-    for(const word of paragraph.trim().split(/\s+/u).filter(Boolean)){
-      const candidate=line?line+' '+word:word;
-      if(line&&measure&&measure.measureText(candidate).width>width){lines.push(line);line=word;}else line=candidate;
-    }
-    lines.push(line);
-  }
-  return lines.flatMap((line,lineIndex)=>{
-    const runs:Array<{text:string,latin:boolean}>=[];
-    for(const word of line.split(/\s+/u).filter(Boolean)){
-      const latin=!/[\u0600-\u06ff]/u.test(word);const last=runs[runs.length-1];
-      if(latin&&last?.latin)last.text+=' '+word;else runs.push({text:word,latin});
-    }
-    const output=runs.reverse().flatMap((run,index)=>index?[{text:' '},{text:run.text}]:[{text:run.text}]);
-    if(lineIndex<lines.length-1)output.push({text:'\n'});return output;
-  });
-}
-
 function profileSections(profile: Profile, lang: Language) {
   const copy = labels[lang];
   const structured = (key: keyof Profile, title: string) => isVisible(profile, String(key))
@@ -432,63 +411,6 @@ function smartCardDetails(profile: Profile, publicUrl: string, mode: SmartCardMo
     title: field(profile, 'title'),
     detail: location || copy.publicProfile,
     destination: publicUrl,
-  };
-}
-
-function luxuryPdf(profile: Profile, data: ExportData, lang: Language) {
-  const copy = labels[lang];
-  const rtl = lang === 'ar';
-  const name = displayName(data, profile);
-  const title = field(profile, 'title');
-  const bio = field(profile, 'bio');
-  const contact = [field(profile, 'email'), field(profile, 'phone'), field(profile, 'whatsapp')].filter(Boolean).join('  •  ');
-  const location = [field(profile, 'city'), field(profile, 'country')].filter(Boolean).join('، ');
-  const sections = profileSections(profile, lang);
-  const content: any[] = [
-    { canvas: [{ type: 'rect', x: 0, y: 0, w: 515, h: 7, color: '#006837' }], margin: [0, 0, 0, 22] },
-    {
-      stack: [
-        {text:'KSA.MEN',style:'brand',margin:[0,0,0,12]},
-        {text:pdfText(name,rtl,500,25),style:'name'},
-        title?{text:pdfText(title,rtl,500,13),style:'title'}:{},
-        {text:pdfText(copy.professional,rtl),style:'eyebrow'},
-      ],
-      margin: [0, 0, 0, 24],
-    },
-  ];
-  if (bio) content.push({ text: pdfText(copy.summary, rtl), style: 'heading' }, { text: pdfText(bio, rtl), style: 'body', margin: [0, 0, 0, 18] });
-  if (contact || location) {
-    content.push({
-      columns: rtl
-        ? [
-          { width: '*', stack: [contact ? { text: pdfText(`${copy.contact}: ${contact}`, rtl), style: 'meta' } : {}, location ? { text: pdfText(`${copy.location}: ${location}`, rtl), style: 'meta' } : {}] },
-          { width: 10, canvas: [{ type: 'rect', x: 0, y: 0, w: 3, h: 34, color: '#C89D4D' }] },
-        ]
-        : [
-          { width: 10, canvas: [{ type: 'rect', x: 0, y: 0, w: 3, h: 34, color: '#C89D4D' }] },
-          { width: '*', stack: [contact ? { text: pdfText(`${copy.contact}: ${contact}`, rtl), style: 'meta' } : {}, location ? { text: pdfText(`${copy.location}: ${location}`, rtl), style: 'meta' } : {}] },
-        ],
-      margin: [0, 0, 0, 22],
-    });
-  }
-  sections.forEach(([heading, entries]) => content.push({ text: pdfText(heading, rtl), style: 'heading' }, { stack: entries, margin: [0, 0, 0, 14] }));
-  if (content.length === 2) content.push({ text: pdfText(copy.noContent, rtl), style: 'body' });
-  return {
-    pageSize: 'A4',
-    pageMargins: [40, 38, 40, 44],
-    info: { title: `${name} — ${copy.profile}`, author: 'KSA.MEN', subject: copy.professional },
-    defaultStyle: { font: 'Tajawal', fontSize: 10, color: '#173529', alignment: rtl ? 'right' : 'left', lineHeight: 1.32 },
-    footer: () => ({ text: pdfText(copy.generated, rtl), font: 'Tajawal', fontSize: 8, color: '#587164', alignment: 'center', margin: [0, 12, 0, 0] }),
-    styles: {
-      name: { font: 'Tajawal', bold: true, fontSize: 25, color: '#004422', alignment: rtl ? 'right' : 'left' },
-      title: { font: 'Tajawal', fontSize: 13, color: '#236645', margin: [0, 4, 0, 4], alignment: rtl ? 'right' : 'left' },
-      eyebrow: { font: 'Tajawal', bold: true, fontSize: 8.5, color: '#9A7332', characterSpacing: .8, alignment: rtl ? 'right' : 'left' },
-      brand: { font: 'Tajawal', bold: true, fontSize: 15, color: '#006837', characterSpacing: 1.1 },
-      heading: { font: 'Tajawal', bold: true, fontSize: 12, color: '#006837', margin: [0, 10, 0, 7], alignment: rtl ? 'right' : 'left' },
-      body: { font: 'Tajawal', fontSize: 10.5, color: '#2B4739', lineHeight: 1.5, alignment: rtl ? 'right' : 'left' },
-      meta: { font: 'Tajawal', fontSize: 8.5, color: '#506C5D', margin: [0, 0, 0, 4], alignment: rtl ? 'right' : 'left' },
-    },
-    content,
   };
 }
 
@@ -594,6 +516,16 @@ export default function Exports() {
   const [data, setData] = useState<ExportData | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
+  const [profileFile, setProfileFile] = useState<ProfilePdfFile | null>(null);
+  const [showProfilePreview, setShowProfilePreview] = useState(false);
+  const reloadGeneration = useRef(0);
+  const profilePromise = useRef<Promise<ProfilePdfFile> | null>(null);
+  const profilePrepared = useRef<ProfilePdfFile | null>(null);
+  const invalidateProfile = useCallback(() => {
+    reloadGeneration.current++; profilePromise.current = null; profilePrepared.current = null;
+    setProfileFile(null); setShowProfilePreview(false);
+  }, []);
+  useEffect(() => () => { reloadGeneration.current++; profilePromise.current = null; profilePrepared.current = null; }, []);
   const [error, setError] = useState('');
   const [translationConsent, setTranslationConsent] = useState(false);
   const [cardMode, setCardMode] = useState<SmartCardMode>('professional');
@@ -609,6 +541,8 @@ export default function Exports() {
 
   const reload = useCallback(async () => {
     if (!site && !publicName) { setError(t('لم يتم تحديد موقع للتصدير.', 'No site was selected for export.')); setLoading(false); return; }
+    invalidateProfile();
+    const generation = reloadGeneration.current;
     setLoading(true);
     setError('');
     const requestQuery = new URLSearchParams({ lang: exportLang, kind: exportDataKindFor(kind) });
@@ -618,10 +552,12 @@ export default function Exports() {
       const response = await api<ExportData>(isPublishedSource
         ? `/api/public/export-data/${encodeURIComponent(publicName)}?${requestQuery}`
         : `/api/export-data/${encodeURIComponent(site)}?${requestQuery}`);
+      if (generation !== reloadGeneration.current) return;
       if (!response.allowed) throw new Error(t('لا تملك صلاحية هذا التصدير.', 'You are not allowed to create this export.'));
       setData(response);
       if (isPublishedSource && kind === 'badge' && response.source === 'published') { try { window.localStorage.setItem(cacheKey, JSON.stringify({ savedAt: Date.now(), data: response })); } catch {} }
     } catch (cause) {
+      if (generation !== reloadGeneration.current) return;
       if (canRestorePublishedBadge(kind, isPublishedSource, window.navigator.onLine, cause)) {
         try {
           const saved = readPublishedBadge(window.localStorage.getItem(cacheKey), publicName);
@@ -633,8 +569,8 @@ export default function Exports() {
       const message = cause instanceof Error ? cause.message : t('تعذر جلب بيانات التصدير.', 'Could not load export data.');
       setData(null);
       setError(message);
-    } finally { setLoading(false); }
-  }, [exportLang, isPublishedSource, kind, publicName, site, t]);
+    } finally { if (generation === reloadGeneration.current) setLoading(false); }
+  }, [exportLang, invalidateProfile, isPublishedSource, kind, publicName, site, t]);
 
   useEffect(() => { void reload(); }, [reload]);
   useEffect(() => {
@@ -684,6 +620,8 @@ export default function Exports() {
   }, [buildProfileQr, buildVCardQr, profile, publicUrl, vcardPayload]);
 
   const selectKind = (next: ExportKind) => {
+    if (next === kind) return;
+    invalidateProfile(); setLoading(true); setData(null);
     setKind(next);
     const url = new URL(window.location.href);
     const root = url.pathname.replace(/\/[^/]+$/, '') || '/export';
@@ -693,6 +631,8 @@ export default function Exports() {
   };
 
   const selectLanguage = (next: Language) => {
+    if (next === exportLang) return;
+    invalidateProfile(); setLoading(true); setData(null);
     setExportLang(next);
     setTranslationConsent(false);
     const url = new URL(window.location.href);
@@ -712,17 +652,53 @@ export default function Exports() {
     } finally { setBusy(''); }
   };
 
+  const prepareProfile = async (): Promise<ProfilePdfFile> => {
+    if (!profile || !data || !verified || loading) throw new Error(t('حدّث بيانات الملف أولاً.', 'Refresh the profile data first.'));
+    if (profilePrepared.current) return profilePrepared.current;
+    if (profilePromise.current) return profilePromise.current;
+    const generation = reloadGeneration.current;
+    const promise = (async () => {
+      const [pdfMake, assets] = await Promise.all([loadPdfMaker(), loadProfilePdfAssets(profile)]);
+      await window.document.fonts.load('10.5px Tajawal');
+      await window.document.fonts.load('bold 27px Tajawal');
+      const definition = buildLandscapeProfile(profile, { name: data.name, url: publicUrl, lang: exportLang }, assets, pdfText);
+      const bytes = await new Promise<Uint8Array>((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error(t('استغرق تجهيز الملف وقتاً أطول. حاول مجدداً.', 'Preparing the file took too long. Please try again.'))), 90_000);
+        try { pdfMake.createPdf(definition).getBuffer(buffer => { window.clearTimeout(timer); resolve(Uint8Array.from(buffer)); }); }
+        catch (error) { window.clearTimeout(timer); reject(error); }
+      });
+      if (generation !== reloadGeneration.current) throw new Error(t('تغيرت بيانات الملف. جهّز النسخة الحالية.', 'The profile changed. Prepare the current version.'));
+      const result = { bytes, imagesUnavailable: assets.unavailable.length };
+      profilePrepared.current = result; setProfileFile(result); return result;
+    })();
+    profilePromise.current = promise;
+    try { return await promise; } finally { if (profilePromise.current === promise) profilePromise.current = null; }
+  };
+
+  const previewProfile = async () => {
+    setBusy('pdf');
+    try { await prepareProfile(); setShowProfilePreview(true); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذرت معاينة الملف.', 'Could not preview the profile.')); }
+    finally { setBusy(''); }
+  };
+
   const downloadPdf = async (ats = false) => {
-    if (!profile || !data) return;
+    if (!profile || !data || loading) return;
     setBusy(ats ? 'ats' : 'pdf');
     try {
-      const pdfMake = await loadPdfMaker();
-      await window.document.fonts.load('10.5px Tajawal');
-      await window.document.fonts.load('bold 25px Tajawal');
-      const atsQr = ats ? (profileQr || await buildProfileQr()) : '';
-      const document = ats ? atsPdf(profile, data, exportLang, publicUrl, atsQr) : luxuryPdf(profile, data, exportLang);
-      pdfMake.createPdf(document).download(filename(ats ? 'ats' : 'profile', 'pdf'));
-      notify(t('بدأ تنزيل ملف PDF قابل لاستخراج النص.', 'Your text-extractable PDF download has started.'));
+      if (ats) {
+        const pdfMake = await loadPdfMaker();
+        await window.document.fonts.load('10.5px Tajawal');
+        await window.document.fonts.load('bold 25px Tajawal');
+        const qr = profileQr || await buildProfileQr();
+        pdfMake.createPdf(atsPdf(profile, data, exportLang, publicUrl, qr)).download(filename('ats', 'pdf'));
+      } else {
+        const result = await prepareProfile();
+        const buffer = new ArrayBuffer(result.bytes.length); new Uint8Array(buffer).set(result.bytes);
+        downloadable(buffer, `${cleanFilename(data.name || identity)}-profile-${exportLang}.pdf`, 'application/pdf');
+        if (result.imagesUnavailable) notify(t('تم تجهيز الملف؛ بعض الصور غير متاحة حالياً. يمكنك تحديث البيانات والمحاولة مجدداً.', 'The file is ready; some images are currently unavailable. Refresh the data to try again.'));
+      }
+      notify(t('بدأ تنزيل ملف PDF.', 'Your PDF download has started.'));
     } catch (cause) {
       notify(cause instanceof Error ? cause.message : t('تعذر إنشاء ملف PDF.', 'Could not create the PDF.'));
     } finally { setBusy(''); }
@@ -829,12 +805,13 @@ export default function Exports() {
             <span className="exports-monogram">{identity.slice(0, 1) || 'K'}</span>
             <div><p className="exports-kicker">KSA.MEN / {kind.toUpperCase()}</p><h2>{identity}</h2><p>{summary.join(' · ') || t('سيُصدّر الملف بالحقول المهنية العامة المتاحة.', 'The export will include available public professional fields.')}</p></div>
           </div>
-          <div className="exports-workspace__actions">{actionForRoute()}</div>
+          <div className="exports-workspace__actions">{(kind === 'profile' || kind === 'pdf') && <Button className="button-quiet" onClick={() => void previewProfile()} disabled={Boolean(busy)}><FileText size={17}/>{t('معاينة الصفحات', 'Preview pages')}</Button>}{actionForRoute()}</div>
         </section>
 
+        {(kind === 'profile' || kind === 'pdf') && showProfilePreview && profileFile && <Suspense fallback={<p role="status">{t('نفتح معاينة ملفك', 'Opening your file preview')}</p>}><ProfilePdfPreview bytes={profileFile.bytes} profile={profile} lang={exportLang} t={t}/></Suspense>}
         <section className="exports-details">
-          <article className="exports-detail card"><FileText size={19}/><div><h3>{t('PDF تعريفي فاخر', 'Luxury identity PDF')}</h3><p>{t('تصميم بهوية KSA.MEN ونص حيّ قابل للاستخراج، مختلف عن السيرة الآلية.', 'KSA.MEN-branded, live extractable text in a design distinct from the machine-readable résumé.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(false)} disabled={Boolean(busy)}><Download size={15}/>{t('PDF', 'PDF')}</Button></article>
-          <article className="exports-detail card"><BadgeCheck size={19}/><div><h3>{t('سيرة ATS أحادية العمود', 'Single-column ATS résumé')}</h3><p>{t('عناوين واضحة ونص Unicode حيّ بلا صورة صفحة أو زخارف تعيق التحليل.', 'Clear headings and live Unicode text, without a page image or decoration that hinders parsing.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(true)} disabled={Boolean(busy)}><Download size={15}/>ATS</Button></article>
+          <article className="exports-detail card"><FileText size={19}/><div><h3>{t('PDF تعريفي فاخر', 'Luxury identity PDF')}</h3><p>{t('بروفايل أفقي بغلاف وصورك ومحتواك العام، مع معاينة مطابقة لملف التنزيل.', 'A landscape profile with a cover, your images and public content, and a preview of the downloaded file.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(false)} disabled={Boolean(busy)}><Download size={15}/>{t('PDF', 'PDF')}</Button></article>
+          <article className="exports-detail card"><BadgeCheck size={19}/><div><h3>{t('سيرة مهنية نصية', 'Text-based résumé')}</h3><p>{t('مخرج مستقل للتقديم الوظيفي، وليس البروفايل البصري. تختلف قراءة الملفات بين أنظمة التوظيف.', 'A separate document for job applications, not the visual profile. Parsing varies between recruitment systems.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(true)} disabled={Boolean(busy)}><Download size={15}/>ATS</Button></article>
           <article className="exports-detail card"><QrCode size={19}/><div><h3>{t('QR للموقع وبطاقة الاتصال', 'Site and contact QR')}</h3><p>{t('اختر رمزاً مستقلاً للموقع أو لبطاقة vCard؛ وكلاهما يحترم الحقول المخفية.', 'Choose a separate code for the site or vCard; both respect hidden fields.')}</p></div><Button className="button-quiet" onClick={() => void downloadQr()} disabled={Boolean(busy)}><Download size={15}/>QR</Button></article>
           <article className="exports-detail card"><ContactRound size={19}/><div><h3>{t('بطاقة اتصال vCard', 'vCard contact file')}</h3><p>{t('تتضمن فقط وسائل الاتصال والحقول غير المخفية في ملفك.', 'Includes only non-hidden contact channels and profile fields.')}</p></div><Button className="button-quiet" onClick={downloadVCard}><Download size={15}/>vCard</Button></article>
         </section>

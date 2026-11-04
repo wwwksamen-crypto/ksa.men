@@ -776,3 +776,20 @@
   .exports-shell--badge .exports-badge-screen__frame { width: min(100%, 420px); }
 }
 @media print { .exports-badge-screen { display: none !important; } }
+
+/* Exact-file landscape preview; heavy PDF code is loaded only on explicit request. */
+.exports-pdf-viewer { min-width: 0; margin-block: 18px; padding: clamp(16px, 3vw, 26px); }
+.exports-pdf-viewer__heading h2 { margin: 0 0 6px; font-size: 1.35rem; }
+.exports-pdf-viewer__heading p { margin: 0; color: var(--exports-muted); }
+.exports-pdf-viewer__controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin-block: 18px; }
+.exports-pdf-viewer__controls button { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; color: var(--exports-text); border: 1px solid var(--exports-border); border-radius: 10px; background: var(--exports-surface-2); cursor: pointer; }
+.exports-pdf-viewer__controls span { min-width: 60px; text-align: center; font-variant-numeric: tabular-nums; direction: ltr; }
+.exports-pdf-viewer__frame { width: 100%; min-width: 0; overflow: auto; padding: 12px; border-radius: 12px; background: color-mix(in srgb, var(--exports-bg) 80%, #000); direction: ltr; overscroll-behavior: contain; }
+.exports-pdf-viewer__frame canvas { display: block; flex-shrink: 0; margin: auto; background: #fff; box-shadow: 0 5px 22px #0004; }
+.exports-pdf-viewer__frame:focus-visible { outline: 2px solid var(--exports-accent); outline-offset: 3px; }
+.exports-pdf-viewer__status { display: flex; gap: 8px; align-items: center; color: var(--exports-muted); }
+.exports-pdf-viewer__text { margin-block-start: 16px; overflow-wrap: anywhere; }
+.exports-pdf-viewer__text summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--exports-accent); }
+.exports-pdf-viewer__text p { white-space: pre-wrap; }
+
+.exports-workspace__actions { gap: 10px; flex-wrap: wrap; }
