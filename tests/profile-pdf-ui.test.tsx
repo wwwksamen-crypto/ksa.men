@@ -2,7 +2,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import Exports from '../client/src/Exports';
+import Exports, { QRTools } from '../client/src/Exports';
 import { api, AppContext } from '../client/src/lib';
 import { loadProfilePdfAssets } from '../client/src/profile-pdf-assets';
 const mocks = vi.hoisted(() => ({ createPdf: vi.fn(), getBuffer: vi.fn(), download: vi.fn(), resumePdf: vi.fn(), resumeFonts: vi.fn(), resumeDocx: vi.fn() }));
@@ -37,6 +37,8 @@ beforeEach(async()=>{
 });
 afterEach(async()=>{await act(async()=>root.unmount());container.remove();vi.restoreAllMocks();vi.unstubAllGlobals();});
 describe('exact-file landscape preview and download — DOM only',()=>{
+ it('keeps one app-owned main landmark for exports',async()=>{await act(async()=>root.render(<AppContext.Provider value={{lang:'ar',t,notify,user:null} as any}><main id="main-content"><Exports/></main></AppContext.Provider>));await flush();expect(container.querySelectorAll('main')).toHaveLength(1);expect(container.querySelector('main main')).toBeNull();});
+ it('keeps one app-owned main landmark for free contact tools',async()=>{await act(async()=>root.render(<AppContext.Provider value={{lang:'ar',t,notify,user:null} as any}><main id="main-content"><QRTools/></main></AppContext.Provider>));await flush();expect(container.querySelectorAll('main')).toHaveLength(1);expect(container.querySelector('main main')).toBeNull();expect(container.textContent).toContain('خدمة مجانية');});
  it('prepares once on request, shows the same buffer, and downloads that buffer instead of regenerating another PDF',async()=>{
   expect(mocks.createPdf).not.toHaveBeenCalled();expect(container.querySelector('[data-testid="exact-file-preview"]')).toBeNull();
   await click('معاينة الصفحات');expect(mocks.createPdf).toHaveBeenCalledTimes(1);expect(container.querySelector('[data-testid="exact-file-preview"]')?.getAttribute('data-bytes')).toBe('37,80,68,70,1');

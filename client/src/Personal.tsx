@@ -391,7 +391,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
     </header>
 
     <div className="identity-workspace">
-      <main className="identity-content">
+      <div className="identity-content">
         {stringValue(profile.bio) && <section className="identity-introduction" aria-labelledby="identity-introduction-title">
           <div className="identity-introduction__number" aria-hidden="true">01</div>
           <div>
@@ -453,7 +453,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
             </button>}
           </ProfileSection>}
         </div>}
-      </main>
+      </div>
 
       <aside className="identity-aside" aria-label={t('بيانات التواصل والمشاركة', 'Contact and sharing details')}>
         <section className="identity-card identity-aside__identity">

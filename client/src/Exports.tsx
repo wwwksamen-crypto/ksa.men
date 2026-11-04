@@ -716,7 +716,7 @@ export default function Exports() {
   const cardDetails = useMemo(() => profile ? smartCardDetails(profile, publicUrl, cardMode, exportLang) : null, [cardMode, exportLang, profile, publicUrl]);
 
   return <div className={`exports-shell${isPublishedSource ? ' exports-shell--published' : ''}${kind === 'badge' ? ' exports-shell--badge' : ''}`} dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
-    <main className="exports-main">
+    <section className="exports-main">
       <header className="exports-hero card">
         <div className="exports-hero__halo" aria-hidden="true"/>
         <div className="exports-hero__copy">
@@ -807,7 +807,7 @@ export default function Exports() {
           <div className="exports-card-actions__buttons"><Button className="button-quiet" onClick={printBadge}><Printer size={16}/>{t('طباعة الشارة', 'Print badge')}</Button><Button className="button-quiet" onClick={() => void imageFromCard('badge')} disabled={Boolean(busy)}><ImageDown size={16}/>{t('صورة رقمية', 'Digital PNG')}</Button><Button className="button-quiet" onClick={() => void imageFromCard('social')} disabled={Boolean(busy)}><ImageDown size={16}/>{t('صورة مشاركة', 'Social PNG')}</Button></div>
         </section>
       </>}
-    </main>
+    </section>
 
     {profile && data && verified && <>
       <section className="export-print-sheet" dir={exportLang === 'ar' ? 'rtl' : 'ltr'}>
@@ -870,7 +870,7 @@ export function QRTools() {
     downloadable(content, 'ksa-men-contact.vcf', 'text/vcard;charset=utf-8');
   };
 
-  return <main className="qr-tools" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+  return <section className="qr-tools" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
     <section className="qr-tools__hero card"><div><p className="exports-kicker"><QrCode size={16}/>{t('خدمة مجانية', 'Free tool')}</p><h1>{t('أنشئ رمز الاستجابة السريعة أو بطاقة الاتصال في ثوانٍ', 'Create a QR or vCard in seconds')}</h1><p>{t('تعمل هذه الأداة محلياً في متصفحك ولا تتطلب تسجيلاً. تحمل الرموز شعار المنصة وتُجهّز بجودة مناسبة للطباعة.', 'This tool runs locally in your browser and needs no sign-in or API request. Codes include the KSA.MEN mark, H-level correction and a print-safe quiet zone.')}</p></div><QrCode size={72} strokeWidth={1.1}/></section>
     <section className="qr-tools__workspace card">
       <div className="qr-tools__tabs"><button type="button" onClick={() => { setMode('url'); setPreview(''); }} className={mode === 'url' ? 'is-active' : ''}><Share2 size={16}/>{t('رابط', 'URL')}</button><button type="button" onClick={() => { setMode('vcard'); setPreview(''); }} className={mode === 'vcard' ? 'is-active' : ''}><ContactRound size={16}/>{t('بطاقة الاتصال', 'vCard')}</button></div>
@@ -878,5 +878,5 @@ export function QRTools() {
       <div className="qr-tools__actions"><Button onClick={() => void create()} disabled={!canCreate || busy}>{busy ? <LoaderCircle className="exports-spin" size={17}/> : <QrCode size={17}/>} {t('إنشاء رمز الاستجابة السريعة عالي الدقة', 'Create high-res QR')}</Button>{preview && <Button className="button-quiet" onClick={() => void download()} disabled={busy}><Download size={17}/>{t('تنزيل صورة', 'Download PNG')}</Button>}{mode === 'vcard' && <Button className="button-quiet" onClick={downloadContact} disabled={!canCreate || busy}><ContactRound size={17}/>{t('تنزيل بطاقة الاتصال', 'Download vCard')}</Button>}</div>
       {preview && <div className="qr-tools__preview"><img src={preview} alt={t('رمز الاستجابة السريعة تم إنشاؤه', 'Generated QR code')}/><p>{t('جاهز للطباعة أو المشاركة. يحمل الرمز مستوى تصحيح عالياً.', 'Ready to print or share. The code uses a high error-correction level.')}</p></div>}
     </section>
-  </main>;
+  </section>;
 }
