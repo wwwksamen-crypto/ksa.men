@@ -30,7 +30,7 @@ export async function rootHTML(c:Ctx,html:string,open:boolean){
  const root='https://'+c.env.ROOT_DOMAIN;
  const paragraphs=body.split(/\n\n/).filter(Boolean).map(p=>`<p>${e(p)}</p>`).join('');
  const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/auth?register=1">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
- return decorateHTML(html,{title:`${title} — KSA.MEN`,description:body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/cover-1600.webp',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
+ return decorateHTML(html,{title:`${title} — KSA.MEN`,description:body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
 }
 const xmlHeader='<?xml version="1.0" encoding="UTF-8"?>';
 const urlset=(urls:string[])=>xmlHeader+'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+urls.map(url=>`<url><loc>${e(url)}</loc></url>`).join('')+'</urlset>';

@@ -46,6 +46,7 @@ type SiteRow = {
 type Profile = {
   name: string;
   title: string;
+  specialty: string;
   bio: string;
   email: string;
   phone: string;
@@ -90,14 +91,14 @@ const NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const MEDIA_URL_RE = /^\/api\/media\/[A-Za-z0-9_-]{1,160}$/;
 const ASSET_URLS = new Set(['/assets/logo.webp', '/assets/logo-emblem.webp', '/assets/icon-192.png', '/assets/cover-1600.webp']);
 const PROFILE_KEYS = new Set([
-  'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country',
+  'name', 'title', 'specialty', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country',
   'photo', 'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills',
   'memberships', 'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'notes', 'skillImages',
   'workImages', 'socials', 'buttons', 'hidden', 'searchable', 'allowContact',
   'itemIds', 'hiddenItems', 'imageDescriptions', 'translations',
 ]);
 const PUBLIC_PROFILE_KEYS = new Set([
-  'name', 'title', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
+  'name', 'title', 'specialty', 'bio', 'email', 'phone', 'whatsapp', 'city', 'country', 'photo',
   'avatarMode', 'cover', 'youtube', 'experience', 'education', 'training', 'skills', 'memberships',
   'languages', 'hobbies', 'achievements', 'timeline', 'skillRadar', 'blog', 'skillImages', 'workImages',
   'socials', 'buttons',
@@ -262,6 +263,7 @@ export function defaultProfile(name = ''): Profile {
   return {
     name,
     title: '',
+    specialty: '',
     bio: '',
     email: '',
     phone: '',
@@ -395,6 +397,7 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
   const profile = defaultProfile(fallbackName);
   profile.name = profileText(value.name ?? fallbackName, 'name', 160, !editing, editing);
   profile.title = profileText(value.title, 'title', 180, false, editing);
+  profile.specialty = profileText(value.specialty, 'specialty', 120, false, editing);
   profile.bio = profileText(value.bio, 'bio', 5000, false, editing);
   profile.email = editing ? profileText(value.email, 'email', 254, false, true) : emailValue(value.email, 'email');
   profile.phone = editing ? profileText(value.phone, 'phone', 32, false, true) : phoneValue(value.phone, 'phone');

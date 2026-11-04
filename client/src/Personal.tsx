@@ -459,6 +459,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
           <div className="identity-aside__marker"><UserRound size={18}/><span>{t('بطاقة الهوية', 'IDENTITY CARD')}</span></div>
           <h2>{displayName}</h2>
           {stringValue(profile.title) && <p>{stringValue(profile.title)}</p>}
+          {stringValue(profile.specialty) && <p>{stringValue(profile.specialty)}</p>}
           {siteName && <p className="identity-domain"><Globe2 size={15}/><bdi dir="ltr">{siteName}.ksa.men</bdi></p>}
           {location && <p className="identity-aside__location"><MapPin size={15}/>{location}</p>}
         </section>

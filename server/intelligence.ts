@@ -84,7 +84,7 @@ const xmlParser = new XMLParser({
   removeNSPrefix: true,
 });
 
-const translatableRootFields = new Set(['title', 'bio', 'city', 'country']);
+const translatableRootFields = new Set(['title', 'specialty', 'bio', 'city', 'country']);
 const translatableContentLists = new Set([
   'experience', 'education', 'training', 'skills', 'memberships',
   'languages', 'hobbies', 'achievements', 'timeline',

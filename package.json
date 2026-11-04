@@ -12,7 +12,9 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@jsquash/webp": "1.5.0",
     "@resvg/resvg-wasm": "^2.6.2",
+    "fast-png": "8.0.0",
     "fast-xml-parser": "^5.2.5",
     "hono": "^4.9.0",
     "html-to-image": "^1.11.13",

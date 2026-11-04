@@ -1,5 +1,6 @@
 import { decorateHTML, profileBody, personSchema } from '../shared/seo';
-import { siteVisibility, visibleSiteProfile } from './visibility';
+import { siteVisibility } from './visibility';
+import { shareImageData } from './share-image';
 import { profileItemIds, withVisibility } from '../shared/profile-visibility';
 import type { App, Ctx } from './core';
 import { one, publicProfile, digest, role, siteFor } from './core';
@@ -11,7 +12,7 @@ const escape=(text:string)=>text.replace(/[&<>"']/g,value=>({'&':'&amp;','<':'&l
 let ready:Promise<void>|undefined;
 const initialize=()=>ready||(ready=initWasm(wasm));
 const b64=(bytes:Uint8Array)=>{let output='';for(let index=0;index<bytes.length;index+=4096)output+=String.fromCharCode(...bytes.slice(index,index+4096));return btoa(output);};
-export function shareProfile(raw:any,lang:string){const original=typeof raw==='string'?JSON.parse(raw):raw;const translated=original?.translations?.[lang];return publicProfile(translated&&typeof translated==='object'?{...original,...translated,itemIds:profileItemIds(original),hiddenItems:original.hiddenItems,hidden:original.hidden}:original);}
+export function shareProfile(raw:any,lang:string){const original=typeof raw==='string'?JSON.parse(raw):raw;const translated=original?.translations?.[lang];return publicProfile(translated&&typeof translated==='object'?{...original,...translated,photo:original.photo,avatarMode:original.avatarMode,itemIds:profileItemIds(original),hiddenItems:original.hiddenItems,hidden:original.hidden}:original);}
 export async function shareSite(c:Ctx,name:string){
  if(!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(name))throw new HTTPException(404);
  const site:any=await one(c,"SELECT s.*,n.name,u.status AS owner_status FROM dns_names n JOIN sites s ON s.id=n.site_id LEFT JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL",name);
@@ -21,22 +22,38 @@ export async function shareSite(c:Ctx,name:string){
  const raw=withVisibility(JSON.parse(site.published),policy);
  return {...site,visibility:policy,published:JSON.stringify(raw)};
 }
-async function renderShare(c:Ctx,site:any){
-  const lang=c.req.query('lang')==='en'?'en':'ar';
-  const profile=shareProfile(site.published,lang);
-  const cacheKey='sharing/'+site.id+'/'+site.published_version+'-'+lang+'-'+await digest(JSON.stringify(profile))+'.png';
-  const saved=await c.env.MEDIA.get(cacheKey);
-  if(saved)return new Response(saved.body,{headers:{'Content-Type':'image/png','Cache-Control':'private, no-store'}});
-  await initialize();
-  const font=new Uint8Array(await(await c.env.ASSETS.fetch(new Request(new URL('/assets/Tajawal-Regular.ttf',c.req.url)))).arrayBuffer());
-  const icon=new Uint8Array(await(await c.env.ASSETS.fetch(new Request(new URL('/assets/icon-192.png',c.req.url)))).arrayBuffer());
-  const arabic=lang==='ar',anchor=arabic?'end':'start',x=arabic?1088:112;
-  const name=String(profile.name||'KSA.MEN').slice(0,55),title=String(profile.title||'').slice(0,75),city=String(profile.city||'').slice(0,55);
-  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630"><defs><linearGradient id="background" x2="1" y2="1"><stop stop-color="#004422"/><stop offset="1" stop-color="#07120f"/></linearGradient></defs><rect width="1200" height="630" fill="url(#background)"/><rect x="32" y="32" width="1136" height="566" rx="30" fill="none" stroke="#41624e"/><circle cx="80" cy="590" r="235" fill="#006837" opacity=".28"/><image href="data:image/png;base64,${b64(icon)}" x="1010" y="55" width="105" height="105"/><text x="80" y="110" fill="#a8d9bc" font-family="Tajawal" font-size="30" letter-spacing="3">KSA.MEN</text><text x="${x}" y="278" fill="#f5f7f6" font-family="Tajawal" font-size="62" text-anchor="${anchor}" direction="${arabic?'rtl':'ltr'}">${escape(name)}</text><text x="${x}" y="354" fill="#8de0af" font-family="Tajawal" font-size="36" text-anchor="${anchor}" direction="${arabic?'rtl':'ltr'}">${escape(title)}</text><text x="${x}" y="410" fill="#c2cfc5" font-family="Tajawal" font-size="27" text-anchor="${anchor}" direction="${arabic?'rtl':'ltr'}">${escape(city)}</text><line x1="90" y1="478" x2="1110" y2="478" stroke="#345441"/><text x="600" y="545" fill="#e3eae5" font-family="Tajawal" font-size="30" text-anchor="middle">${escape(site.name+'.ksa.men')}</text></svg>`;
-  const renderer=new Resvg(svg,{font:{fontBuffers:[font],defaultFontFamily:'Tajawal'},fitTo:{mode:'original'},textRendering:1});
-  const image=renderer.render();const png=new Uint8Array(image.asPng());image.free();renderer.free();
-  await c.env.MEDIA.put(cacheKey,png,{httpMetadata:{contentType:'image/png'},customMetadata:{siteId:site.id,publishedVersion:String(site.published_version),lang}});
-  return new Response(png,{headers:{'Content-Type':'image/png','Cache-Control':'private, no-store'}});
+const brandImage = '/assets/share-logo-1200-v1.png';
+async function brandResponse(c: Ctx) {
+  const response = await c.env.ASSETS.fetch(new Request(new URL(brandImage, c.req.url)));
+  return new Response(response.body, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store' } });
+}
+export async function renderShare(c: Ctx, site: any) {
+  const lang = c.req.query('lang') === 'en' ? 'en' : 'ar';
+  const profile = shareProfile(site.published, lang);
+  const match = typeof profile.photo === 'string' ? /^\/api\/media\/([A-Za-z0-9_-]+)$/.exec(profile.photo) : null;
+  if (!match) return brandResponse(c);
+  const media: any = await one(c, "SELECT bucket_key,mime,size FROM media WHERE id=? AND site_id=? AND purpose!='receipt'", match[1], site.id);
+  if (!media || Number(media.size) > 5_000_000) return brandResponse(c);
+  const cacheKey = 'sharing/v2/' + site.id + '/' + site.published_version + '-' + lang + '-' + await digest(JSON.stringify(profile)) + '.png';
+  const saved = await c.env.MEDIA.get(cacheKey);
+  if (saved) return new Response(saved.body, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store' } });
+  try {
+    const object = await c.env.MEDIA.get(media.bucket_key);
+    if (!object) return brandResponse(c);
+    const input = await shareImageData(new Uint8Array(await object.arrayBuffer()), media.mime);
+    if (!input) return brandResponse(c);
+    await initialize();
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="white"/><image href="data:${input.mime};base64,${b64(input.bytes)}" x="80" y="55" width="1040" height="520" preserveAspectRatio="xMidYMid meet"/></svg>`;
+    const renderer = new Resvg(svg, { fitTo: { mode: 'original' } });
+    let png: Uint8Array;
+    const image = renderer.render();
+    try { png = new Uint8Array(image.asPng()); } finally { image.free(); renderer.free(); }
+    await c.env.MEDIA.put(cacheKey, png, { httpMetadata: { contentType: 'image/png' }, customMetadata: { siteId: site.id, publishedVersion: String(site.published_version), lang } });
+    return new Response(png.slice().buffer as ArrayBuffer, { headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store' } });
+  } catch {
+    // Missing, corrupt or unsupported images must never cause a broken sharing preview.
+    return brandResponse(c);
+  }
 }
 export function registerOG(app:App){
  app.get('/api/public/og/:name',async c=>{const site=await shareSite(c,c.req.param('name'));if(site.lock_hash)throw new HTTPException(423,{message:'الموقع خاص، ولا تتوفر له صورة مشاركة عامة'});return renderShare(c,site);});
@@ -52,7 +69,7 @@ export async function personalizedHTML(c:Ctx,html:string){
  const title=String(profile.name||'KSA.MEN')+(profile.title?' — '+String(profile.title):'');
  const description=String(profile.bio||(lang==='ar'?'هوية مهنية سعودية — ظهور رقمي يليق بك':'A Saudi professional identity — a presence worthy of you'));
  const canonical='https://'+name+'.'+root+'/'+(lang==='en'?'?lang=en':'');
- const image='https://'+root+'/api/public/og/'+name+'?lang='+lang;
+ const image='https://'+root+'/api/public/og/'+name+'?lang='+lang+'&v='+site.published_version+'-'+(await digest(JSON.stringify(profile))).slice(0,16);
  const policy={...site.visibility,indexable:site.visibility.indexable&&c.get('platformLockMode')==='open'};
  if(!policy.indexable)c.header('X-Robots-Tag','noindex, nofollow');
  return decorateHTML(html,{title,description,url:canonical,image,lang,indexable:policy.indexable,type:'profile',alternate:'https://'+name+'.'+root+'/'+(lang==='en'?'':'?lang=en'),schema:policy.indexable?personSchema(profile,canonical):undefined},profileBody(profile,name,lang));

@@ -476,7 +476,7 @@
   width: 22.45%;
   height: auto;
   aspect-ratio: 1;
-  border-width: clamp(2px, .78cqw, 7px);
+  border-width: 0;
   box-shadow: 0 0 0 clamp(4px, 2.2cqw, 20px) color-mix(in srgb, var(--exports-gold) 9%, transparent), 0 9px 20px color-mix(in srgb, #000 26%, transparent);
 }
 
@@ -504,7 +504,7 @@
 .exports-preview-frame .export-social-card__content h2 { margin: 1.6% 0 .7%; font-size: clamp(18px, 4.75cqw, 57px); overflow-wrap: anywhere; }
 .exports-preview-frame .export-social-card__content strong { font-size: clamp(9px, 2.17cqw, 26px); overflow-wrap: anywhere; }
 .exports-preview-frame .export-social-card__content p { margin-top: 2.3%; font-size: clamp(8px, 1.67cqw, 20px); line-height: 1.55; }
-.exports-preview-frame .export-social-card__portrait { top: 20.6%; inset-inline-end: 7%; width: 19.85%; height: auto; aspect-ratio: 1; border-width: clamp(2px, .5cqw, 6px); }
+.exports-preview-frame .export-social-card__portrait { top: 20.6%; inset-inline-end: 7%; width: 19.85%; height: auto; aspect-ratio: 1; border-width: 0; }
 .exports-preview-frame .export-social-card__qr { inset-inline-end: 9.4%; bottom: 6.7%; width: 9.35%; height: auto; aspect-ratio: 1; padding: clamp(1px, .5cqw, 6px); border-radius: clamp(3px, 1cqw, 12px); }
 .exports-preview-frame .export-social-card__foot { left: 32.5%; right: 5.6%; bottom: 7.3%; font-size: clamp(7px, 1.5cqw, 18px); overflow-wrap: anywhere; }
 
@@ -574,8 +574,8 @@
 }
 
 .export-digital-card__brand { position: absolute; top: 72px; inset-inline-start: 74px; color: #e7c477; letter-spacing: 7px; font-size: 27px; font-weight: 800; }
-.export-digital-card__portrait { position: absolute; top: 185px; inset-inline-start: 74px; width: 202px; height: 202px; overflow: hidden; border: 7px solid #f6e1ac; border-radius: 49% 51% 43% 57%; background: #063d25; box-shadow: 0 0 0 20px color-mix(in srgb, #eec568 8%, transparent), 0 18px 36px color-mix(in srgb, #000 25%, transparent); }
-.export-digital-card__portrait img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.export-digital-card__portrait { position: absolute; top: 185px; inset-inline-start: 74px; width: 202px; height: 202px; overflow: hidden; border: 0; border-radius: 18px; background: #fff; box-shadow: 0 18px 36px color-mix(in srgb, #000 20%, transparent); }
+.export-digital-card__portrait img { display: block; width: 100%; height: 100%; padding: 8%; object-fit: contain; }
 .export-digital-card__qr { position: absolute; top: 73px; inset-inline-end: 74px; width: 218px; height: 218px; padding: 10px; border-radius: 18px; background: #fff; box-shadow: 0 16px 32px color-mix(in srgb, #000 25%, transparent); }
 .export-digital-card[data-mode='business'] { background: radial-gradient(circle at 8% 5%, color-mix(in srgb, #e8be5d 60%, transparent), transparent 23%), linear-gradient(145deg, #005431 0%, #083a28 42%, #031d11 100%); }
 .export-digital-card[data-mode='quick'] { background: radial-gradient(circle at 88% 10%, color-mix(in srgb, #71de9f 28%, transparent), transparent 22%), linear-gradient(145deg, #00472a 0%, #063421 52%, #031d11 100%); }
@@ -602,8 +602,8 @@
 .export-social-card__arc--two { width: 210px; height: 210px; inset-inline-end: 180px; bottom: -137px; border-color: color-mix(in srgb, #e8bc57 45%, transparent); box-shadow: 0 0 0 38px color-mix(in srgb, #e8bc57 8%, transparent); }
 .export-social-card__brand { position: absolute; top: 52px; inset-inline-start: 67px; margin: 0; color: #f0d386; font-size: 23px; font-weight: 800; letter-spacing: 7px; }
 .export-social-card__content { position: absolute; top: 155px; inset-inline-start: 67px; width: 700px; min-width: 0; }
-.export-social-card__portrait { position: absolute; z-index: 1; top: 130px; inset-inline-end: 84px; width: 238px; height: 238px; overflow: hidden; border: 6px solid #ecd38e; border-radius: 49% 51% 43% 57%; background: #063d25; box-shadow: 0 16px 35px color-mix(in srgb, #000 26%, transparent); }
-.export-social-card__portrait img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.export-social-card__portrait { position: absolute; z-index: 1; top: 130px; inset-inline-end: 84px; width: 238px; height: 238px; overflow: hidden; border: 0; border-radius: 18px; background: #fff; box-shadow: 0 16px 35px color-mix(in srgb, #000 26%, transparent); }
+.export-social-card__portrait img { display: block; width: 100%; height: 100%; padding: 8%; object-fit: contain; }
 .export-social-card__qr { position: absolute; z-index: 2; inset-inline-end: 113px; bottom: 42px; width: 112px; height: 112px; padding: 6px; border-radius: 12px; background: #fff; box-shadow: 0 9px 20px color-mix(in srgb, #000 23%, transparent); }
 .export-social-card__content > span { color: #c2e6cf; font-size: 22px; font-weight: 700; }
 .export-social-card__content h2 { margin: 11px 0 5px; color: #fff; font-size: 57px; line-height: 1.1; overflow-wrap: anywhere; }
@@ -716,7 +716,7 @@
   .export-print-sheet { min-height: 273mm; display: grid !important; grid-template-rows: auto 1fr auto; overflow: hidden; color: #f8fff9; border: 1px solid #004422; background: linear-gradient(145deg, #006837, #003d21 72%, #012515); font-family: Tajawal, Arial, sans-serif; }
   .export-print-sheet__top { display: flex; justify-content: space-between; padding: 14mm 16mm; color: #f1d48c; border-bottom: 1px solid #ffffff42; font-size: 12pt; font-weight: 700; letter-spacing: 1.3pt; }
   .export-print-sheet__body { align-self: center; display: flex; flex-direction: column; align-items: center; padding: 15mm 18mm 11mm; text-align: center; }
-  .export-print-sheet__photo { width: 42mm; height: 42mm; display: block; margin-bottom: 10mm; border: .7mm solid #dfbd71; border-radius: 50%; background: #003d2180; object-fit: cover; }
+  .export-print-sheet__photo { width: 42mm; height: 42mm; display: block; margin-bottom: 10mm; border: 0; border-radius: 3mm; padding: 2mm; background: #fff; object-fit: contain; }
   .export-print-sheet h1 { max-width: 160mm; margin: 0 auto 5mm; color: #fff; font-size: 31pt; line-height: 1.16; }
   .export-print-sheet p { margin: 0; color: #e6f4ea; font-size: 17pt; }
   .export-print-sheet small { display: block; margin-top: 6mm; color: #cae5d3; font-size: 12pt; }
@@ -756,7 +756,7 @@
 }
 .exports-badge-screen__frame .export-digital-card { width: 100%; height: 100%; }
 .exports-badge-screen__frame .export-digital-card__brand { top: 6.2%; inset-inline-start: 8.2%; font-size: clamp(10px, 3cqw, 27px); letter-spacing: .22em; }
-.exports-badge-screen__frame .export-digital-card__portrait { top: 15.4%; inset-inline-start: 8.2%; width: 22.45%; height: auto; aspect-ratio: 1; border-width: clamp(2px, .78cqw, 7px); }
+.exports-badge-screen__frame .export-digital-card__portrait { top: 15.4%; inset-inline-start: 8.2%; width: 22.45%; height: auto; aspect-ratio: 1; border-width: 0; }
 .exports-badge-screen__frame .export-digital-card__qr { top: 6.1%; inset-inline-end: 8.2%; width: 24.2%; height: auto; aspect-ratio: 1; padding: clamp(2px, 1.1cqw, 10px); border-radius: clamp(5px, 2cqw, 18px); }
 .exports-badge-screen__frame .export-digital-card__content { inset-inline: 8.3%; bottom: 15%; }
 .exports-badge-screen__frame .export-digital-card__content p { margin-bottom: 2.4%; font-size: clamp(9px, 2.78cqw, 25px); letter-spacing: .08em; }

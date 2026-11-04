@@ -111,16 +111,16 @@ export function registerPublic(app:App){
 
   app.get('/api/search',async c=>{
     const query=(c.req.query('q')||'').slice(0,100).toLocaleLowerCase();
-    const city=(c.req.query('city')||'').slice(0,100).toLocaleLowerCase();
-    const specialty=(c.req.query('specialty')||'').slice(0,100).toLocaleLowerCase();
+    const city=(c.req.query('city')||'').slice(0,120).trim().toLocaleLowerCase();
+    const specialty=(c.req.query('specialty')||'').slice(0,120).trim().toLocaleLowerCase();
     const offset=Math.min(10_000,Math.max(0,Number(c.req.query('offset'))||0));
     const rows:any[]=await all(c,"SELECT s.id,s.user_id,s.searchable,s.published,s.lock_hash,n.name,v.site_id AS privacy_id,v.hidden_fields,v.hidden_items,v.hidden_aliases FROM sites s JOIN dns_names n ON n.site_id=s.id LEFT JOIN site_visibility v ON v.site_id=s.id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE u.status='active' AND s.status='published' AND COALESCE(v.visible,1)=1 AND COALESCE(v.listed,s.searchable)=1 AND s.published IS NOT NULL ORDER BY s.updated_at DESC LIMIT 200");
-    const profiles=rows.filter(row=>!row.lock_hash).map(row=>{const raw=publishedJson(row);return {site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(row.privacy_id?{...raw,hidden:JSON.parse(row.hidden_fields),hiddenItems:expandedHiddenItems(JSON.parse(row.hidden_items),JSON.parse(row.hidden_aliases))}:raw,'ar')};});
+    const profiles=rows.filter(row=>!row.lock_hash).map(row=>{const raw=publishedJson(row);return {site:row.id,name:row.name,userId:row.user_id?'C'+row.user_id:null,profile:visibleProfile(row.privacy_id?{...raw,hidden:JSON.parse(row.hidden_fields),hiddenItems:expandedHiddenItems(JSON.parse(row.hidden_items),JSON.parse(row.hidden_aliases))}:raw,'ar'),legacySpecialty:!(typeof raw.specialty==='string'&&raw.specialty.trim())&&!visibility(row.privacy_id?{hidden:JSON.parse(row.hidden_fields)}:raw).includes('specialty')};});
     const matched=profiles.filter(result=>{
       const profile=result.profile;
-      const haystack=[result.name,result.userId,profile.name,profile.title,profile.city].filter(value=>typeof value==='string').join(' ').toLocaleLowerCase();
-      const resultCity=typeof profile.city==='string'?profile.city.toLocaleLowerCase():'';
-      const resultSpecialty=typeof profile.title==='string'?profile.title.toLocaleLowerCase():'';
+      const haystack=[result.name,result.userId,profile.name,profile.title,profile.specialty,profile.city].filter(value=>typeof value==='string').join(' ').toLocaleLowerCase();
+      const resultCity=typeof profile.city==='string'?profile.city.trim().toLocaleLowerCase():'';
+      const resultSpecialty=typeof profile.specialty==='string'&&profile.specialty.trim()?profile.specialty.trim().toLocaleLowerCase():result.legacySpecialty&&typeof profile.title==='string'?profile.title.trim().toLocaleLowerCase():'';
       return haystack.includes(query)&&(!city||resultCity===city)&&(!specialty||resultSpecialty===specialty);
     });
     return c.json({
@@ -128,12 +128,12 @@ export function registerPublic(app:App){
         site:result.site,
         name:result.name,
         userId:result.userId,
-        profile:{name:result.profile.name,title:result.profile.title,city:result.profile.city,photo:result.profile.photo,allowContact:result.profile.allowContact},
+        profile:{name:result.profile.name,title:result.profile.title,specialty:result.profile.specialty,city:result.profile.city,photo:result.profile.photo,allowContact:result.profile.allowContact},
         url:'https://'+result.name+'.'+c.env.ROOT_DOMAIN,
       })),
       total:matched.length,
       cities:[...new Set(profiles.map(result=>result.profile.city).filter((value):value is string=>typeof value==='string'&&Boolean(value)))],
-      specialties:[...new Set(profiles.map(result=>result.profile.title).filter((value):value is string=>typeof value==='string'&&Boolean(value)))],
+      specialties:[...new Set(profiles.map(result=>typeof result.profile.specialty==='string'&&result.profile.specialty.trim()?result.profile.specialty:result.legacySpecialty?result.profile.title:undefined).filter((value):value is string=>typeof value==='string'&&Boolean(value)))],
     });
   });
 

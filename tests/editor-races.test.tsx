@@ -49,6 +49,19 @@ beforeEach(() => {
 afterEach(async () => { await act(async()=>root.unmount()); container.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('editor save races — DOM and mocked API only', () => {
+  it('edits specialty and city beside identity without changing the professional title or old media', async () => {
+    records.first.draft.city = 'الرياض';
+    await mount();
+    const label = [...container.querySelectorAll<HTMLLabelElement>('label')].find(label => label.textContent?.trim() === 'التخصص');
+    const specialty = [...container.querySelectorAll<HTMLInputElement>('input')].find(input => input.id === label?.htmlFor);
+    const city = container.querySelector<HTMLInputElement>('input[autocomplete="address-level2"]');
+    expect(specialty).not.toBeNull(); expect(city?.value).toBe('الرياض');
+    expect(specialty?.maxLength).toBe(120); expect(city?.maxLength).toBe(120);
+    await act(async () => { inputValue(specialty!, 'التسويق الرقمي'); inputValue(city!, 'جدة'); });
+    await act(async () => clickSave()); await flush();
+    expect(records.first.draft).toMatchObject({ title: 'عنوان', specialty: 'التسويق الرقمي', city: 'جدة', skillImages: ['/api/media/existing'] });
+    expect(container.textContent).toContain('التخصص');
+  });
   it.each(['header','bottom','preview'])('submits directly from the %s publication button after saving the latest edit', async place => {
     await mount();
     await act(async()=>inputValue(nameInput(),'آخر نص قبل الطلب'));
