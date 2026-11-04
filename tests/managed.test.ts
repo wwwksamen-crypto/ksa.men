@@ -24,7 +24,9 @@ let managedId=0,siteId='',ownerPin='';
 let capturedEmails:any[]=[];
 async function request(path:string,actor?:string,method='GET',body?:unknown,extra:Record<string,string>={}) {
  const headers:Record<string,string>={Origin:'https://ksa.men',...extra};if(actor){headers.Cookie=actors[actor].cookie;headers['X-CSRF-Token']=actors[actor].csrf;}if(body)headers['Content-Type']='application/json';
- const response=await worker.fetch(new Request('https://ksa.men'+path,{method,headers,body:body?JSON.stringify(body):undefined}),env,{waitUntil:(p:Promise<unknown>)=>p} as any);
+ const background:Promise<unknown>[]=[];
+ const response=await worker.fetch(new Request('https://ksa.men'+path,{method,headers,body:body?JSON.stringify(body):undefined}),env,{waitUntil:(p:Promise<unknown>)=>{background.push(p);}} as any);
+ await Promise.all(background);
  return {response,status:response.status,data:await response.clone().json().catch(()=>null)};
 }
 beforeAll(async()=>{

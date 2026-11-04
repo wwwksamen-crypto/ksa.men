@@ -1,3 +1,4 @@
+import { displayCountry } from '../../shared/display-country';
 import { itemText, list, record, text, webUrl, socialLink, type ProfileRecord } from '../../shared/profile-content';
 import { sanitizeProfile } from '../../shared/profile-visibility';
 
@@ -34,7 +35,7 @@ export function buildResumeContent(input: ProfileRecord, context: ResumeContext)
   add(text(profile.title), 'role');
   if (text(profile.specialty)) add(`${labels.specialty}: ${text(profile.specialty)}`, 'body');
   for (const key of ['email', 'phone', 'whatsapp'] as const) if (text(profile[key])) { add(`${labels[key]}:`, 'body', true); add(text(profile[key]), 'contact'); }
-  const location = [text(profile.city), text(profile.country)].filter(Boolean).join(context.lang === 'ar' ? '، ' : ', ');
+  const location = [text(profile.city), displayCountry(profile.country, context.lang)].filter(Boolean).join(context.lang === 'ar' ? '، ' : ', ');
   if (location) add(`${labels.location}: ${location}`, 'contact');
   const publicUrl = webUrl(context.url); if (publicUrl) add(publicUrl, 'contact', false, publicUrl);
   if (text(profile.bio)) { add(labels.summary, 'heading', true); add(text(profile.bio), 'body'); }

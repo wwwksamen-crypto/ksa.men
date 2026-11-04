@@ -1,3 +1,4 @@
+import { displayCountry } from '../../shared/display-country';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
@@ -276,7 +277,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
   const useInitials = profile.avatarMode === 'monogram';
   const profilePhoto = staticImage(useInitials ? '/assets/icon-192.png' : mediaSource(profile.photo) || '/assets/logo-emblem.webp');
   const profileCover = staticImage(mediaSource(profile.cover) || '/assets/cover-1600.webp');
-  const location = [stringValue(profile.city), stringValue(profile.country)].filter(Boolean).join(lang === 'ar' ? '، ' : ', ');
+  const location = [stringValue(profile.city), displayCountry(profile.country, lang)].filter(Boolean).join(lang === 'ar' ? '، ' : ', ');
 
   useEffect(() => {
     let current = true;
@@ -474,7 +475,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
               <Phone size={17}/><bdi dir="ltr">{stringValue(profile.phone)}</bdi>
             </a>}
             {stringValue(profile.whatsapp) && <a className="identity-contact-list__whatsapp" href={`https://wa.me/${stringValue(profile.whatsapp).replace(/\D/g, '')}`} target="_blank" rel="noreferrer" onClick={() => track('contact')}>
-              <MessageCircle size={17}/><span>WhatsApp</span><ArrowUpRight size={15}/>
+              <MessageCircle size={17}/><span>{t('واتساب', 'WhatsApp')}</span><ArrowUpRight size={15}/>
             </a>}
             {allowContact && data.userId && <a className="identity-contact-list__request" href={`https://ksa.men/contact?recipient=${encodeURIComponent(data.userId)}`} onClick={() => track('contact')}>
               <MessageCircle size={17}/><span>{t('طلب تواصل مهني', 'Request contact')}</span><ArrowUpRight size={15}/>
@@ -498,8 +499,8 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
         <section ref={qrRef} className="identity-card identity-qr">
           <div className="identity-aside__marker"><span>{t('للوصول السريع', 'SCAN TO CONNECT')}</span></div>
           <div className="identity-qr__dual">
-            {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز QR لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><a download={`${siteName || 'ksa-men'}-site-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل', 'Download')}</a></div>}
-            {vcardQr && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز QR لبطاقة الاتصال', 'QR code for the contact card')}/></div><strong>vCard</strong><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
+            {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز الاستجابة السريعة لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><a download={`${siteName || 'ksa-men'}-site-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل', 'Download')}</a></div>}
+            {vcardQr && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز بطاقة الاتصال', 'QR code for the contact card')}/></div><strong>vCard</strong><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
           </div>
           <p>{t('رمز للموقع ورمز مستقل لبطاقة الاتصال؛ لا يتضمنان حقولاً اختار صاحب الهوية إخفاءها.', 'One code opens the site and one saves the contact card; neither includes fields the owner chose to hide.')}</p>
         </section>

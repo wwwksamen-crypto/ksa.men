@@ -33,12 +33,25 @@ function readableError(data:any,status:number){
   const message=String(data.error||data.message||'');
   if(!english&&message&&!/[\u0600-\u06ff]/.test(message)){
     if(/fresh|reauth|verify.*email/i.test(message))return 'أعد التحقق من البريد لإتمام الإجراء الحساس.';
+    if(status===401)return 'سجّل الدخول للمتابعة.';
+    if(status===404)return 'هذه الصفحة أو الخدمة غير متاحة.';
+    if(status===422)return 'تحقق من البيانات المطلوبة وأعد المحاولة.';
+    if(status===429)return 'طلبات كثيرة خلال وقت قصير. انتظر قليلاً ثم أعد المحاولة.';
+    if(status>=500)return 'تعذر الاتصال بالخدمة حالياً. أعد المحاولة بعد قليل.';
     if(status===403)return 'ليست لديك صلاحية لهذا الإجراء.';
     if(status===409)return 'تغيّرت الحالة أو نُفذت العملية سابقًا. حدّث البيانات قبل المتابعة.';
     if(status===410)return 'انتهت صلاحية هذه الجلسة أو الخدمة.';
     if(status===400)return 'تحقق من البيانات المدخلة وأعد المحاولة.';
+    return 'تعذر تنفيذ الطلب. تحقق من اتصالك وأعد المحاولة.';
   }
   return message||(english?'The request could not be completed.':'تعذر تنفيذ الطلب.');
+}
+/** Keep library exceptions out of product copy; actionable Arabic messages remain intact. */
+export function displayError(cause:unknown,fallback:string):string {
+  const message=cause instanceof Error?cause.message:'';
+  if(!message||message.length>240)return fallback;
+  if(document.documentElement.lang!=='en'&&!/[\u0600-\u06ff]/.test(message))return fallback;
+  return message;
 }
 export async function api<T=any>(path:string,options:RequestInit={}):Promise<T>{
   const headers=new Headers(options.headers);

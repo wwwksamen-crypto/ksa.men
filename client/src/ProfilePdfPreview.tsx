@@ -58,7 +58,7 @@ export default function ProfilePdfPreview({ bytes, profile, lang, t, resume }: P
     return () => { disposed = true; render.current?.cancel(); };
   }, [document, page, width, zoom, t]);
   const safe = sanitizeProfile(profile);
-  return <section className="exports-pdf-viewer card" aria-label={t('معاينة ملف PDF', 'PDF file preview')}>
+  return <section className="exports-pdf-viewer card" aria-label={t('معاينة الملف', 'PDF file preview')}>
     <div className="exports-pdf-viewer__heading"><h2>{resume ? t('سيرتك المهنية', 'Your professional résumé') : t('بروفايلك الأفقي', 'Your landscape profile')}</h2><p>{t('هذه صفحات الملف نفسه الذي ستنزله.', 'These are the pages of the same file you will download.')}</p></div>
     <div className="exports-pdf-viewer__controls" role="group" aria-label={t('تنقل صفحات الملف', 'PDF page navigation')}>
       <button type="button" onClick={() => setPage(value => Math.max(1, value - 1))} disabled={page <= 1 || !document} aria-label={t('الصفحة السابقة', 'Previous page')}><ChevronRight size={18}/></button>

@@ -55,22 +55,22 @@ describe('exact-file landscape preview and download — DOM only',()=>{
   expect(blobs).toHaveLength(0);expect(container.querySelector('[data-testid="exact-file-preview"]')).toBeNull();
  });
  it('keeps ATS a separate text engine, not the visual landscape PDF or a QR document',async()=>{
-  await click('ATS');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(mocks.createPdf).not.toHaveBeenCalled();expect(mocks.getBuffer).not.toHaveBeenCalled();expect(blobs[0]?.type).toBe('application/pdf');expect(blobs[0]?.size).toBe(6);
+  await click('السيرة');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(mocks.createPdf).not.toHaveBeenCalled();expect(mocks.getBuffer).not.toHaveBeenCalled();expect(blobs[0]?.type).toBe('application/pdf');expect(blobs[0]?.size).toBe(6);
  });
  it('previews and downloads the same ATS bytes without regeneration',async()=>{
-  await click('سيرة ATS');await click('معاينة السيرة');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(container.querySelector('[data-testid="exact-file-preview"]')?.getAttribute('data-bytes')).toBe('37,80,68,70,2,3');
-  await click('تنزيل سيرة ATS');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(blobs[0]?.size).toBe(6);
+  await click('سيرة ذاتية');await click('معاينة السيرة');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(container.querySelector('[data-testid="exact-file-preview"]')?.getAttribute('data-bytes')).toBe('37,80,68,70,2,3');
+  await click('تنزيل السيرة الذاتية');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(blobs[0]?.size).toBe(6);
  });
  it('offers Word and a logical text copy using the same ATS content and entitlement',async()=>{
-  await click('سيرة ATS');await click('تنزيل Word');expect(mocks.resumeDocx).toHaveBeenCalledTimes(1);expect(blobs[0]?.type).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  await click('سيرة ذاتية');await click('تنزيل وورد');expect(mocks.resumeDocx).toHaveBeenCalledTimes(1);expect(blobs[0]?.type).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   await click('تنزيل نسخة نصية');expect(blobs[1]?.type).toBe('text/plain;charset=utf-8');expect(mocks.resumePdf).not.toHaveBeenCalled();expect(mocks.resumeDocx.mock.calls[0][0].blocks[0].text).toBe('مصدر ملف');
  });
  it('clears ATS preview on refresh and prevents a stale in-flight ATS download',async()=>{
-  await click('سيرة ATS');let resolve!:(value:Uint8Array)=>void;mocks.resumePdf.mockImplementationOnce(()=>new Promise(accept=>{resolve=accept;}));
-  await act(async()=>button('تنزيل سيرة ATS').click());await flush();data={...data,profile:{name:'ملف جديد'}};await click('تحديث');await act(async()=>resolve(new Uint8Array([37,80,68,70,2])));await flush();expect(blobs).toHaveLength(0);expect(container.querySelector('[data-testid="exact-file-preview"]')).toBeNull();
+  await click('سيرة ذاتية');let resolve!:(value:Uint8Array)=>void;mocks.resumePdf.mockImplementationOnce(()=>new Promise(accept=>{resolve=accept;}));
+  await act(async()=>button('تنزيل السيرة الذاتية').click());await flush();data={...data,profile:{name:'ملف جديد'}};await click('تحديث');await act(async()=>resolve(new Uint8Array([37,80,68,70,2])));await flush();expect(blobs).toHaveLength(0);expect(container.querySelector('[data-testid="exact-file-preview"]')).toBeNull();
  });
  it('does not fabricate an English ATS export without the saved translated version',async()=>{
-  await click('سيرة ATS');data={...data,translated:false};await act(async()=>{const select=container.querySelector('select')!;select.value='en';select.dispatchEvent(new Event('change',{bubbles:true}));});await flush();
-  expect(button('تنزيل سيرة ATS')).toBeUndefined();expect(button('تنزيل Word')).toBeUndefined();expect(mocks.resumePdf).not.toHaveBeenCalled();expect(mocks.resumeDocx).not.toHaveBeenCalled();
+  await click('سيرة ذاتية');data={...data,translated:false};await act(async()=>{const select=container.querySelector('select')!;select.value='en';select.dispatchEvent(new Event('change',{bubbles:true}));});await flush();
+  expect(button('تنزيل السيرة الذاتية')).toBeUndefined();expect(button('تنزيل وورد')).toBeUndefined();expect(mocks.resumePdf).not.toHaveBeenCalled();expect(mocks.resumeDocx).not.toHaveBeenCalled();
  });
 });

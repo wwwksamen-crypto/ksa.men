@@ -1,3 +1,4 @@
+import { displayCountry } from '../../shared/display-country';
 import type { Content, ContentText, Column, TDocumentDefinitions } from 'pdfmake/interfaces';
 import { itemText, list, mediaSource, record, socialLink, text, webUrl } from '../../shared/profile-content';
 import { sanitizeProfile } from '../../shared/profile-visibility';
@@ -67,7 +68,7 @@ export function buildLandscapeProfile(input: unknown, context: ProfilePdfContext
   const imageNodes: Record<string, string> = { portrait: assets.portrait.data, cover: assets.cover.data };
   const bodyText = (value: string, size = 10.5, width = FRAME_WIDTH): ContentText => ({ text: format(value, /[\u0600-\u08ff]/.test(value), width, size), fontSize: size, alignment });
   const heading = (value: string): ContentText => ({ ...bodyText(value, 16), color: GREEN, bold: true, headlineLevel: 1, margin: [0, 17, 0, 9] });
-  const location = [text(profile.city), text(profile.country)].filter(Boolean).join(rtl ? '، ' : ', ');
+  const location = [text(profile.city), displayCountry(profile.country, context.lang)].filter(Boolean).join(rtl ? '، ' : ', ');
   const contacts = profile.allowContact === false ? [] : [...new Set([text(profile.email), text(profile.phone), text(profile.whatsapp)].filter(Boolean))];
   const url = webUrl(context.url);
   const identityWidth = FRAME_WIDTH - (url ? 232 : 124);

@@ -90,7 +90,7 @@ export function VoiceButton({ value, onAppend, lang, tr, label = '', fieldRef, d
         <div className="dictation-options-body">
           <label htmlFor={`${id}-language`}>{tr('لغة الإملاء', 'Dictation language')}</label>
           <select id={`${id}-language`} value={language} onChange={event => setLanguage(event.target.value as typeof language)} disabled={disabled}>
-            <option value="auto">{tr('لغة المساحة', 'Page language')}</option><option value="ar">العربية</option><option value="en">English</option>
+            <option value="auto">{tr('لغة المساحة', 'Page language')}</option><option value="ar">العربية</option><option value="en">{tr('الإنجليزية', 'English')}</option>
           </select>
           <label htmlFor={`${id}-mode`}>{tr('وقت الإيقاف', 'When to stop')}</label>
           <select id={`${id}-mode`} value={mode} onChange={event => setMode(event.target.value as DictationMode)} disabled={disabled}>

@@ -1,3 +1,4 @@
+import { managedText, managedBlocks } from '../shared/managed-text';
 import type { App, Ctx } from './core';
 import { all, one, setting } from './core';
 import { HTTPException } from 'hono/http-exception';
@@ -14,7 +15,7 @@ const pages:Record<string,[string,string,string,string]>={
  '/blog':['مدونة الظهور الرقمي','The Digital Presence Journal','الظهور الرقمي المميز يبدأ بقصة دقيقة وهوية واضحة.','Distinctive digital presence begins with a precise story and a clear identity.'],
  '/privacy':['سياسة الخصوصية','Privacy policy','نوضح ما نعالجه، ولماذا، وخياراتك عند استخدام المنصة.','We explain what we process, why, and your choices when using the platform.'],
  '/terms':['شروط الاستخدام','Terms of use','شروط واضحة لخدمة حضور وهوية مهنية شخصية على نطاق فرعي.','Clear terms for a personal professional presence and identity service on a subdomain.'],
- '/qr':['شارك حضورك بلمسة','One scan. Your whole story.','QR وبطاقة اتصال. هدية من المنصة، دون تسجيل.','QR and contact cards. A gift from us. No account needed.']
+ '/qr':['شارك حضورك بلمسة','One scan. Your whole story.','رمز استجابة سريعة وبطاقة اتصال. هدية من المنصة، دون تسجيل.','QR and contact cards. A gift from us. No account needed.']
 };
 export function knownRootPage(path:string){return path in pages||['/auth','/admin','/dashboard','/search','/radar'].includes(path)||(/^\/export\/[^/]+$/.test(path)||isQuickPath(path));}
 export async function rootHTML(c:Ctx,html:string,open:boolean){
@@ -27,10 +28,10 @@ export async function rootHTML(c:Ctx,html:string,open:boolean){
  const slug=path==='/'?'home':path.slice(1);
  const content=path==='/qr'?null:await one<Record<string,unknown>>(c,"SELECT title_ar,title_en,body_ar,body_en FROM content WHERE slug=? AND status='published'",slug);
  const title=String(content?.['title_'+lang]||base[english?1:0]);
- const body=String(content?.['body_'+lang]||base[english?3:2]);
+ const body=managedText(content?.['body_'+lang]||base[english?3:2]);
  const canonical='https://'+c.env.ROOT_DOMAIN+path+(english?'?lang=en':'');
  const root='https://'+c.env.ROOT_DOMAIN;
- const paragraphs=body.split(/\n\n/).filter(Boolean).map(p=>`<p>${e(p)}</p>`).join('');
+ const paragraphs=managedBlocks(body).map(block=>block.kind==='heading'?`<h2>${e(block.text)}</h2>`:`<p>${e(block.text)}</p>`).join('');
  const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/auth?register=1">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
  return decorateHTML(html,{title:`${title} — KSA.MEN`,description:body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
 }
