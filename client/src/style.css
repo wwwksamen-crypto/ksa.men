@@ -261,3 +261,4 @@ html[data-season] .header { box-shadow: 0 1px 0 color-mix(in srgb, var(--seasona
 .seasonal-ribbon strong { color: var(--seasonal-glow); }
 .seasonal-ribbon svg { color: var(--gold); }
 @media(max-width:640px){.seasonal-ribbon{min-height:31px;font-size:.69rem;gap:6px}.seasonal-ribbon svg{width:14px;height:14px}}
+.auth-referral-notice{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:start;gap:10px;padding:13px;margin-block:16px;border:1px solid var(--line,#315047);border-radius:14px;background:var(--surface,#10241d)}.auth-referral-notice p{margin:0;font-size:13px;line-height:1.8}.auth-referral-notice>svg{margin-top:4px;color:var(--accent)}.auth-referral-notice button{grid-column:2;text-align:start;min-height:44px;color:inherit;text-decoration:underline;font-size:13px}
