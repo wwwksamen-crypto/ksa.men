@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { api, Button, useApp } from './lib';
 import './exports.css';
+import { buildResumeContent, resumePlainText } from './ats-content';
 
 type Language = 'ar' | 'en';
 type ExportKind = 'profile' | 'pdf' | 'ats' | 'badge' | 'card' | 'social' | 'vcard' | 'qr';
@@ -289,61 +290,6 @@ async function loadPdfMaker() {
   return pdfMakerPromise;
 }
 
-const labels = {
-  ar: {
-    profile: 'ملف تعريفي',
-    professional: 'الملف المهني',
-    summary: 'نبذة مهنية',
-    experience: 'الخبرات',
-    education: 'التعليم',
-    training: 'التدريب',
-    skills: 'المهارات',
-    memberships: 'العضويات',
-    languages: 'اللغات',
-    achievements: 'الإنجازات',
-    contact: 'التواصل',
-    location: 'الموقع',
-    generated: 'صادر من KSA.MEN',
-    noContent: 'لا توجد تفاصيل مهنية عامة مضافة بعد.',
-  },
-  en: {
-    profile: 'Professional Profile',
-    professional: 'Professional profile',
-    summary: 'Professional summary',
-    experience: 'Experience',
-    education: 'Education',
-    training: 'Training',
-    skills: 'Skills',
-    memberships: 'Memberships',
-    languages: 'Languages',
-    achievements: 'Achievements',
-    contact: 'Contact',
-    location: 'Location',
-    generated: 'Generated with KSA.MEN',
-    noContent: 'No public professional details have been added yet.',
-  },
-} as const;
-
-function profileSections(profile: Profile, lang: Language) {
-  const copy = labels[lang];
-  const structured = (key: keyof Profile, title: string) => isVisible(profile, String(key))
-    ? list<StructuredItem | string>(profile[key]).map(structuredLine).filter(Boolean).map((line) => ({ text: pdfText(line, lang === 'ar'), margin: [0, 0, 0, 6] }))
-    : [];
-  const strings = (key: keyof Profile, title: string) => isVisible(profile, String(key))
-    ? list<string>(profile[key]).map(text).filter(Boolean).map((line) => ({ text: pdfText(line, lang === 'ar'), margin: [0, 0, 0, 6] }))
-    : [];
-  const sections: Array<[string, Array<{ text: PdfInlineText; margin: number[] }>]> = [
-    [copy.experience, structured('experience', copy.experience)],
-    [copy.education, structured('education', copy.education)],
-    [copy.training, structured('training', copy.training)],
-    [copy.skills, strings('skills', copy.skills)],
-    [copy.memberships, strings('memberships', copy.memberships)],
-    [copy.languages, strings('languages', copy.languages)],
-    [copy.achievements, strings('achievements', copy.achievements)],
-  ];
-  return sections.filter(([, entries]) => entries.length);
-}
-
 const smartCardLabels = {
   ar: {
     professional: 'مهني',
@@ -411,41 +357,6 @@ function smartCardDetails(profile: Profile, publicUrl: string, mode: SmartCardMo
     title: field(profile, 'title'),
     detail: location || copy.publicProfile,
     destination: publicUrl,
-  };
-}
-
-function atsPdf(profile: Profile, data: ExportData, lang: Language, url: string, qr: string) {
-  const copy = labels[lang];
-  const rtl = lang === 'ar';
-  const name = displayName(data, profile);
-  const title = field(profile, 'title');
-  const bio = field(profile, 'bio');
-  const contact = [field(profile, 'email'), field(profile, 'phone'), field(profile, 'whatsapp'), [field(profile, 'city'), field(profile, 'country')].filter(Boolean).join(', ')].filter(Boolean).join(' | ');
-  const headerText: any[] = [{ text: pdfText(name, rtl, 398, 22), style: 'name' }];
-  if (title) headerText.push({ text: pdfText(title, rtl), style: 'role' });
-  if (contact) headerText.push({ text: pdfText(contact, rtl), style: 'contact' });
-  if (url) headerText.push({ text: url, style: 'url' });
-  const content: any[] = [{ columns: rtl ? [qr ? { image: qr, width: 74, margin: [0, 0, 12, 0] } : { width: 0, text: '' }, { width: '*', stack: headerText }] : [{ width: '*', stack: headerText }, qr ? { image: qr, width: 74, margin: [12, 0, 0, 0] } : { width: 0, text: '' }], columnGap: 0, margin: [0, 0, 0, 10] }];
-  if (bio) content.push({ text: pdfText(copy.summary, rtl), style: 'heading' }, { text: pdfText(bio, rtl), style: 'body' });
-  profileSections(profile, lang).forEach(([heading, entries]) => {
-    content.push({ text: pdfText(heading, rtl), style: 'heading' }, ...entries.map((entry) => ({ ...entry, style: 'entry' })));
-  });
-  if (content.length === 1) content.push({ text: pdfText(copy.noContent, rtl), style: 'body' });
-  return {
-    pageSize: 'A4',
-    pageMargins: [42, 42, 42, 42],
-    info: { title: `${name} — ATS`, author: 'KSA.MEN', subject: 'ATS résumé' },
-    defaultStyle: { font: 'Tajawal', fontSize: 10.5, color: '#111111', alignment: rtl ? 'right' : 'left', lineHeight: 1.28 },
-    styles: {
-      name: { font: 'Tajawal', bold: true, fontSize: 22, color: '#111111', margin: [0, 0, 0, 3], alignment: rtl ? 'right' : 'left' },
-      role: { font: 'Tajawal', bold: true, fontSize: 12, color: '#222222', margin: [0, 0, 0, 4], alignment: rtl ? 'right' : 'left' },
-      contact: { font: 'Tajawal', fontSize: 9, color: '#333333', margin: [0, 0, 0, 5], alignment: rtl ? 'right' : 'left' },
-      url: { font: 'Tajawal', fontSize: 8.5, color: '#004422', margin: [0, 0, 0, 4], alignment: rtl ? 'right' : 'left' },
-      heading: { font: 'Tajawal', bold: true, fontSize: 12, color: '#111111', margin: [0, 13, 0, 5], decoration: 'underline', alignment: rtl ? 'right' : 'left' },
-      body: { font: 'Tajawal', fontSize: 10.5, color: '#111111', margin: [0, 0, 0, 5], alignment: rtl ? 'right' : 'left' },
-      entry: { font: 'Tajawal', fontSize: 10.5, color: '#111111', margin: [0, 0, 0, 6], alignment: rtl ? 'right' : 'left' },
-    },
-    content,
   };
 }
 
@@ -518,14 +429,19 @@ export default function Exports() {
   const [busy, setBusy] = useState('');
   const [profileFile, setProfileFile] = useState<ProfilePdfFile | null>(null);
   const [showProfilePreview, setShowProfilePreview] = useState(false);
+  const [resumeFile, setResumeFile] = useState<Uint8Array | null>(null);
+  const [showResumePreview, setShowResumePreview] = useState(false);
+  const resumePrepared = useRef<Uint8Array | null>(null);
+  const resumePromise = useRef<Promise<Uint8Array> | null>(null);
   const reloadGeneration = useRef(0);
   const profilePromise = useRef<Promise<ProfilePdfFile> | null>(null);
   const profilePrepared = useRef<ProfilePdfFile | null>(null);
   const invalidateProfile = useCallback(() => {
     reloadGeneration.current++; profilePromise.current = null; profilePrepared.current = null;
     setProfileFile(null); setShowProfilePreview(false);
+    resumePrepared.current = null; resumePromise.current = null; setResumeFile(null); setShowResumePreview(false);
   }, []);
-  useEffect(() => () => { reloadGeneration.current++; profilePromise.current = null; profilePrepared.current = null; }, []);
+  useEffect(() => () => { reloadGeneration.current++; profilePromise.current = null; profilePrepared.current = null; resumePromise.current = null; resumePrepared.current = null; }, []);
   const [error, setError] = useState('');
   const [translationConsent, setTranslationConsent] = useState(false);
   const [cardMode, setCardMode] = useState<SmartCardMode>('professional');
@@ -607,7 +523,7 @@ export default function Exports() {
 
   useEffect(() => {
     let disposed = false;
-    if (!profile || !publicUrl || !vcardPayload) {
+    if (kind === 'ats' || !profile || !publicUrl || !vcardPayload) {
       setProfileQr('');
       setVcardQr('');
       return () => { disposed = true; };
@@ -617,7 +533,7 @@ export default function Exports() {
     void buildProfileQr().then((value) => { if (!disposed) setProfileQr(value); }).catch(() => { if (!disposed) setProfileQr(''); });
     void buildVCardQr().then((value) => { if (!disposed) setVcardQr(value); }).catch(() => { if (!disposed) setVcardQr(''); });
     return () => { disposed = true; };
-  }, [buildProfileQr, buildVCardQr, profile, publicUrl, vcardPayload]);
+  }, [buildProfileQr, buildVCardQr, kind, profile, publicUrl, vcardPayload]);
 
   const selectKind = (next: ExportKind) => {
     if (next === kind) return;
@@ -682,16 +598,50 @@ export default function Exports() {
     finally { setBusy(''); }
   };
 
+  const resumeContent = useMemo(() => profile && data ? buildResumeContent(profile, { name: data.name, url: publicUrl, lang: exportLang }) : null, [data, profile, publicUrl, exportLang]);
+  const prepareResume = async (): Promise<Uint8Array> => {
+    if (!resumeContent || !verified || loading) throw new Error(t('حدّث بيانات الملف أولاً.', 'Refresh the profile data first.'));
+    if (resumePrepared.current) return resumePrepared.current;
+    if (resumePromise.current) return resumePromise.current;
+    const generation = reloadGeneration.current;
+    const promise = (async () => {
+      const { createResumePdf, loadResumeFonts } = await import('./ats-pdf');
+      const bytes = await createResumePdf(resumeContent, await loadResumeFonts());
+      if (generation !== reloadGeneration.current) throw new Error(t('تغيرت بيانات الملف. جهّز النسخة الحالية.', 'The profile changed. Prepare the current version.'));
+      resumePrepared.current = bytes; setResumeFile(bytes); return bytes;
+    })();
+    resumePromise.current = promise;
+    try { return await promise; } finally { if (resumePromise.current === promise) resumePromise.current = null; }
+  };
+  const previewResume = async () => {
+    setBusy('ats');
+    try { await prepareResume(); setShowResumePreview(true); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذرت معاينة السيرة.', 'Could not preview the résumé.')); }
+    finally { setBusy(''); }
+  };
+  const downloadResumeAlternative = async (format: 'docx' | 'txt') => {
+    if (!resumeContent || !data || !verified || loading) return;
+    const generation = reloadGeneration.current; setBusy('ats');
+    try {
+      if (format === 'docx') {
+        const { createResumeDocx } = await import('./ats-docx');
+        const bytes = await createResumeDocx(resumeContent);
+        if (generation !== reloadGeneration.current) throw new Error(t('تغيرت بيانات الملف. جهّز النسخة الحالية.', 'The profile changed. Prepare the current version.'));
+        const buffer = new ArrayBuffer(bytes.length); new Uint8Array(buffer).set(bytes);
+        downloadable(buffer, `${cleanFilename(data.name)}-resume-${exportLang}.docx`, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      } else downloadable(resumePlainText(resumeContent), `${cleanFilename(data.name)}-resume-${exportLang}.txt`, 'text/plain;charset=utf-8');
+      notify(t('بدأ تنزيل السيرة.', 'Your résumé download has started.'));
+    } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر تنزيل السيرة.', 'Could not download the résumé.')); }
+    finally { setBusy(''); }
+  };
   const downloadPdf = async (ats = false) => {
     if (!profile || !data || loading) return;
     setBusy(ats ? 'ats' : 'pdf');
     try {
       if (ats) {
-        const pdfMake = await loadPdfMaker();
-        await window.document.fonts.load('10.5px Tajawal');
-        await window.document.fonts.load('bold 25px Tajawal');
-        const qr = profileQr || await buildProfileQr();
-        pdfMake.createPdf(atsPdf(profile, data, exportLang, publicUrl, qr)).download(filename('ats', 'pdf'));
+        const bytes = await prepareResume();
+        const buffer = new ArrayBuffer(bytes.length); new Uint8Array(buffer).set(bytes);
+        downloadable(buffer, `${cleanFilename(data.name || identity)}-resume-${exportLang}.pdf`, 'application/pdf');
       } else {
         const result = await prepareProfile();
         const buffer = new ArrayBuffer(result.bytes.length); new Uint8Array(buffer).set(result.bytes);
@@ -805,10 +755,12 @@ export default function Exports() {
             <span className="exports-monogram">{identity.slice(0, 1) || 'K'}</span>
             <div><p className="exports-kicker">KSA.MEN / {kind.toUpperCase()}</p><h2>{identity}</h2><p>{summary.join(' · ') || t('سيُصدّر الملف بالحقول المهنية العامة المتاحة.', 'The export will include available public professional fields.')}</p></div>
           </div>
-          <div className="exports-workspace__actions">{(kind === 'profile' || kind === 'pdf') && <Button className="button-quiet" onClick={() => void previewProfile()} disabled={Boolean(busy)}><FileText size={17}/>{t('معاينة الصفحات', 'Preview pages')}</Button>}{actionForRoute()}</div>
+          <div className="exports-workspace__actions">{(kind === 'profile' || kind === 'pdf') && <Button className="button-quiet" onClick={() => void previewProfile()} disabled={Boolean(busy)}><FileText size={17}/>{t('معاينة الصفحات', 'Preview pages')}</Button>}{kind === 'ats' && <Button className="button-quiet" onClick={() => void previewResume()} disabled={Boolean(busy)}><FileText size={17}/>{t('معاينة السيرة', 'Preview résumé')}</Button>}{actionForRoute()}</div>
         </section>
 
         {(kind === 'profile' || kind === 'pdf') && showProfilePreview && profileFile && <Suspense fallback={<p role="status">{t('نفتح معاينة ملفك', 'Opening your file preview')}</p>}><ProfilePdfPreview bytes={profileFile.bytes} profile={profile} lang={exportLang} t={t}/></Suspense>}
+        {kind === 'ats' && showResumePreview && resumeFile && resumeContent && <Suspense fallback={<p role="status">{t('نفتح معاينة سيرتك', 'Opening your résumé preview')}</p>}><ProfilePdfPreview bytes={resumeFile} profile={profile} lang={exportLang} t={t} resume={resumeContent}/></Suspense>}
+        {kind === 'ats' && <section className="card exports-resume-alternatives"><div><h2>{t('سيرة واضحة للتقديم الوظيفي', 'A clear résumé for job applications')}</h2><p>{t('عمود نصي واحد بلا صور، مع ترتيب الخبرات بالأحدث أولاً عند توفر التواريخ. اختر Word إذا طلبته جهة التوظيف؛ تختلف قراءة الملفات من نظام لآخر.', 'A single text column without images, with newest experience first when dates are available. Choose Word if requested by the employer; parsing varies between systems.')}</p></div><div className="exports-workspace__actions"><Button className="button-quiet" onClick={() => void downloadResumeAlternative('docx')} disabled={Boolean(busy)}><Download size={16}/>{t('تنزيل Word', 'Download Word')}</Button><Button className="button-quiet" onClick={() => void downloadResumeAlternative('txt')} disabled={Boolean(busy)}><FileText size={16}/>{t('تنزيل نسخة نصية', 'Download text copy')}</Button></div></section>}
         <section className="exports-details">
           <article className="exports-detail card"><FileText size={19}/><div><h3>{t('PDF تعريفي فاخر', 'Luxury identity PDF')}</h3><p>{t('بروفايل أفقي بغلاف وصورك ومحتواك العام، مع معاينة مطابقة لملف التنزيل.', 'A landscape profile with a cover, your images and public content, and a preview of the downloaded file.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(false)} disabled={Boolean(busy)}><Download size={15}/>{t('PDF', 'PDF')}</Button></article>
           <article className="exports-detail card"><BadgeCheck size={19}/><div><h3>{t('سيرة مهنية نصية', 'Text-based résumé')}</h3><p>{t('مخرج مستقل للتقديم الوظيفي، وليس البروفايل البصري. تختلف قراءة الملفات بين أنظمة التوظيف.', 'A separate document for job applications, not the visual profile. Parsing varies between recruitment systems.')}</p></div><Button className="button-quiet" onClick={() => void downloadPdf(true)} disabled={Boolean(busy)}><Download size={15}/>ATS</Button></article>

@@ -5,11 +5,12 @@ import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { profilePdfSections, profilePdfLinks } from './profile-pdf';
 import { sanitizeProfile } from '../../shared/profile-visibility';
 import { text } from '../../shared/profile-content';
+import type { ResumeContent } from './ats-content';
 
-type Props = { bytes: Uint8Array; profile: unknown; lang: 'ar' | 'en'; t: (ar: string, en: string) => string };
+type Props = { bytes: Uint8Array; profile: unknown; lang: 'ar' | 'en'; t: (ar: string, en: string) => string; resume?: ResumeContent };
 
 /** Renders the exact byte buffer used for download. Never regenerates a cosmetic HTML preview. */
-export default function ProfilePdfPreview({ bytes, profile, lang, t }: Props) {
+export default function ProfilePdfPreview({ bytes, profile, lang, t, resume }: Props) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1), [zoom, setZoom] = useState(1), [width, setWidth] = useState(320);
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
@@ -58,7 +59,7 @@ export default function ProfilePdfPreview({ bytes, profile, lang, t }: Props) {
   }, [document, page, width, zoom, t]);
   const safe = sanitizeProfile(profile);
   return <section className="exports-pdf-viewer card" aria-label={t('معاينة ملف PDF', 'PDF file preview')}>
-    <div className="exports-pdf-viewer__heading"><h2>{t('بروفايلك الأفقي', 'Your landscape profile')}</h2><p>{t('هذه صفحات الملف نفسه الذي ستنزله.', 'These are the pages of the same file you will download.')}</p></div>
+    <div className="exports-pdf-viewer__heading"><h2>{resume ? t('سيرتك المهنية', 'Your professional résumé') : t('بروفايلك الأفقي', 'Your landscape profile')}</h2><p>{t('هذه صفحات الملف نفسه الذي ستنزله.', 'These are the pages of the same file you will download.')}</p></div>
     <div className="exports-pdf-viewer__controls" role="group" aria-label={t('تنقل صفحات الملف', 'PDF page navigation')}>
       <button type="button" onClick={() => setPage(value => Math.max(1, value - 1))} disabled={page <= 1 || !document} aria-label={t('الصفحة السابقة', 'Previous page')}><ChevronRight size={18}/></button>
       <span role="status" aria-live="polite">{document ? `${page} / ${document.numPages}` : '…'}</span>
@@ -71,11 +72,11 @@ export default function ProfilePdfPreview({ bytes, profile, lang, t }: Props) {
     <div ref={frame} className="exports-pdf-viewer__frame" tabIndex={0} aria-label={t('صفحة الملف؛ يمكنك التمرير عند التكبير', 'PDF page; scroll when zoomed')}>
       <canvas ref={canvas} role="img" aria-label={t(`معاينة الصفحة ${page}`, `Preview of page ${page}`)} hidden={!document || Boolean(error)}/>
     </div>
-    <details className="exports-pdf-viewer__text"><summary>{t('قراءة محتوى الملف نصياً', 'Read profile content as text')}</summary><h3>{text(safe.name)}</h3>
+    <details className="exports-pdf-viewer__text"><summary>{t('قراءة محتوى الملف نصياً', 'Read profile content as text')}</summary>{resume ? resume.blocks.map((block, index) => block.kind === 'name' || block.kind === 'heading' ? <h3 key={index}>{block.text}</h3> : <p key={index}>{block.text}</p>) : <><h3>{text(safe.name)}</h3>
       {[safe.title, safe.specialty, safe.bio, safe.city, safe.country].map((value, index) => text(value) ? <p key={index}>{text(value)}</p> : null)}
       {profilePdfSections(safe, lang).map(section => <div key={section.key}><h3>{section.heading}</h3>{section.entries.map((entry, index) => <p key={index}>{[entry.heading, entry.organization, entry.period, entry.description].filter(Boolean).join(' — ')}</p>)}</div>)}
       {profilePdfLinks(safe).map(link => <p key={link.url}><a href={link.url} target="_blank" rel="noopener noreferrer">{link.label}</a></p>)}
-      {text(safe.blog) && <p>{text(safe.blog)}</p>}
+      {text(safe.blog) && <p>{text(safe.blog)}</p>}</>}
     </details>
   </section>;
 }

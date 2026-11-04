@@ -793,3 +793,7 @@
 .exports-pdf-viewer__text p { white-space: pre-wrap; }
 
 .exports-workspace__actions { gap: 10px; flex-wrap: wrap; }
+
+.exports-resume-alternatives { padding: clamp(18px, 4vw, 28px); margin-block: 16px; display: grid; gap: 16px; }
+.exports-resume-alternatives h2 { margin: 0 0 10px; font-size: clamp(19px, 4vw, 24px); }
+.exports-resume-alternatives p { margin: 0; color: var(--exports-muted); line-height: 1.85; }

@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Exports from '../client/src/Exports';
 import { api, AppContext } from '../client/src/lib';
 import { loadProfilePdfAssets } from '../client/src/profile-pdf-assets';
-const mocks = vi.hoisted(() => ({ createPdf: vi.fn(), getBuffer: vi.fn(), download: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createPdf: vi.fn(), getBuffer: vi.fn(), download: vi.fn(), resumePdf: vi.fn(), resumeFonts: vi.fn(), resumeDocx: vi.fn() }));
 vi.mock('../client/src/lib', async original => ({ ...await original<typeof import('../client/src/lib')>(), api: vi.fn() }));
 vi.mock('../client/src/profile-pdf-assets', () => ({ loadProfilePdfAssets: vi.fn() }));
 vi.mock('../client/src/ProfilePdfPreview', () => ({ default: ({ bytes }: {bytes:Uint8Array}) => <div data-testid="exact-file-preview" data-bytes={Array.from(bytes).join(',')}/> }));
 vi.mock('pdfmake/build/pdfmake.js', () => ({ default: { addVirtualFileSystem:vi.fn(),addFonts:vi.fn(),createPdf:mocks.createPdf } }));
+vi.mock('../client/src/ats-pdf', () => ({ createResumePdf:mocks.resumePdf, loadResumeFonts:mocks.resumeFonts }));
+vi.mock('../client/src/ats-docx', () => ({ createResumeDocx:mocks.resumeDocx }));
 vi.mock('qrcode', () => ({default:{toDataURL:vi.fn(async()=> 'data:image/png;base64,QR')}}));
 const t = (ar:string,_en:string) => ar, notify=vi.fn();
 let container:HTMLDivElement,root:Root,data:any,blobs:Blob[];
@@ -22,6 +24,7 @@ beforeEach(async()=>{
  data={profile:{name:'مصدر ملف',bio:'نبذة محفوظة'},site:'local-id',name:'fixture',allowed:true,translated:true,source:'published'};
  vi.mocked(api).mockImplementation(async()=>data);
  const image={data:'data:image/png;base64,fixture',width:100,height:100};vi.mocked(loadProfilePdfAssets).mockResolvedValue({portrait:image,cover:image,evidence:{},unavailable:[]});
+ mocks.resumePdf.mockResolvedValue(new Uint8Array([37,80,68,70,2,3]));mocks.resumeFonts.mockResolvedValue({regular:'font',bold:'font'});mocks.resumeDocx.mockResolvedValue(new Uint8Array([80,75,3,4]));
  mocks.getBuffer.mockImplementation(cb=>cb(new Uint8Array([37,80,68,70,1])));mocks.createPdf.mockReturnValue({getBuffer:mocks.getBuffer,download:mocks.download});
  vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,arrayBuffer:async()=>new ArrayBuffer(4)})));
  vi.stubGlobal('Image',class{onload:(()=>void)|null=null;onerror:(()=>void)|null=null;naturalWidth=100;naturalHeight=100;set src(_value:string){void Promise.resolve().then(()=>this.onload?.());}});
@@ -51,7 +54,23 @@ describe('exact-file landscape preview and download — DOM only',()=>{
   const image={data:'data:image/png;base64,fixture',width:100,height:100};await act(async()=>resolve({portrait:image,cover:image,evidence:{},unavailable:[]}));await flush();
   expect(blobs).toHaveLength(0);expect(container.querySelector('[data-testid="exact-file-preview"]')).toBeNull();
  });
- it('keeps ATS a separate existing portrait document rather than reusing the landscape profile',async()=>{
-  await click('ATS');expect(mocks.download).toHaveBeenCalledTimes(1);expect(mocks.createPdf.mock.calls[0][0].pageOrientation).toBeUndefined();expect(mocks.getBuffer).not.toHaveBeenCalled();
+ it('keeps ATS a separate text engine, not the visual landscape PDF or a QR document',async()=>{
+  await click('ATS');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(mocks.createPdf).not.toHaveBeenCalled();expect(mocks.getBuffer).not.toHaveBeenCalled();expect(blobs[0]?.type).toBe('application/pdf');expect(blobs[0]?.size).toBe(6);
+ });
+ it('previews and downloads the same ATS bytes without regeneration',async()=>{
+  await click('سيرة ATS');await click('معاينة السيرة');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(container.querySelector('[data-testid="exact-file-preview"]')?.getAttribute('data-bytes')).toBe('37,80,68,70,2,3');
+  await click('تنزيل سيرة ATS');expect(mocks.resumePdf).toHaveBeenCalledTimes(1);expect(blobs[0]?.size).toBe(6);
+ });
+ it('offers Word and a logical text copy using the same ATS content and entitlement',async()=>{
+  await click('سيرة ATS');await click('تنزيل Word');expect(mocks.resumeDocx).toHaveBeenCalledTimes(1);expect(blobs[0]?.type).toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  await click('تنزيل نسخة نصية');expect(blobs[1]?.type).toBe('text/plain;charset=utf-8');expect(mocks.resumePdf).not.toHaveBeenCalled();expect(mocks.resumeDocx.mock.calls[0][0].blocks[0].text).toBe('مصدر ملف');
+ });
+ it('clears ATS preview on refresh and prevents a stale in-flight ATS download',async()=>{
+  await click('سيرة ATS');let resolve!:(value:Uint8Array)=>void;mocks.resumePdf.mockImplementationOnce(()=>new Promise(accept=>{resolve=accept;}));
+  await act(async()=>button('تنزيل سيرة ATS').click());await flush();data={...data,profile:{name:'ملف جديد'}};await click('تحديث');await act(async()=>resolve(new Uint8Array([37,80,68,70,2])));await flush();expect(blobs).toHaveLength(0);expect(container.querySelector('[data-testid="exact-file-preview"]')).toBeNull();
+ });
+ it('does not fabricate an English ATS export without the saved translated version',async()=>{
+  await click('سيرة ATS');data={...data,translated:false};await act(async()=>{const select=container.querySelector('select')!;select.value='en';select.dispatchEvent(new Event('change',{bubbles:true}));});await flush();
+  expect(button('تنزيل سيرة ATS')).toBeUndefined();expect(button('تنزيل Word')).toBeUndefined();expect(mocks.resumePdf).not.toHaveBeenCalled();expect(mocks.resumeDocx).not.toHaveBeenCalled();
  });
 });
