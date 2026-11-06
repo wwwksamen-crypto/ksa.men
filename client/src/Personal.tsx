@@ -43,6 +43,7 @@ import {updateProfileMetadata,clearProfileMetadata} from './page-metadata';
 type ProfileRecord = Record<string, unknown>;
 export type PublicProfileData = {
   profile?: ProfileRecord;
+  analyticsEnabled?: boolean;
   site?: string;
   name?: string;
   branding?: boolean;
@@ -242,7 +243,7 @@ export default function Personal() {
     setError('');
     return api<PublicProfileData>(`/api/public/profile?lang=${lang}`).then(result => {
       setData(result);
-      if (result.site && !result.locked) void api('/api/public/event', { method: 'POST', body: JSON.stringify({ site: result.site, event: 'visit' }) }).catch(() => {});
+      if (result.site && !result.locked && result.analyticsEnabled===true) void api('/api/public/event', { method: 'POST', body: JSON.stringify({ site: result.site, event: 'visit' }) }).catch(() => {});
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : t('تعذر فتح الموقع', 'Could not open the site')));
   }, [lang, t]);
   useEffect(() => { void load(); }, [load]);
@@ -304,7 +305,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
   }, [preview]);
 
   const track = (event: 'contact' | 'vcard' | 'qr') => {
-    if (previewMode || !data?.site) return;
+    if (previewMode || !data?.site || data.analyticsEnabled!==true) return;
     void api('/api/public/event', { method: 'POST', body: JSON.stringify({ site: data.site, event }) }).catch(() => {});
   };
 

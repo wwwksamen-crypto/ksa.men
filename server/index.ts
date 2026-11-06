@@ -1,3 +1,5 @@
+import { businessApproach } from '../shared/business-approach';
+import { usageMetricsEnabled } from './optional-metrics';
 import { registerReferrals } from './referrals';
 import { registerSEO, rootHTML, knownRootPage } from './seo';
 import { siteVisibility } from './visibility';
@@ -59,7 +61,7 @@ app.use('*', async (c, next) => {
   if (!rootHost && ['/manifest.webmanifest', '/sw.js'].includes(path)) throw new HTTPException(404);
 
   // Public application assets contain no account data; no session/settings queries are needed.
-  if (staticPath(path)) { await next(); security(c, true); return; }
+  if (staticPath(path)) { await next(); security(c, true); const document=Object.values(businessApproach.documents).find(item=>item.path===path); if(document&&c.res.status===200){c.header('Content-Type','application/pdf');c.header('Content-Disposition',`attachment; filename="${document.filename}"`);} return; }
   const rawCookie = getCookie(c, '__Host-ksa_session');
   if (rootHost && rawCookie) {
     const session = await one<Session>(c, 'SELECT * FROM sessions WHERE id=? AND revoked=0 AND expires_at>?', await digest(rawCookie), now());
@@ -107,7 +109,7 @@ function publicSeason(value: unknown) {
 }
 app.get('/api/platform', async c => {
   const lock: any = await setting(c, 'lock', { mode: 'private' });
-  return c.json({ lock: { mode: lock.mode, message: lock.message, reason: lock.reason, passwordEnabled: !!lock.passwordHash }, access: lock.mode === 'open' || ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '') || await gate(c, lock), contact: await setting(c, 'contact'), season: publicSeason(await setting(c, 'season')) });
+  return c.json({ lock: { mode: lock.mode, message: lock.message, reason: lock.reason, passwordEnabled: !!lock.passwordHash }, access: lock.mode === 'open' || ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '') || await gate(c, lock), contact: await setting(c, 'contact'), season: publicSeason(await setting(c, 'season')), optionalMetrics: await usageMetricsEnabled(c) });
 });
 app.post('/api/gate', async c => {
   const lock: any = await setting(c, 'lock');

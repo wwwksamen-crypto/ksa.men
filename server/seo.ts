@@ -1,3 +1,4 @@
+import { businessApproach } from '../shared/business-approach';
 import { managedText, managedBlocks } from '../shared/managed-text';
 import type { App, Ctx } from './core';
 import { all, one, setting } from './core';
@@ -32,7 +33,9 @@ export async function rootHTML(c:Ctx,html:string,open:boolean){
  const canonical='https://'+c.env.ROOT_DOMAIN+path+(english?'?lang=en':'');
  const root='https://'+c.env.ROOT_DOMAIN;
  const paragraphs=managedBlocks(body).map(block=>block.kind==='heading'?`<h2>${e(block.text)}</h2>`:`<p>${e(block.text)}</p>`).join('');
- const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/auth?register=1">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
+ const approach=businessApproach.copy[lang];
+ const documents=path==='/about'?`<section aria-labelledby="business-approach-heading"><h2 id="business-approach-heading">${e(approach.title)}</h2><p>${e(approach.description)}</p><p>${e(approach.version)}</p><nav aria-label="${e(approach.title)}">${(['ar','en'] as const).map(locale=>`<a href="${businessApproach.documents[locale].path}" download="${businessApproach.documents[locale].filename}">${e(locale==='ar'?approach.arabic:approach.english)}</a>`).join('')}</nav></section>`:'';
+ const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}${documents}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/auth?register=1">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
  return decorateHTML(html,{title:`${title} — KSA.MEN`,description:body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
 }
 const xmlHeader='<?xml version="1.0" encoding="UTF-8"?>';

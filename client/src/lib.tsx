@@ -68,7 +68,7 @@ export async function api<T=any>(path:string,options:RequestInit={}):Promise<T>{
   }
   return data;
 }
-export const AppContext=createContext<{user:User|null,lang:'ar'|'en',t:(ar:string,en:string)=>string,refresh:(verifiedUser?:User)=>Promise<void>,notify:(message:string)=>void}>({user:null,lang:'ar',t:a=>a,refresh:async()=>{},notify:()=>{}});
+export const AppContext=createContext<{user:User|null,lang:'ar'|'en',optionalMetrics?:boolean,t:(ar:string,en:string)=>string,refresh:(verifiedUser?:User)=>Promise<void>,notify:(message:string)=>void}>({user:null,lang:'ar',optionalMetrics:false,t:a=>a,refresh:async()=>{},notify:()=>{}});
 export const useApp=()=>useContext(AppContext);
 export function Button({children,className='',...props}:React.ButtonHTMLAttributes<HTMLButtonElement>){return <button {...props} className={'button '+className}>{children}</button>;}
 export const json=(value:any)=>JSON.stringify(value);

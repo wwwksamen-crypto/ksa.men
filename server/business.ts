@@ -1,3 +1,4 @@
+import { usageMetricsEnabled } from './optional-metrics';
 import { rate } from './core';
 import { submissionNotice } from './publication-notice';
 import { webUrl } from '../shared/profile-content';
@@ -780,6 +781,7 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     const checkedAt = now();
+    const metricsEnabled=await usageMetricsEnabled(c);
     const view=c.req.query('view');
     const scoped=!!view&&['editor','wallet','services','messages','subscription','settings'].includes(view);
     const needs=(...views:string[])=>!scoped||views.includes(view!);
@@ -832,7 +834,7 @@ export function registerBusiness(app: App): void {
         userId,
         checkedAt,
       ) : empty<Record<string,unknown>>(),
-      needs('services') ? all<Record<string, unknown>>(
+      needs('services') && metricsEnabled ? all<Record<string, unknown>>(
         c,
         `SELECT a.site_id,a.event,COUNT(*) AS total,
           SUM(CASE WHEN a.created_at>=? THEN 1 ELSE 0 END) AS last7
@@ -873,7 +875,7 @@ export function registerBusiness(app: App): void {
       : null;
 
     const analytics: Record<string, Record<string, number>> = {};
-    for (const site of sites) {
+    for (const site of metricsEnabled?sites:[]) {
       analytics[site.id] = { visits: 0, contactClicks: 0, vcardDownloads: 0, qrInteractions: 0, total: 0, last7Days: 0 };
     }
     for (const row of analyticsRows) {
@@ -892,6 +894,7 @@ export function registerBusiness(app: App): void {
     const serviceStates = await Promise.all(services.map((item) => toDashboardService(c, item, userId)));
 
     return c.json({
+      metricsEnabled,
       sites: sites.map(site=>{const result=toSite(site);if(scoped){delete result.draft;delete result.published;}return result;}),
       reviews: reviews.map(review=>{const result=toReview(review);if(scoped)delete result.snapshot;return result;}),
       wallet: { balance: Number(wallet?.balance ?? 0) },
@@ -1542,11 +1545,13 @@ export function registerBusiness(app: App): void {
     const user = me(c) as unknown as Record<string, unknown>;
     const userId = Number(user.id);
     await service(c, 'analytics', userId);
+    const metricsEnabled=await usageMetricsEnabled(c);
     const requestedSite=c.req.query('siteId');
     const site = requestedSite?await editableSiteFor(c,requestedSite,user):await primarySite(c, userId);
     if (!site) {
-      return c.json({ siteId: null, periodDays: 30, events: { visits: 0, contactClicks: 0, vcardDownloads: 0, qrInteractions: 0, total: 0, byEvent: {} }, activity: { last7Days: 0, last30Days: 0 }, quality: quality(defaultProfile(String(user.name ?? ''))) });
+      return c.json({ siteId: null, metricsEnabled, periodDays: 30, events: metricsEnabled?{ visits: 0, contactClicks: 0, vcardDownloads: 0, qrInteractions: 0, total: 0, byEvent: {} }:null, activity: metricsEnabled?{ last7Days: 0, last30Days: 0 }:null, quality: quality(defaultProfile(String(user.name ?? ''))) });
     }
+    if(!metricsEnabled)return c.json({siteId:site.id,metricsEnabled:false,periodDays:30,events:null,activity:null,quality:quality(parseJson<Profile>(site.draft,defaultProfile(String(user.name??''))))});
     const current = now();
     const since30 = current - 30 * 86_400;
     const since7 = current - 7 * 86_400;
@@ -1569,6 +1574,7 @@ export function registerBusiness(app: App): void {
     const profile = parseJson<Profile>(site.draft, defaultProfile(String(user.name ?? '')));
     return c.json({
       siteId: site.id,
+      metricsEnabled:true,
       periodDays: 30,
       events: { visits, contactClicks, vcardDownloads, qrInteractions, total: Number(totals?.last30 ?? 0), byEvent },
       activity: { last7Days: Number(totals?.last7 ?? 0), last30Days: Number(totals?.last30 ?? 0) },

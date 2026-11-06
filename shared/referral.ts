@@ -14,7 +14,7 @@ export function referralURL(id: unknown, rootDomain = 'ksa.men'): string {
   return code ? `https://${rootDomain}/auth?register=1&ref=${encodeURIComponent(code)}` : '';
 }
 export type ReferralSummary = {
-  url: string; code: string; visits: number; registered: number; eligible: number;
+  url: string; code: string; visits: number | null; metricsEnabled?: boolean; registered: number; eligible: number;
   rewarded: number; cancelled: number; pointsIssued: number; pointsRecovered: number;
   pointsOutstanding: number; rewardPoints: number;
 };

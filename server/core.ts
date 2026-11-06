@@ -33,11 +33,13 @@ function stable(value:unknown):unknown{
  if(['string','number','boolean'].includes(typeof value)||value===null)return value;
  return String(value);
 }
-const auditSensitive=/^(?:email|phone|whatsapp|password|pin|code|token|secret|authorization|reason|message|body|content|snapshot|draft|receipt|evidence)$/i;
+const auditSecret=/^(?:pin|pin[_-]?hash|code|authorization|ip(?:[_-]?address)?|(?:client|raw|remote|request)[_-]?ip(?:[_-]?address)?|network[_-]?address)$|(?:token|secret|password|cookie|csrf|api_key)$/i;
+const auditSensitive=/^(?:email|phone|whatsapp|reason|message|body|content|snapshot|draft|receipt|evidence)$/i;
 async function minimizedAuditDetail(env:Env,input:unknown):Promise<string>{
  let value:unknown=input;
  if(typeof value==='string'){const raw=value;try{value=JSON.parse(raw);}catch{return JSON.stringify({text_hash:await hmac(env.AUTH_SECRET,raw),present:Boolean(raw)});}}
  const sanitize=async(item:unknown,key=''):Promise<unknown>=>{
+  if(auditSecret.test(key))return {redacted:true};
   if(auditSensitive.test(key))return {redacted:true,hash:await hmac(env.AUTH_SECRET,typeof item==='string'?item:JSON.stringify(stable(item)))};
   if(Array.isArray(item))return Promise.all(item.slice(0,30).map(entry=>sanitize(entry)));
   if(item&&typeof item==='object'){
@@ -127,4 +129,6 @@ export function equal(a:string,b:string){if(a.length!==b.length)return false;let
 export async function rate(c:Ctx,key:string,max:number,seconds:number){const k=await digest(key);await run(c,'INSERT INTO rate_limits(key,count,reset_at) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN reset_at<? THEN 1 ELSE count+1 END,reset_at=CASE WHEN reset_at<? THEN excluded.reset_at ELSE reset_at END',k,now()+seconds,now(),now());const r:any=await one(c,'SELECT count FROM rate_limits WHERE key=?',k);if(r.count>max)throw new HTTPException(429,{message:'محاولات متكررة، انتظر قليلًا ثم حاول مجددًا'});}
 export function safeUrl(value:string){try{const u=new URL(value);return ['https:','http:'].includes(u.protocol)&&!u.username&&!u.password?u.href:null;}catch{return null;}}
 export function publicProfile(p:any){return sanitizeProfile(p);}
-export function safeUser(u:any){if(!u)return null;const {pin_hash,...rest}=u;return rest;}
+const accountResponseFields=['id','email','name','whatsapp','role','financial','status','created_at','trial_until','entitlement_until','balance','account'] as const;
+/** Explicit response projection: a new DB/internal field is never exposed by default. */
+export function safeUser(u:unknown){if(!u||typeof u!=='object'||Array.isArray(u))return null;const row=u as Record<string,unknown>;return Object.fromEntries(accountResponseFields.filter(key=>Object.prototype.hasOwnProperty.call(row,key)).map(key=>[key,row[key]]));}

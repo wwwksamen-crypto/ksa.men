@@ -270,3 +270,14 @@ html[data-season] .header { box-shadow: 0 1px 0 color-mix(in srgb, var(--seasona
 .language-tool span { white-space: nowrap; font-size: 12px; }
 .hero-description, .footer-signature p { white-space: pre-line; }
 @media (max-width: 640px) { .legal-prose { padding: 22px 18px; } .prose { font-size: 16px; } }
+
+/* Business approach uses the existing public-page surface and touch controls. */
+.business-approach { max-width: 1040px; margin-inline: auto; padding: clamp(22px, 4vw, 38px); }
+.business-approach__heading { display: flex; align-items: center; gap: 12px; }
+.business-approach__heading h2 { margin: 0; }
+.business-approach p { line-height: 1.9; overflow-wrap: anywhere; }
+.business-approach__downloads { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 20px; }
+.business-approach__downloads .button { min-height: 48px; white-space: normal; text-align: center; }
+.auth-privacy-notice { font-size: .94rem; line-height: 1.8; margin-block: 4px; color: var(--muted); }
+.auth-privacy-notice a { text-decoration: underline; text-underline-offset: 3px; }
+@media(max-width:640px) { .business-approach__downloads { flex-direction: column; } .business-approach__downloads .button { width: 100%; } }

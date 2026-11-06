@@ -1,3 +1,4 @@
+import { usageMetricsEnabled } from './optional-metrics';
 import type { App, Ctx } from './core';
 import { me, now, one, rate, run } from './core';
 import { referralCode, referralURL, memberReferralCode, type ReferralSummary } from '../shared/referral';
@@ -21,12 +22,14 @@ export async function referralSummary(c:Ctx,id:number):Promise<ReferralSummary> 
     (SELECT COALESCE(SUM(amount),0) FROM ledger WHERE to_id=? AND kind='referral') AS issued,
     (SELECT COALESCE(SUM(amount),0) FROM ledger WHERE from_id=? AND kind='referral_reversal') AS recovered,
     (SELECT COALESCE(SUM(pr.referral_outstanding),0) FROM payment_reversals pr JOIN payments p ON p.id=pr.payment_id WHERE p.referrer_id=?) AS outstanding`,id,id,id);
-  const visits=await one<{n:number}>(c,"SELECT COUNT(*) AS n FROM analytics WHERE site_id=? AND event='referral_landing'",'referral:'+memberReferralCode(id));
-  return {url:referralURL(id,c.env.ROOT_DOMAIN),code:memberReferralCode(id),visits:Number(visits?.n||0),registered:Number(totals?.registered||0),eligible:Number(totals?.eligible||0),rewarded:Number(totals?.rewarded||0),cancelled:Number(totals?.cancelled||0),pointsIssued:Number(points?.issued||0),pointsRecovered:Number(points?.recovered||0),pointsOutstanding:Number(points?.outstanding||0),rewardPoints:1000};
+  const metricsEnabled=await usageMetricsEnabled(c);
+  const visits=metricsEnabled?await one<{n:number}>(c,"SELECT COUNT(*) AS n FROM analytics WHERE site_id=? AND event='referral_landing'",'referral:'+memberReferralCode(id)):null;
+  return {url:referralURL(id,c.env.ROOT_DOMAIN),code:memberReferralCode(id),metricsEnabled,visits:metricsEnabled?Number(visits?.n||0):null,registered:Number(totals?.registered||0),eligible:Number(totals?.eligible||0),rewarded:Number(totals?.rewarded||0),cancelled:Number(totals?.cancelled||0),pointsIssued:Number(points?.issued||0),pointsRecovered:Number(points?.recovered||0),pointsOutstanding:Number(points?.outstanding||0),rewardPoints:1000};
 }
 export function registerReferrals(app:App){
   app.get('/api/referrals',async c=>c.json(await referralSummary(c,me(c).id)));
   app.post('/api/public/referral-visit',async c=>{
+    if(!await usageMetricsEnabled(c))return c.json({ok:true,recorded:false});
     const data=z.object({code:z.string().max(70)}).parse(await c.req.json());
     await rate(c,'referral-landing:'+c.req.header('CF-Connecting-IP'),30,3600);
     const id=await resolveReferrer(c,data.code);

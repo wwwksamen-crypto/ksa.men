@@ -1,3 +1,4 @@
+import { usageMetricsEnabled } from './optional-metrics';
 import { profileItemIds, draftWithIdentities, expandedHiddenItems, withVisibility } from '../shared/profile-visibility';
 import { siteVisibility, visibleSiteProfile } from './visibility';
 import { readQuickLink } from './quick-links';
@@ -98,7 +99,7 @@ export function registerPublic(app:App){
     if(!await personalGate(c,site)){
       return c.json({locked:true,site:site.id,name:site.name,photo:typeof profile.photo==='string'?profile.photo:'/assets/logo.webp',message:site.lock_message});
     }
-    return c.json({profile,site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,userId:site.user_id?'C'+site.user_id:null});
+    return c.json({profile,site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,analyticsEnabled:await usageMetricsEnabled(c),userId:site.user_id?'C'+site.user_id:null});
   });
 
   app.post('/api/public/unlock',async c=>{
@@ -199,6 +200,7 @@ export function registerPublic(app:App){
   });
 
   app.post('/api/public/event',async c=>{
+    if(!await usageMetricsEnabled(c))return c.json({ok:true,recorded:false});
     const data=z.object({event:z.enum(['visit','contact','vcard','qr']),site:z.string().uuid()}).parse(await c.req.json());
     const site=await publishedForHost(c);
     if(site.id!==data.site||!await personalGate(c,site))throw new HTTPException(403);
