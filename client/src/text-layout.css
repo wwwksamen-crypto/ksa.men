@@ -1,0 +1,62 @@
+/* Text composition only; no clipping, rewriting or disabling user zoom. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { font-kerning: normal; font-variant-ligatures: common-ligatures; }
+:where(h1, h2, h3, h4, h5, h6, p, li, dd, dt, blockquote, figcaption, th, td) {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+:where(input, textarea, select) { max-inline-size: 100%; }
+:where(textarea) { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+:where(h1, h2, h3, h4, h5, h6) { text-wrap: balance; }
+:where(p, li, dd, blockquote) { text-wrap: pretty; }
+:where([dir="auto"]):not(input):not(textarea) { unicode-bidi: plaintext; }
+:where(bdi) { unicode-bidi: isolate; }
+.hero h1 > span { white-space: normal; }
+
+/* Prose containers already have a definite grid/block width; no viewport guess. */
+.prose, .identity-introduction, .identity-section__body, .identity-blog__body {
+  min-inline-size: 0;
+  container-name: ksa-prose;
+  container-type: inline-size;
+}
+.prose p,
+.identity-page .identity-introduction__copy,
+.identity-page .identity-timeline__description,
+.identity-page .identity-timeline__note,
+.identity-page .identity-journal {
+  text-align: start;
+  text-align-last: start;
+  line-height: 1.9;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  hyphens: none;
+  unicode-bidi: plaintext;
+  orphans: 3;
+  widows: 3;
+}
+.identity-page :is(.identity-timeline__entry h3, .identity-timeline__organization, .identity-hero__title) {
+  text-align: start;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+:where(.dashboard-section-heading, .dashboard-edit-heading, .admin-review-top, .identity-section__heading) > div {
+  min-inline-size: 0;
+}
+html[lang="ar"] :is(.identity-section__kicker, .dashboard-kicker, .admin-eyebrow) { letter-spacing: normal; }
+@container ksa-prose (min-width: 40rem) {
+  .prose p,
+  .identity-page .identity-introduction__copy,
+  .identity-page .identity-timeline__description,
+  .identity-page .identity-timeline__note,
+  .identity-page .identity-journal {
+    text-align: justify;
+    text-align-last: start;
+    text-justify: inter-word;
+  }
+}
+@media print {
+  .prose p, .identity-journal { orphans: 3; widows: 3; }
+}

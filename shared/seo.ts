@@ -16,13 +16,13 @@ export function decorateHTML(html: string, page: PageSEO, body = '') {
 export function profileBody(profile: Record<string, unknown>, name: string, lang: Locale) {
  profile=sanitizeProfile(profile);
  const e=htmlEscape,t=(ar:string,en:string)=>lang==='ar'?ar:en;
- const para=(v:unknown)=>typeof v==='string'&&v.trim()?`<p>${e(v)}</p>`:'';
+ const para=(v:unknown,dir:'auto'|'ltr'='auto')=>typeof v==='string'&&v.trim()?`<p dir="${dir}">${e(v)}</p>`:'';
  const country = typeof profile.country === 'string' && /^(?:Saudi Arabia|Kingdom of Saudi Arabia|KSA|السعودية|المملكة العربية السعودية)$/i.test(profile.country.trim()) ? t('المملكة العربية السعودية', 'Saudi Arabia') : profile.country;
- let body=`<header><a href="https://ksa.men/">KSA.MEN</a><h1>${e(profile.name||name)}</h1>${para(profile.title)}${para(profile.specialty)}${para([profile.city,country].filter(Boolean).join(lang==='ar'?'، ':', '))}</header>`;
+ let body=`<header><a href="https://ksa.men/">KSA.MEN</a><h1 dir="auto">${e(profile.name||name)}</h1>${para(profile.title)}${para(profile.specialty)}${para([profile.city,country].filter(Boolean).join(lang==='ar'?'، ':', '))}</header>`;
  const labels:Record<string,[string,string]>={bio:['في سطور','In brief'],experience:['الخبرات العملية','Experience'],education:['المؤهلات التعليمية','Education'],training:['التدريب والتطوير','Training'],timeline:['سجل الإنجازات','Milestones'],skills:['المهارات','Skills'],achievements:['الإنجازات','Achievements'],memberships:['العضويات المهنية','Memberships'],languages:['اللغات','Languages'],hobbies:['الاهتمامات','Interests'],blog:['المدونة الشخصية','Personal journal']};
  for(const [key,label]of Object.entries(labels)){
   const value=profile[key];
-  const rows=list(value).map(row=>{if(typeof row==='string')return `<li>${e(row)}</li>`;if(!row||typeof row!=='object')return '';const p=row as Record<string,unknown>;return `<li>${para([p.start||p.date,p.end].filter(Boolean).join(' — '))}${para(p.title||p.name||p.role||p.label)}${para(p.organization||p.institution)}${para(p.description||p.level)}</li>`;}).join('');
+  const rows=list(value).map(row=>{if(typeof row==='string')return `<li>${e(row)}</li>`;if(!row||typeof row!=='object')return '';const p=row as Record<string,unknown>;return `<li>${para([p.start||p.date,p.end].filter(Boolean).join(' — '),'ltr')}${para(p.title||p.name||p.role||p.label)}${para(p.organization||p.institution)}${para(p.description||p.level)}</li>`;}).join('');
   const content=typeof value==='string'?para(value):rows?`<ul>${rows}</ul>`:'';
   if(content)body+=`<section><h2>${e(t(...label))}</h2>${content}</section>`;
  }

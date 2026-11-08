@@ -121,7 +121,7 @@ export function DictatedInput({ value, onChange, lang, tr, label, className = 'f
   const name = label || props['aria-label'] || tr('نص', 'Text');
   return <div className="dictated-field">
     {label && <label htmlFor={id}>{label}</label>}
-    <input {...props} id={id} ref={fieldRef} className={className} aria-label={label ? undefined : props['aria-label']} value={value} onChange={event => onChange(event.target.value)}/>
+    <input {...props} dir={props.dir ?? (['email','url','tel','number','password'].includes(props.type || '') ? 'ltr' : 'auto')} id={id} ref={fieldRef} className={className} aria-label={label ? undefined : props['aria-label']} value={value} onChange={event => onChange(event.target.value)}/>
     <VoiceButton fieldRef={fieldRef} value={value} onAppend={onChange} label={name} lang={lang} tr={tr} disabled={props.disabled || props.readOnly} maxLength={props.maxLength}/>
   </div>;
 }
@@ -130,7 +130,7 @@ export function DictatedTextarea({ value, onChange, lang, tr, label, rows = 5, c
   const name = label || props['aria-label'] || tr('نص', 'Text');
   return <div className="dictated-field dictated-field--textarea">
     {label && <label htmlFor={id}>{label}</label>}
-    <textarea {...props} id={id} ref={fieldRef} className={className} rows={rows} aria-label={label ? undefined : props['aria-label']} value={value} onChange={event => onChange(event.target.value)}/>
+    <textarea {...props} dir={props.dir ?? 'auto'} id={id} ref={fieldRef} className={className} rows={rows} aria-label={label ? undefined : props['aria-label']} value={value} onChange={event => onChange(event.target.value)}/>
     <VoiceButton fieldRef={fieldRef} value={value} onAppend={onChange} label={name} lang={lang} tr={tr} disabled={props.disabled || props.readOnly} maxLength={props.maxLength}/>
   </div>;
 }

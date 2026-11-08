@@ -1,3 +1,4 @@
+import { homePreviewDescription } from '../../shared/home-preview';
 import { managedText } from '../../shared/managed-text';
 import { isQuickPath, quickMetadata } from '../../shared/quick-link';
 import { metadata, personSchema, type PageSEO, type Locale } from '../../shared/seo';
@@ -26,7 +27,7 @@ export function updateClientMetadata(path:string,lang:Locale,content?:Record<str
  if(!content&&currentLang===(lang==='ar'?'ar_SA':'en_US'))return;
  const title=String(content?.['title_'+lang]||base[lang==='ar'?0:1]),description=managedText(content?.['body_'+lang]||base[lang==='ar'?2:3]);
  const url=root+path+(lang==='en'?'?lang=en':'');
- apply({title:title+' — KSA.MEN',description,url,lang,indexable,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(lang==='en'?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url,description:description.slice(0,160),inLanguage:lang}:undefined});
+ apply({title:title+' — KSA.MEN',description:path==='/'?homePreviewDescription(description,lang):description,url,lang,indexable,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(lang==='en'?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url,description:description.slice(0,160),inLanguage:lang}:undefined});
 }
 export function updateProfileMetadata(profile:Record<string,unknown>,name:string,lang:Locale,indexable:boolean){
  const url=`https://${name}.ksa.men/`+(lang==='en'?'?lang=en':'');

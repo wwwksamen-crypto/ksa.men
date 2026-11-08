@@ -1,3 +1,4 @@
+import { homePreviewDescription } from '../shared/home-preview';
 import { businessApproach } from '../shared/business-approach';
 import { managedText, managedBlocks } from '../shared/managed-text';
 import type { App, Ctx } from './core';
@@ -36,7 +37,7 @@ export async function rootHTML(c:Ctx,html:string,open:boolean){
  const approach=businessApproach.copy[lang];
  const documents=path==='/about'?`<section aria-labelledby="business-approach-heading"><h2 id="business-approach-heading">${e(approach.title)}</h2><p>${e(approach.description)}</p><p>${e(approach.version)}</p><nav aria-label="${e(approach.title)}">${(['ar','en'] as const).map(locale=>`<a href="${businessApproach.documents[locale].path}" download="${businessApproach.documents[locale].filename}">${e(locale==='ar'?approach.arabic:approach.english)}</a>`).join('')}</nav></section>`:'';
  const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}${documents}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/start">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
- return decorateHTML(html,{title:`${title} — KSA.MEN`,description:body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
+ return decorateHTML(html,{title:`${title} — KSA.MEN`,description:path==='/'?homePreviewDescription(body,lang):body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
 }
 const xmlHeader='<?xml version="1.0" encoding="UTF-8"?>';
 const urlset=(urls:string[])=>xmlHeader+'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+urls.map(url=>`<url><loc>${e(url)}</loc></url>`).join('')+'</urlset>';

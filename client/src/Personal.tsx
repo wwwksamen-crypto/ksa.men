@@ -178,7 +178,7 @@ function ProfileSection({
 function TimelineList({ items }: { items: unknown[] }) {
   return <div className="identity-timeline">
     {items.map((item, index) => {
-      if (typeof item === 'string') return <p className="identity-timeline__note" key={`${item}-${index}`}>{item}</p>;
+      if (typeof item === 'string') return <p dir="auto" className="identity-timeline__note" key={`${item}-${index}`}>{item}</p>;
       if (!item || typeof item !== 'object') return null;
 
       const entry = item as ProfileRecord;
@@ -192,9 +192,9 @@ function TimelineList({ items }: { items: unknown[] }) {
 
       return <article className="identity-timeline__entry" key={`${title || organization || 'entry'}-${index}`}>
         {period && <p className="identity-timeline__period">{start && <bdi dir="auto">{start}</bdi>}{start && end && <span>—</span>}{end && <bdi dir="auto">{end}</bdi>}</p>}
-        {title && <h3>{title}</h3>}
-        {organization && <p className="identity-timeline__organization">{organization}</p>}
-        {description && <p className="identity-timeline__description">{description}</p>}
+        {title && <h3 dir="auto">{title}</h3>}
+        {organization && <p dir="auto" className="identity-timeline__organization">{organization}</p>}
+        {description && <p dir="auto" className="identity-timeline__description">{description}</p>}
       </article>;
     })}
   </div>;
@@ -204,7 +204,7 @@ function PillList({ items }: { items: unknown[] }) {
   const values = items.map(itemText).filter(Boolean);
   if (!values.length) return null;
   return <ul className="identity-pills">
-    {values.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+    {values.map((item, index) => <li dir="auto" key={`${item}-${index}`}>{item}</li>)}
   </ul>;
 }
 
@@ -381,8 +381,8 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
             <span>KSA.MEN / {t('هوية مهنية', 'PROFESSIONAL IDENTITY')}</span>
             {siteName && <bdi dir="ltr">{siteName}.ksa.men</bdi>}
           </div>
-          <h1>{displayName}</h1>
-          {stringValue(profile.title) && <p className="identity-hero__title">{stringValue(profile.title)}</p>}
+          <h1 dir="auto">{displayName}</h1>
+          {stringValue(profile.title) && <p dir="auto" className="identity-hero__title">{stringValue(profile.title)}</p>}
           {location && <p className="identity-hero__location"><MapPin size={16}/>{location}</p>}
         </div>
         <div className="identity-hero__actions" aria-label={t('إجراءات الهوية', 'Identity actions')}>
@@ -401,7 +401,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
             <p className="identity-section__kicker">{t('في سطور', 'IN BRIEF')}</p>
             <h2 id="identity-introduction-title">{t('رحلة مهنية، بصوت صاحبها.', 'A professional journey, in his own words.')}</h2>
           </div>
-          <p className="identity-introduction__copy">{stringValue(profile.bio)}</p>
+          <p dir="auto" className="identity-introduction__copy">{stringValue(profile.bio)}</p>
         </section>}
 
         {(experience.length > 0 || education.length > 0 || training.length > 0 || timeline.length > 0) && <div className="identity-group">
@@ -513,7 +513,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
 
     {blog && <details id="journal" className="identity-blog">
       <summary><Sparkles size={20}/><span>{t('مدونتي', 'My journal')}</span><ArrowUpRight size={18}/></summary>
-      <div className="identity-blog__body"><h2>{t('مدونتي', 'My journal')}</h2><p className="identity-journal">{blog}</p></div>
+      <div className="identity-blog__body"><h2>{t('مدونتي', 'My journal')}</h2><p dir="auto" className="identity-journal">{blog}</p></div>
     </details>}
 
     {data.branding && <footer className="identity-branding">

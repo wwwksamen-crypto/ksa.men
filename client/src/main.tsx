@@ -13,6 +13,7 @@ import {createRoot} from 'react-dom/client';
 import {ArrowUpLeft,ArrowUpRight,Search,Menu,X,Sun,Moon,Globe,ShieldCheck,LockKeyhole,UserRound,Download,Copy,Check,MapPin,BriefcaseBusiness,ScanLine,Sparkles,Wallet,MessageCircle,ChevronDown,ExternalLink,Mail,Phone,Play,ChartNoAxesCombined,Building2,HeartHandshake,GraduationCap,Target,Info,Share2,Linkedin,Instagram,Facebook,Github,Youtube,Twitter,Link2} from 'lucide-react';
 import {api,AppContext,setCSRF,type User,useApp,Button} from './lib';
 import './style.css';
+import './text-layout.css';
 
 
 const AuthPanel=lazy(()=>import('./AuthPanel'));const NotificationCenter=lazy(()=>import('./NotificationCenter'));const SessionReturn=lazy(()=>import('./SessionReturn'));const Sanad=lazy(()=>import('./Sanad'));const ManagedClaim=lazy(()=>import('./ManagedClaim'));

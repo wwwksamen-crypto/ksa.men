@@ -39,7 +39,7 @@ describe.sequential('Performance and crawler-visible public HTML — local reque
   const en=await request('/?lang=en');expect(en.body).toContain('Published home title');expect(en.body).toContain('Published text for the user');expect(en.body).toContain('https://ksa.men/?lang=en');expect(en.body).toContain('lang="en" dir="ltr"');
  });
  it('serves identical approved initial content for visitor, Googlebot and social crawlers, never draft or hidden values',async()=>{
-  const bodies=[];for(const ua of['Mozilla/5.0','Googlebot','Twitterbot']){const result=await request('/','seo-public.ksa.men',false,ua);expect(result.response.status).toBe(200);expect(result.body).toContain('<h1>معتمد سعودي</h1>');expect(result.body).toContain('خبرة منشورة');expect(result.body).toContain('https://x.com/public-profile');expect(result.body).not.toMatch(/DRAFT ONLY|HIDDEN EMAIL|HIDDEN ROW|PRIVATE NOTE/);bodies.push(result.body);}expect(new Set(bodies).size).toBe(1);
+  const bodies=[];for(const ua of['Mozilla/5.0','Googlebot','Twitterbot']){const result=await request('/','seo-public.ksa.men',false,ua);expect(result.response.status).toBe(200);expect(result.body).toContain('<h1 dir="auto">معتمد سعودي</h1>');expect(result.body).toContain('خبرة منشورة');expect(result.body).toContain('https://x.com/public-profile');expect(result.body).not.toMatch(/DRAFT ONLY|HIDDEN EMAIL|HIDDEN ROW|PRIVATE NOTE/);bodies.push(result.body);}expect(new Set(bodies).size).toBe(1);
   const en=await request('/?lang=en','seo-public.ksa.men');expect(en.body).toContain('Approved Saudi');expect(en.body).not.toContain('HIDDEN ROW');
  });
  it('uses real 404s for unknown pages and missing/hidden/draft sites; locked identities never embed a personal payload',async()=>{
