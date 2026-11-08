@@ -1,7 +1,8 @@
 import { list, record, mediaSource, type ProfileRecord } from './profile-content';
 export const listFields = ['experience','education','training','skills','memberships','languages','hobbies','achievements','timeline','skillImages','workImages','socials','buttons','skillRadar.human','skillRadar.scientific','skillRadar.professional'] as const;
 export const scalarFields = ['name','title','specialty','bio','email','phone','whatsapp','city','country','photo','cover','youtube','blog'] as const;
-export const visibilityFields = [...scalarFields, ...listFields, 'skillRadar', 'allowContact'] as const;
+export const exportVisibilityFields = ['exportProfile','exportAts','exportBadge','exportVcard'] as const;
+export const visibilityFields = [...scalarFields, ...listFields, ...exportVisibilityFields, 'skillRadar', 'allowContact'] as const;
 export type ItemIds = Record<string, string[]>;
 export type VisibilityPolicy = { hidden: string[]; hiddenItems: string[]; visible: boolean; listed: boolean; indexable: boolean; version: number; aliases?: Record<string, string[]> };
 export function pathValue(profile: ProfileRecord, path: string): unknown { return path.split('.').reduce<unknown>((value, part) => record(value)[part], profile); }

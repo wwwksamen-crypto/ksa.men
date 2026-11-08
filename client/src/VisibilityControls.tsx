@@ -2,7 +2,7 @@ import React from 'react';
 import { Eye, EyeOff, ShieldCheck, ImageIcon } from 'lucide-react';
 import { useApp } from './lib';
 import { itemText, list, mediaSource, socialLink, text, type ProfileRecord } from '../../shared/profile-content';
-import { pathValue, profileItemIds, scalarFields, listFields, type VisibilityPolicy } from '../../shared/profile-visibility';
+import { pathValue, profileItemIds, scalarFields, listFields, exportVisibilityFields, type VisibilityPolicy } from '../../shared/profile-visibility';
 
 type Change = (patch: Partial<Omit<VisibilityPolicy, 'version'>>) => void;
 export const visibilityLabels: Record<string, [string, string]> = {
@@ -27,6 +27,7 @@ export function VisibilityControls({ profile, policy, onChange, busy = false, se
       <p>{t('خيارات الظهور تُحفظ مباشرة. إتاحة الموقع لا تنشر تعديلات لم تعتمد بعد، وقد تحتاج محركات البحث وقتاً لتحديث نتائجها.', 'Visibility choices save immediately. Making the site available never publishes unapproved edits. Search engines may take time to refresh their results.')}</p>
       <div><span>{t('طلبات التواصل المهني', 'Professional contact requests')}</span><VisibilityButton hidden={policy.hidden.includes('allowContact')} label={t('طلبات التواصل المهني', 'Professional contact requests')} busy={busy} onClick={() => toggleField('allowContact')}/></div>
     </div>}
+    {siteOptions && <div className="profile-visibility-site-options"><strong>{t('مخرجات هويتي للزوار', 'Public identity downloads')}</strong>{exportVisibilityFields.map(field => { const labels = {exportProfile: t('البروفايل الفاخر', 'Executive profile PDF'), exportAts: t('السيرة الذاتية', 'ATS résumé PDF'), exportBadge: t('بطاقة المعارض والمؤتمرات', 'Event badge'), exportVcard: t('بطاقة الاتصال', 'Contact card')}; return <div key={field}><span>{labels[field]}</span><VisibilityButton hidden={policy.hidden.includes(field)} label={labels[field]} busy={busy} onClick={() => toggleField(field)}/></div>; })}</div>}
     {siteOptions && <button type="button" className="button button--quiet" disabled={busy} onClick={() => onChange({hidden:policy.hidden.filter(key => key === 'allowContact'),hiddenItems:[]})}>{t('إظهار كل معلوماتي', 'Show all my information')}</button>}
     {allowed.filter(field => text(pathValue(profile, field)) || list(pathValue(profile, field)).some(value => text(value) || Object.keys(value && typeof value === 'object' ? value : {}).length)).map(field => {
       const label = visibilityLabels[field] ? t(...visibilityLabels[field]) : field;

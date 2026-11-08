@@ -313,7 +313,7 @@ export function parseDraft(source: unknown): ProfileDraft {
       scientific: profileList((raw.skillRadar as Record<string, unknown> | undefined)?.scientific).map(profileItemText),
       professional: profileList((raw.skillRadar as Record<string, unknown> | undefined)?.professional).map(profileItemText),
     },
-    skillImages: profileList(raw.skillImages).map(mediaSource).filter(Boolean).slice(0, 3), workImages: profileList(raw.workImages).map(mediaSource).filter(Boolean).slice(0, 4), hidden: normalizeStrings(raw.hidden), hiddenItems: normalizeStrings(raw.hiddenItems),
+    skillImages: profileList(raw.skillImages).map(mediaSource).filter(Boolean).slice(0, 4), workImages: profileList(raw.workImages).map(mediaSource).filter(Boolean).slice(0, 4), hidden: normalizeStrings(raw.hidden), hiddenItems: normalizeStrings(raw.hiddenItems),
     socials: normalizeLinks(raw.socials), buttons: normalizeLinks(raw.buttons).slice(0, 3), searchable: asBool(raw.searchable, true), allowContact: asBool(raw.allowContact, true),
     imageDescriptions: Object.fromEntries(Object.entries(raw.imageDescriptions && typeof raw.imageDescriptions === 'object' ? raw.imageDescriptions as Record<string, unknown> : {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string').slice(0, 20)),
     translations: raw.translations as ProfileDraft['translations'],
@@ -905,7 +905,7 @@ export default function Dashboard() {
       best = blob;
       if (blob.size <= 3_500_000) break;
     }
-    if (!best) throw new Error(tr('تعذر تحويل الصورة.', 'Could not convert the image.'));
+    if (!best || best.type !== 'image/webp' || best.size > 3_500_000) throw new Error(tr('تعذر تجهيز الصورة بصيغة وحجم مناسبين. اختر صورة أخرى.', 'Could not prepare a suitable WebP image. Choose another image.'));
     return new File([best], `${file.name.replace(/\.[^.]+$/, '') || 'image'}.webp`, { type: 'image/webp' });
   };
 
@@ -914,29 +914,38 @@ export default function Dashboard() {
     changeDraft((current) => {
       if (purpose === 'photo' || purpose === 'cover') return { ...current, [purpose]: image.url };
       const key = purpose === 'skill' ? 'skillImages' : 'workImages';
-      return { ...current, [key]: appendImage(current[key], image.url, purpose === 'skill' ? 3 : 4) };
+      return { ...current, [key]: appendImage(current[key], image.url, 4) };
     });
     return saveDraft(true, true);
   };
   const uploadImage = async (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose) => {
-    const file = event.target.files?.[0];
+    const selected = Array.from(event.target.files || []);
     event.target.value = '';
-    if (!file || uploadSiteRef.current) return;
+    if (!selected.length || uploadSiteRef.current) return;
     const siteId = siteIdRef.current;
     if (!siteId) { notify(tr('اختر موقعك أولاً.', 'Choose your site first.')); return; }
-    uploadSiteRef.current = siteId;
-    setUploading(purpose);
+    const key = purpose === 'skill' ? 'skillImages' : 'workImages';
+    const capacity = purpose === 'skill' || purpose === 'work' ? Math.max(0, 4 - draftRef.current[key].length) : 1;
+    if (!capacity) { notify(tr('اكتمل عدد الصور. أزل صورة لإضافة أخرى.', 'The image list is full. Remove an image to add another.')); return; }
+    const files = selected.slice(0, capacity);
+    if (files.length < selected.length) notify(tr(`سنضيف ${files.length} صورة بحسب المساحة المتاحة.`, `We will add ${files.length} image(s) within the available slots.`));
+    uploadSiteRef.current = siteId; setUploading(purpose);
+    let saved = 0;
     try {
-      if (!file.type.startsWith('image/')) throw new Error(tr('اختر صورة صالحة من جهازك.', 'Choose a valid image from your device.'));
-      const compressed = await compressImage(file, purpose === 'cover' ? 2600 : 1800);
-      const body = new FormData();
-      body.append('file', compressed); body.append('purpose', purpose); body.append('siteId', siteId);
-      const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
-      if (!result?.id || !result?.url) throw new Error(tr('تعذر تأكيد رفع الصورة.', 'Could not confirm the image upload.'));
-      if (siteIdRef.current !== siteId) return;
-      if (await attachImage(siteId, purpose, result)) notify(tr('تمت إضافة الصورة وحفظها.', 'Your image was added and saved.'));
-      else notify(tr('وصلت الصورة، لكن لم يكتمل حفظها في الملف. اضغط حفظ للمحاولة مجدداً.', 'Your image arrived, but its profile link was not saved. Press Save to retry.'));
-    } catch (error) { notify(errorMessage(error) === 'IMAGE_LIST_FULL' ? tr('اكتمل عدد الصور. يمكنك اختيارها من صورك المحفوظة بعد إزالة صورة.', 'The image list is full. Remove an image to choose another from your saved images.') : errorMessage(error)); }
+      // Sequential conversion and persistence keep mobile memory bounded and preserve row IDs.
+      for (const file of files) {
+        if (siteIdRef.current !== siteId) break;
+        const compressed = await compressImage(file, purpose === 'cover' ? 2600 : 1800);
+        const body = new FormData();
+        body.append('file', compressed); body.append('purpose', purpose); body.append('siteId', siteId);
+        const result = await api<UploadResult>('/api/upload', { method: 'POST', body });
+        if (!result?.id || !result?.url) throw new Error(tr('تعذر تأكيد رفع الصورة.', 'Could not confirm the image upload.'));
+        if (siteIdRef.current !== siteId) break;
+        if (!(await attachImage(siteId, purpose, result))) { notify(tr('وصلت الصورة، لكن حفظ رابطها لم يكتمل. اضغط حفظ قبل إضافة المزيد.', 'The image arrived, but saving its link did not complete. Press Save before adding more.')); break; }
+        saved++;
+      }
+      if (saved) notify(tr(`تمت إضافة وحفظ ${saved} صورة.`, `${saved} image(s) added and saved.`));
+    } catch (error) { notify(errorMessage(error) === 'IMAGE_LIST_FULL' ? tr('اكتمل عدد الصور.', 'The image list is full.') : errorMessage(error)); }
     finally { uploadSiteRef.current = null; setUploading(''); void refreshSavedImages(siteId); }
   };
   const restoreImage = async (image: SavedImage) => {
@@ -1332,7 +1341,7 @@ export default function Dashboard() {
                 {editorSection === 'languages' && <StringList title={tr('اللغات', 'Languages')} value={draft.languages} onChange={(languages) => changeDraft({ languages })} tr={tr} lang={lang}/>}
                 {editorSection === 'hobbies' && <StringList title={tr('الاهتمامات والهوايات', 'Interests')} value={draft.hobbies} onChange={(hobbies) => changeDraft({ hobbies })} tr={tr} lang={lang}/>}
                 {editorSection === 'achievements' && <MilestonesSection draft={draft} onChange={changeDraft} tr={tr} lang={lang}/>}
-                {editorSection === 'skillImages' && <MediaSection lang={lang} descriptions={draft.imageDescriptions || {}} onDescription={(url, description) => changeDraft({imageDescriptions:{...draftRef.current.imageDescriptions,[url]:description}})} savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.skillImages} max={3} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
+                {editorSection === 'skillImages' && <MediaSection lang={lang} descriptions={draft.imageDescriptions || {}} onDescription={(url, description) => changeDraft({imageDescriptions:{...draftRef.current.imageDescriptions,[url]:description}})} savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('صور لإثبات المهارات', 'Skill evidence images')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.skillImages} max={4} purpose="skill" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(skillImages) => changeDraft({ skillImages })} />}
                 {editorSection === 'workImages' && <MediaSection lang={lang} descriptions={draft.imageDescriptions || {}} onDescription={(url, description) => changeDraft({imageDescriptions:{...draftRef.current.imageDescriptions,[url]:description}})} savedImages={savedImages} onRestore={(image) => void restoreImage(image)} title={tr('نماذج الأعمال', 'Work samples')} hint={tr('اختر صوراً واضحة تمثلك؛ نجهزها تلقائياً للعرض.', 'Choose clear images that represent you; we prepare them for display.')} items={draft.workImages} max={4} purpose="work" uploading={uploading} tr={tr} onUpload={uploadImage} onChange={(workImages) => changeDraft({ workImages })} />}
                 {editorSection === 'youtube' && <YoutubeSection value={draft.youtube} onChange={(youtube) => changeDraft({ youtube })} tr={tr} />}
                 {editorSection === 'socials' && <LinkList title={tr('الروابط الاجتماعية', 'Social links')} hint={tr('أضف الرابط فقط؛ ستظهر أيقونة المنصة تلقائياً.', 'Just add the URL; its platform icon appears automatically.')} socialOnly value={draft.socials} onChange={(socials) => changeDraft({ socials })} max={12} tr={tr} />}
@@ -1498,7 +1507,7 @@ function MediaSection({ title, hint, items, descriptions, onDescription, max, pu
   savedImages: SavedImage[]; onRestore: (image: SavedImage) => void;
 }) {
   return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><ImagePlus size={15}/>{items.length}/{max}</p><h2>{title}</h2><p className="muted">{hint}</p></div>
-    {items.length < max && <UploadControl label={tr('إضافة صورة', 'Add image')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={event => void onUpload(event, purpose)}/>}</header>
+    {items.length < max && <UploadControl label={tr('إضافة صور', 'Add images')} purpose={purpose} uploading={uploading} tr={tr} compact onChange={event => void onUpload(event, purpose)}/>}</header>
     <div className="dashboard-image-grid">{items.length === 0 && <EmptyInline text={tr('لا توجد صور مرفوعة بعد.', 'No images uploaded yet.')} />}
       {items.map((url, index) => <figure className="dashboard-described-image" key={url}>
         <img src={url} alt={descriptions[url] || `${title} ${index + 1}`}/>
@@ -1524,7 +1533,7 @@ function UploadControl({ label, purpose, uploading, tr, preview, compact = false
   return <div className={`dashboard-upload ${compact ? 'is-compact' : ''}`}>
     {preview && <img src={preview} alt={label}/>}
     <button type="button" aria-label={label} aria-busy={busy} disabled={Boolean(uploading)} onClick={() => inputRef.current?.click()}><span>{busy ? <RefreshCw size={16} className="spin"/> : <Upload size={16}/>} {busy ? tr('جارٍ الرفع...', 'Uploading...') : label}</span></button>
-    <input hidden id={id} ref={inputRef} aria-label={label} type="file" accept="image/*" onChange={onChange} disabled={Boolean(uploading)}/>
+    <input hidden id={id} ref={inputRef} aria-label={label} type="file" accept="image/*" multiple={purpose === 'skill' || purpose === 'work'} onChange={onChange} disabled={Boolean(uploading)}/>
   </div>;
 }
 function ProfessionalPointsMark({ compact = false }: { compact?: boolean }) { return <span className={`midpoint-mark${compact ? ' is-compact' : ''}`} aria-label="Professional points"><Gift size={compact ? 13 : 16}/><span>{compact ? 'نقاط' : 'نقاط التميز'}</span></span>; }

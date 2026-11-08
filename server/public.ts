@@ -56,6 +56,8 @@ export function visibleProfile(raw:Record<string,unknown>,lang:string,includeVis
   return includeVisibility?{...profile,hidden:visibility(raw)}:profile;
 }
 
+const exportVisibilityKey:Record<string,string>={profile:'exportProfile',ats:'exportAts',badge:'exportBadge',card:'exportBadge',social:'exportBadge',vcard:'exportVcard'};
+function publicDownloads(hidden:string[]){return {profile:!hidden.includes('exportProfile'),ats:!hidden.includes('exportAts'),badge:!hidden.includes('exportBadge'),vcard:!hidden.includes('exportVcard')};}
 function exportRule(kind:string){
   const normalized=kind.trim().toLowerCase();
   const rule=exportRules[normalized];
@@ -99,7 +101,7 @@ export function registerPublic(app:App){
     if(!await personalGate(c,site)){
       return c.json({locked:true,site:site.id,name:site.name,photo:typeof profile.photo==='string'?profile.photo:'/assets/logo.webp',message:site.lock_message});
     }
-    return c.json({profile,site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,analyticsEnabled:await usageMetricsEnabled(c),userId:site.user_id?'C'+site.user_id:null});
+    return c.json({profile,downloads:publicDownloads(policy.hidden),site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,analyticsEnabled:await usageMetricsEnabled(c),userId:site.user_id?'C'+site.user_id:null});
   });
 
   app.post('/api/public/unlock',async c=>{
@@ -123,12 +125,13 @@ export function registerPublic(app:App){
   app.get('/api/public/export-data/:name',async c=>{
     const host=new URL(c.req.url).hostname;
     const name=c.req.param('name').trim().toLowerCase();
-    if(host!==c.env.ROOT_DOMAIN||!publicExportName.test(name))throw new HTTPException(404,{message:'المخرج العام غير متاح'});
-    const site:any=await one(c,"SELECT s.*,n.name FROM dns_names n JOIN sites s ON s.id=n.site_id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL AND s.lock_hash IS NULL AND u.status='active'",name);
-    if(!site)throw new HTTPException(404,{message:'المخرج العام غير متاح'});
+    if(!publicExportName.test(name)||(host!==c.env.ROOT_DOMAIN&&host!==name+'.'+c.env.ROOT_DOMAIN))throw new HTTPException(404,{message:'المخرج العام غير متاح'});
+    const site:any=host!==c.env.ROOT_DOMAIN?await publishedForHost(c):await one(c,"SELECT s.*,n.name FROM dns_names n JOIN sites s ON s.id=n.site_id JOIN users u ON u.id=COALESCE(s.user_id,n.owner_id) WHERE n.name=? AND s.status='published' AND s.published IS NOT NULL AND s.lock_hash IS NULL AND u.status='active'",name);
+    if(!site||!await personalGate(c,site))throw new HTTPException(404,{message:'المخرج العام غير متاح'});
     const rule=exportRule(c.req.query('kind')||'profile');
     const lang=c.req.query('lang')==='en'?'en':'ar';
     const raw=await visibleSiteProfile(c,site,publishedJson(site));
+    if(visibility(raw).includes(exportVisibilityKey[rule.canonical]))throw new HTTPException(404,{message:'أخفى صاحب الهوية هذا المخرج'});
     const hasTranslation=!!(raw.translations&&typeof raw.translations==='object'&&(raw.translations as Record<string,unknown>).en);
     return c.json({profile:visibleProfile(raw,lang,true),name:site.name,site:site.id,kind:rule.canonical,allowed:true,translated:lang!=='en'||hasTranslation,source:'published'});
   });
@@ -157,7 +160,7 @@ export function registerPublic(app:App){
     const siteId=String(form.get('siteId')||'');
     if(siteId)await siteFor(c,siteId);
     if(file.size<12)throw new HTTPException(400,{message:'اختر ملفاً كاملاً للرفع'});
-    if(purpose==='receipt'&&file.size>8*1024*1024)throw new HTTPException(400,{message:'حجم الإيصال يتجاوز الحد المسموح'});
+    if(purpose!=='receipt'&&file.size>4*1024*1024)throw new HTTPException(400,{message:'حجم الصورة يتجاوز الحد المسموح'});if(purpose==='receipt'&&file.size>8*1024*1024)throw new HTTPException(400,{message:'حجم الإيصال يتجاوز الحد المسموح'});
     const bytes=new Uint8Array(await file.arrayBuffer());
     let mime='';
     if(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)mime='image/jpeg';

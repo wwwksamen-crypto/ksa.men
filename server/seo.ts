@@ -18,7 +18,7 @@ const pages:Record<string,[string,string,string,string]>={
  '/terms':['شروط الاستخدام','Terms of use','شروط واضحة لخدمة حضور وهوية مهنية شخصية على نطاق فرعي.','Clear terms for a personal professional presence and identity service on a subdomain.'],
  '/qr':['شارك حضورك بلمسة','One scan. Your whole story.','رمز استجابة سريعة وبطاقة اتصال. هدية من المنصة، دون تسجيل.','QR and contact cards. A gift from us. No account needed.']
 };
-export function knownRootPage(path:string){return path in pages||['/auth','/admin','/dashboard','/search','/radar'].includes(path)||(/^\/export\/[^/]+$/.test(path)||isQuickPath(path));}
+export function knownRootPage(path:string){return path in pages||['/auth','/start','/login','/admin','/dashboard','/search','/radar'].includes(path)||(/^\/export\/[^/]+$/.test(path)||isQuickPath(path));}
 export async function rootHTML(c:Ctx,html:string,open:boolean){
  const url=new URL(c.req.url),path=url.pathname==='/index.html'?'/':url.pathname;
  const lang:Locale=url.searchParams.get('lang')==='en'?'en':'ar',english=lang==='en';
@@ -35,7 +35,7 @@ export async function rootHTML(c:Ctx,html:string,open:boolean){
  const paragraphs=managedBlocks(body).map(block=>block.kind==='heading'?`<h2>${e(block.text)}</h2>`:`<p>${e(block.text)}</p>`).join('');
  const approach=businessApproach.copy[lang];
  const documents=path==='/about'?`<section aria-labelledby="business-approach-heading"><h2 id="business-approach-heading">${e(approach.title)}</h2><p>${e(approach.description)}</p><p>${e(approach.version)}</p><nav aria-label="${e(approach.title)}">${(['ar','en'] as const).map(locale=>`<a href="${businessApproach.documents[locale].path}" download="${businessApproach.documents[locale].filename}">${e(locale==='ar'?approach.arabic:approach.english)}</a>`).join('')}</nav></section>`:'';
- const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}${documents}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/auth?register=1">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
+ const rendered=privateRoute||!indexable?'':`<header><a href="${root}/">KSA.MEN</a><h1>${e(title)}</h1></header>${paragraphs}${documents}<nav aria-label="${english?'Explore KSA.MEN':'اكتشف KSA.MEN'}"><a href="${root}/features">${english?'Features':'المزايا'}</a><a href="${root}/about">${english?'Our story':'قصتنا'}</a><a href="${root}/contact">${english?'Contact':'تواصل معنا'}</a><a href="${root}/start">${english?'Create your site':'أنشئ موقعك'}</a></nav>`;
  return decorateHTML(html,{title:`${title} — KSA.MEN`,description:body,lang,indexable,url:privateRoute?undefined:canonical,image:root+'/assets/share-logo-1200-v1.png',alternate:root+path+(english?'':'?lang=en'),schema:indexable?{'@context':'https://schema.org','@type':path==='/'?'WebSite':'WebPage',name:title,url:canonical,description:body.slice(0,160),inLanguage:lang}:undefined},rendered);
 }
 const xmlHeader='<?xml version="1.0" encoding="UTF-8"?>';
@@ -63,7 +63,7 @@ export function registerSEO(app:App){
   if(!await publiclyIndexable(c))return c.text('User-agent: *\nDisallow: /\n');
   const host=new URL(c.req.url).hostname,root=c.env.ROOT_DOMAIN;
   if(host!==root){try{const site=await shareSite(c,host.slice(0,-root.length-1));const policy=await siteVisibility(c,site);if(site.lock_hash||!policy.indexable)return c.text('User-agent: *\nDisallow: /\n');}catch{return c.text('User-agent: *\nDisallow: /\n');}}
-  return c.text('User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /auth\nDisallow: /api/\nDisallow: /export/\nDisallow: /quick/\nDisallow: /q/\nDisallow: /radar\nDisallow: /search\nSitemap: https://'+host+'/sitemap.xml\n');
+  return c.text('User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /dashboard\nDisallow: /auth\nDisallow: /start\nDisallow: /login\nDisallow: /api/\nDisallow: /export/\nDisallow: /quick/\nDisallow: /q/\nDisallow: /radar\nDisallow: /search\nSitemap: https://'+host+'/sitemap.xml\n');
  });
  app.get('/sitemap.xml',async c=>{
   if(!await publiclyIndexable(c))return c.body(urlset([]),200,{'Content-Type':'application/xml; charset=utf-8'});

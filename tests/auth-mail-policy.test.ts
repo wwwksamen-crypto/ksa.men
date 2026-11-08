@@ -77,13 +77,23 @@ describe.sequential('Daily email budget and explicit backup', () => {
     expect(retryJar['__Host-ksa_challenge']).toBe(nonce);expect(sql({sql:'SELECT consumed FROM auth_codes WHERE id=?',params:[primary.data.challenge]}).results[0].consumed).toBe(0);
     expect((await post('/api/auth/verify',{challenge:primary.data.challenge,code:primaryCode},retryJar,'198.51.100.101')).status).toBe(200);
   });
-  it('does not send a second-provider copy or release the daily budget after an ambiguous upstream response',async()=>{
+  it('fails over with the same verification message and does not release the daily budget after a lost primary response',async()=>{
     const target='uncertain@mail-unit.invalid';sql({sql:'INSERT INTO users(email,name,created_at,trial_until,consent_at,whatsapp) VALUES(?,?,?,?,?,?)',params:[target,'uncertain',now(),now()+86400,now(),'0555000000']});
-    const cookies:Record<string,string>={},send=vi.fn();env.CLOUDFLARE_EMAIL={send};
+    const cookies:Record<string,string>={},send=vi.fn().mockResolvedValue({messageId:'local-fallback'});env.CLOUDFLARE_EMAIL={send};
     const count=vi.mocked(fetch).mock.calls.length;vi.mocked(fetch).mockRejectedValueOnce(new Error('Lost upstream response'));
     const first=await post('/api/auth/request',{email:target},cookies,'198.51.100.102');expect(first.status).toBe(200);
     const repeated=await post('/api/auth/request',{email:target},cookies,'198.51.100.102');expect(repeated.data.challenge).toBe(first.data.challenge);
-    expect(vi.mocked(fetch).mock.calls.length-count).toBe(1);expect(send).not.toHaveBeenCalled();delete env.CLOUDFLARE_EMAIL;
+    expect(vi.mocked(fetch).mock.calls.length-count).toBe(1);expect(send).toHaveBeenCalledTimes(1);
+    const primary=JSON.parse(String(vi.mocked(fetch).mock.calls[count][1]?.body));
+    expect(send.mock.calls[0][0]).toMatchObject({from:'support@ksa.men',to:target,text:primary.text,html:primary.html});
+    expect(sql({sql:'SELECT COUNT(*) n FROM auth_codes WHERE id=?',params:[first.data.challenge]}).results[0].n).toBe(1);delete env.CLOUDFLARE_EMAIL;
+  });
+  it('does not grant staff access or create staff accounts through the public member request',async()=>{
+    const cookies={'__Host-ksa_device':device};
+    const quick=await post('/api/auth/quick',{email:'member@mail-unit.invalid',pin:'264913',audience:'staff'},cookies,'198.51.100.107');
+    expect(quick.status).toBe(401);expect(quick.response.headers.get('Set-Cookie')||'').not.toContain('__Host-ksa_session=');
+    const signup=await post('/api/auth/request',{email:'staff-signup@mail-unit.invalid',name:'محاولة',purpose:'register',audience:'staff',consent:true,ageConfirmed:true,eligibilityConfirmed:true,privacyNoticePresented:true},{},'198.51.100.108');
+    expect(signup.status).toBe(403);expect(sql({sql:'SELECT COUNT(*) n FROM users WHERE email=?',params:['staff-signup@mail-unit.invalid']}).results[0].n).toBe(0);
   });
   it('allows another required step-up after the freshness window without reopening ordinary daily email allowance',async()=>{
     const token=uid()+uid(),hash=await digest(token);sql({sql:'INSERT INTO sessions(id,user_id,csrf,expires_at,verified_at) VALUES(?,?,?,?,0)',params:[hash,otherId,'unit',now()+86400]});

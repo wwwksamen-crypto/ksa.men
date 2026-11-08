@@ -880,3 +880,49 @@ export function QRTools() {
     </section>
   </section>;
 }
+
+/** Browser-only public download, using the existing approved-data generators and artwork. */
+export async function downloadPublishedIdentity(data: ExportData, lang: Language, kind: 'profile' | 'ats' | 'badge' | 'badgePdf') {
+  if (!data.allowed || data.source !== 'published') throw new Error('هذا المخرج غير متاح.');
+  const profile = sanitizeProfile(data.profile) as Profile;
+  const url = profileUrl(data.name), base = cleanFilename(data.name), identity = displayName(data, profile);
+  const saveBytes = (bytes: Uint8Array, suffix: string) => {
+    const buffer = new ArrayBuffer(bytes.length); new Uint8Array(buffer).set(bytes);
+    downloadable(buffer, `${base}-${suffix}-${lang}.pdf`, 'application/pdf');
+  };
+  if (kind === 'ats') {
+    const { createResumePdf, loadResumeFonts } = await import('./ats-pdf');
+    saveBytes(await createResumePdf(buildResumeContent(profile, { name: data.name, url, lang }), await loadResumeFonts()), 'resume');
+    return;
+  }
+  const pdfMake = await loadPdfMaker();
+  await document.fonts.load('16px Tajawal'); await document.fonts.load('bold 27px Tajawal');
+  const bytesFrom = (definition: unknown) => new Promise<Uint8Array>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(lang === 'ar' ? 'استغرق تجهيز الملف وقتاً أطول. حاول مجدداً.' : 'Preparing the file took too long. Please try again.')), 90_000);
+    try { pdfMake.createPdf(definition).getBuffer(bytes => { clearTimeout(timer); resolve(Uint8Array.from(bytes)); }); }
+    catch (error) { clearTimeout(timer); reject(error); }
+  });
+  if (kind === 'profile') {
+    const assets = await loadProfilePdfAssets(profile);
+    saveBytes(await bytesFrom(buildLandscapeProfile(profile, { name: data.name, url, lang }, assets, pdfText)), 'profile');
+    return;
+  }
+  const avatar = profileImage(profile), code = await qrDataUrl(url, { width: 1800, centerImage: avatar });
+  const host = document.createElement('div');
+  host.setAttribute('aria-hidden', 'true'); host.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:1200px;pointer-events:none';
+  document.body.appendChild(host);
+  const [{ createRoot }, { flushSync }] = await Promise.all([import('react-dom/client'), import('react-dom')]);
+  const root = createRoot(host);
+  try {
+    flushSync(() => root.render(<DigitalCardArtwork avatar={avatar} profileQr={code} identity={identity} details={smartCardDetails(profile, url, 'professional', lang)} publicUrl={url} lang={lang} mode="professional"/>));
+    const node = host.firstElementChild as HTMLElement;
+    await waitForCardAssets(node);
+    const { toPng } = await import('html-to-image');
+    const png = await toPng(node, { width: 900, height: 1200, canvasWidth: 1800, canvasHeight: 2400, pixelRatio: 1, cacheBust: true });
+    if (kind === 'badge') downloadDataUrl(png, `${base}-badge-${lang}.png`);
+    else {
+      const width = 90 * 72 / 25.4, height = 120 * 72 / 25.4;
+      saveBytes(await bytesFrom({pageSize:{width,height},pageMargins:0,defaultStyle:{font:'Tajawal'},info:{title:identity,creator:'KSA.MEN'},content:[{image:png,width,height}]}), 'badge');
+    }
+  } finally { root.unmount(); host.remove(); }
+}

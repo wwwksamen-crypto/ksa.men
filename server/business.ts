@@ -417,7 +417,7 @@ export function normalizeProfile(value: unknown, fallbackName = '', nested = fal
   profile.skillRadar = skillRadar(value.skillRadar, editing);
   profile.blog = profileText(value.blog, 'blog', 12_000, false, editing);
   profile.notes = profileText(value.notes, 'notes', 12_000, false, editing);
-  profile.skillImages = mediaList(value.skillImages, 'skillImages', 3);
+  profile.skillImages = mediaList(value.skillImages, 'skillImages', 4);
   profile.workImages = mediaList(value.workImages, 'workImages', 4);
   profile.socials = linkList(value.socials, 'socials', 12, editing);
   profile.buttons = linkList(value.buttons, 'buttons', 3, editing);

@@ -138,8 +138,9 @@ describe('editor save races — DOM and mocked API only', () => {
     await act(async()=> (nav().find(button=>button.textContent?.includes('إثبات المهارات')) as HTMLButtonElement).click());
     const fileInput=container.querySelector('input[type="file"]') as HTMLInputElement;
     expect(fileInput).not.toBeNull();
+    expect(fileInput.multiple).toBe(true);
     const selectFile = vi.spyOn(fileInput, 'click').mockImplementation(() => {});
-    await act(async () => (container.querySelector('button[aria-label="إضافة صورة"]') as HTMLButtonElement).click());
+    await act(async () => (container.querySelector('button[aria-label="إضافة صور"]') as HTMLButtonElement).click());
     expect(selectFile).toHaveBeenCalledOnce();
     Object.defineProperty(fileInput,'files',{configurable:true,value:[new File([new Uint8Array(16)],'unit.jpg',{type:'image/jpeg'})]});
     await act(async()=> fileInput.dispatchEvent(new Event('change',{bubbles:true})));await flush();
@@ -152,9 +153,9 @@ describe('editor save races — DOM and mocked API only', () => {
     await act(async()=> imageReady.resolve({id:'new-image',url:'/api/media/new-image'}));await flush();
     expect(puts).toHaveLength(1);
     expect(puts[0].body.draft.name).toBe('نص أثناء الرفع');expect(puts[0].body.draft.skillImages).toEqual(['/api/media/new-image']);
-    expect(notify).not.toHaveBeenCalledWith('تمت إضافة الصورة وحفظها.');
+    expect(notify).not.toHaveBeenCalledWith('تمت إضافة وحفظ 1 صورة.');
     await act(async()=> saveReady.resolve(null));await flush();
-    expect(notify).toHaveBeenCalledWith('تمت إضافة الصورة وحفظها.');
+    expect(notify).toHaveBeenCalledWith('تمت إضافة وحفظ 1 صورة.');
     expect(records.first.draft.skillImages).toEqual(['/api/media/new-image']);expect(records.second.draft.name).toBe('اسم ثان');
   });
 

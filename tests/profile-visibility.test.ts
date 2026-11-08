@@ -78,6 +78,17 @@ describe.sequential('reversible visibility applies to all public paths without p
   expect((await request('/api/media/privacy-media')).status).toBe(403);expect((await request('/api/search?q=visibility-local')).data.items).toHaveLength(0);
   const own=await request(`/api/sites/${siteId}`,'member');expect(own.status).toBe(200);expect(own.data.site.draft.notes).toBe('PRIVATE DRAFT');expect(own.data.site.visibility.visible).toBe(false);
  });
+ it('immediately hides individual download types on root and same-origin identity export APIs',async()=>{
+  await update({visible:true,hidden:['exportProfile','exportAts','exportBadge','exportVcard'],hiddenItems:[]});
+  const profile=await request('/api/public/profile',undefined,'GET',undefined,'visibility-local.ksa.men');
+  expect(profile.data.downloads).toEqual({profile:false,ats:false,badge:false,vcard:false});
+  for(const kind of ['profile','ats','badge','card','vcard'])for(const host of ['ksa.men','visibility-local.ksa.men'])expect((await request('/api/public/export-data/visibility-local?kind='+kind,undefined,'GET',undefined,host)).status).toBe(404);
+  expect((await request('/api/public/export-data/other-name?kind=qr',undefined,'GET',undefined,'visibility-local.ksa.men')).status).toBe(404);
+  expect((await request('/api/public/export-data/visibility-local?kind=qr',undefined,'GET',undefined,'visibility-local.ksa.men')).status).toBe(200);
+  await update({hidden:[]});
+  const exported=await request('/api/public/export-data/visibility-local?kind=profile',undefined,'GET',undefined,'visibility-local.ksa.men');
+  expect(exported.status).toBe(200);expect(exported.data.source).toBe('published');expect(exported.data.profile.name).toBe(approved.name);
+ });
  it('restores only approved content, never the latest draft, and records each reversible choice',async()=>{
   await update({visible:true,hidden:[],hiddenItems:[],indexable:true});
   const profile=await request('/api/public/profile',undefined,'GET',undefined,'visibility-local.ksa.men');expect(profile.data.profile.name).toBe('هوية معتمدة');expect(profile.data.profile.skills).toHaveLength(2);

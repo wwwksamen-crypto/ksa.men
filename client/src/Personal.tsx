@@ -37,12 +37,14 @@ import './personal.css';
 import { list, itemText, mediaSource, socialLink, brandNames, youtubeLink } from '../../shared/profile-content';
 import { brandPaths } from './brand-paths';
 import { generateVCard } from './vcard';
+import IdentityExportActions, { type PublicDownloads } from './IdentityExportActions';
 import LoadingState from './LoadingState';
 import {updateProfileMetadata,clearProfileMetadata} from './page-metadata';
 
 type ProfileRecord = Record<string, unknown>;
 export type PublicProfileData = {
   profile?: ProfileRecord;
+  downloads?: PublicDownloads;
   analyticsEnabled?: boolean;
   site?: string;
   name?: string;
@@ -247,7 +249,7 @@ export default function Personal() {
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : t('تعذر فتح الموقع', 'Could not open the site')));
   }, [lang, t]);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (data || error) document.getElementById('initial-content')?.remove();if(error||data?.locked)clearProfileMetadata(lang);else if(data?.profile&&data?.name)updateProfileMetadata(data.profile,data.name,lang,data.indexable!==false); }, [data,error,lang]);
+  useEffect(() => { if (data || error) {document.getElementById('initial-content')?.remove();document.getElementById('boot-splash')?.remove();delete document.documentElement.dataset.boot;}if(error||data?.locked)clearProfileMetadata(lang);else if(data?.profile&&data?.name)updateProfileMetadata(data.profile,data.name,lang,data.indexable!==false); }, [data,error,lang]);
   if (error) return <div className="identity-page"><section className="identity-state" aria-live="polite"><span className="identity-state__mark"><Globe2 size={26}/></span><h1>{t('الموقع غير متاح', 'Site unavailable')}</h1><p>{error}</p><a href="https://ksa.men" className="identity-page__text-link">KSA.MEN <ArrowUpRight size={16}/></a></section></div>;
   if (!data) return <div className="identity-page"><LoadingState/></div>;
   if (data.locked) return <div className="identity-page"><section className="identity-lock" aria-labelledby="identity-lock-title"><div className="identity-lock__photo"><img src={stringValue(data.photo) || '/assets/logo-emblem.webp'} alt=""/></div><span className="identity-lock__icon"><LockKeyhole size={22}/></span><h1 id="identity-lock-title">{data.message || t('موقع خاص', 'Private site')}</h1><p>{t('هذه الهوية متاحة بإذن صاحبها فقط.', 'This identity is available only with its owner’s permission.')}</p><form onSubmit={async event => { event.preventDefault(); try { await api('/api/public/unlock', { method: 'POST', body: JSON.stringify({ password }) }); void load(); } catch (cause) { notify(cause instanceof Error ? cause.message : t('تعذر الدخول', 'Could not enter')); } }}><label><span>{t('كلمة الدخول', 'Access password')}</span><input required type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password"/></label><Button className="primary">{t('دخول الموقع', 'Enter site')} <ArrowUpRight size={18}/></Button></form></section></div>;
@@ -384,8 +386,8 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
           {location && <p className="identity-hero__location"><MapPin size={16}/>{location}</p>}
         </div>
         <div className="identity-hero__actions" aria-label={t('إجراءات الهوية', 'Identity actions')}>
-          <Button className="primary" onClick={() => void downloadVCard()}><Download size={18}/>{t('حفظ جهة الاتصال', 'Save contact')}</Button>
-          {siteName && <a className="button secondary" href={previewMode && data.site ? `/export/badge?site=${encodeURIComponent(data.site)}` : `https://ksa.men/export/badge?public=${encodeURIComponent(siteName)}&source=published`}><BadgeCheck size={18}/>{t('بطاقة معرض', 'Event badge')}</a>}
+          {data.downloads?.vcard !== false && <Button className="primary" onClick={() => void downloadVCard()}><Download size={18}/>{t('حفظ جهة الاتصال', 'Save contact')}</Button>}
+          {siteName && data.downloads?.badge !== false && <a className="button secondary" href={previewMode && data.site ? `/export/badge?site=${encodeURIComponent(data.site)}` : `https://ksa.men/export/badge?public=${encodeURIComponent(siteName)}&source=published`}><BadgeCheck size={18}/>{t('بطاقة معرض', 'Event badge')}</a>}
           <Button className="secondary" onClick={() => void share()}><Share2 size={18}/>{t('مشاركة', 'Share')}</Button>
         </div>
       </div>
@@ -457,6 +459,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
       </div>
 
       <aside className="identity-aside" aria-label={t('بيانات التواصل والمشاركة', 'Contact and sharing details')}>
+        {!previewMode && siteName && <IdentityExportActions name={siteName} downloads={data.downloads}/>}
         <section className="identity-card identity-aside__identity">
           <div className="identity-aside__marker"><UserRound size={18}/><span>{t('بطاقة الهوية', 'IDENTITY CARD')}</span></div>
           <h2>{displayName}</h2>
@@ -501,7 +504,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
           <div className="identity-aside__marker"><span>{t('للوصول السريع', 'SCAN TO CONNECT')}</span></div>
           <div className="identity-qr__dual">
             {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز الاستجابة السريعة لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><a download={`${siteName || 'ksa-men'}-site-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل', 'Download')}</a></div>}
-            {vcardQr && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز بطاقة الاتصال', 'QR code for the contact card')}/></div><strong>vCard</strong><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
+            {vcardQr && data.downloads?.vcard !== false && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز بطاقة الاتصال', 'QR code for the contact card')}/></div><strong>vCard</strong><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
           </div>
           <p>{t('رمز للموقع ورمز مستقل لبطاقة الاتصال؛ لا يتضمنان حقولاً اختار صاحب الهوية إخفاءها.', 'One code opens the site and one saves the contact card; neither includes fields the owner chose to hide.')}</p>
         </section>
