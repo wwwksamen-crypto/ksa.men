@@ -665,7 +665,7 @@ export default function Exports() {
 
   const downloadLightQr=async()=>{
     if(!profile||!data||!verified||loading||qrMode==='vcard'&&!isVisible(profile,'exportVcard'))return;setBusy('qr');
-    try {await downloadCompactQr(qrMode==='vcard'?contactQrPayload(profile,data.name,publicUrl):publicUrl,filename(qrMode==='vcard'?'vcard-qr-light':'site-qr-light','png'));notify(t('بدأ تنزيل صورة PNG الخفيفة.','Your lightweight PNG download has started.'));}
+    try {await downloadCompactQr(qrMode==='vcard'?contactQrPayload(profile,data.name,publicUrl):publicUrl,filename(qrMode==='vcard'?'vcard-qr-light':'site-qr-light','png'),avatar);notify(t('بدأ تنزيل صورة PNG الخفيفة.','Your lightweight PNG download has started.'));}
     catch(cause){notify(displayError(cause,t('تعذر إنشاء الرمز.','Could not create the code.')));}finally{setBusy('');}
   };
   const downloadQr = async () => {

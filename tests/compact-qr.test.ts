@@ -12,12 +12,12 @@ describe('Lightweight lossless QR PNG — local encoder only',()=>{
    const offset=(((row+4)*result.scale)*png.width+(col+4)*result.scale)*3;expect(png.data[offset]).toBe(matrix.data[row*result.cells+col]?0:255);expect(png.data[offset+1]).toBe(matrix.data[row*result.cells+col]?68:255);
   }
   for(let i=0;i<result.width*result.scale*4*3;i++)expect(png.data[i]).toBe(255);
-  writeFileSync('/home/ubuntu/ksa-men-checkpoints/social-qr-20261108/qr-site-local.png',result.bytes);
+  writeFileSync('/home/ubuntu/ksa-men-checkpoints/branded-qr-20261108/qr-site-local.png',result.bytes);
  });
  it('uses essential contact data in QR, never hidden/private data, while the full VCF retains the bio',async()=>{
   const profile={name:'اختبار محلي',email:'local@example.test',phone:'0500000000',bio:'نبذة طويلة'.repeat(2000),notes:'PRIVATE',hidden:['phone']};const before=JSON.stringify(profile);const payload=contactQrPayload(profile,'local','https://local.ksa.men');
   expect(payload).toContain('BEGIN:VCARD');expect(payload).toContain('اختبار محلي');expect(payload).toContain('EMAIL');expect(payload).not.toContain('0500000000');expect(payload).not.toContain('NOTE:');expect(payload).not.toContain('PRIVATE');expect(generateVCard(profile,'local','https://local.ksa.men')).toContain('NOTE:');expect(JSON.stringify(profile)).toBe(before);
-  const result=await compactQrPng(payload);expect(result.bytes.length).toBeLessThan(30000);writeFileSync('/home/ubuntu/ksa-men-checkpoints/social-qr-20261108/qr-contact-local.png',result.bytes);writeFileSync('/home/ubuntu/ksa-men-checkpoints/social-qr-20261108/qr-contact-payload-local.txt',payload);
+  const result=await compactQrPng(payload);expect(result.bytes.length).toBeLessThan(30000);writeFileSync('/home/ubuntu/ksa-men-checkpoints/branded-qr-20261108/qr-contact-local.png',result.bytes);writeFileSync('/home/ubuntu/ksa-men-checkpoints/branded-qr-20261108/qr-contact-payload-local.txt',payload);
  });
  it('rejects empty payloads rather than downloading a misleading placeholder',async()=>{await expect(compactQrPng('')).rejects.toThrow();});
 });

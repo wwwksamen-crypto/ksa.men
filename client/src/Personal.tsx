@@ -338,7 +338,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
   const downloadLightQr=async(kind:'site'|'vcard')=>{
     if(!profileUrl||qrDownloading||kind==='vcard'&&data.downloads?.vcard===false)return;
     setQrDownloading(kind);
-    try { const {downloadCompactQr}=await import('./compact-qr');await downloadCompactQr(kind==='site'?profileUrl:contactQrPayload(profile,siteName,profileUrl),`${siteName||'ksa-men'}-${kind}-qr-light.png`);track(kind==='vcard'?'vcard':'qr'); }
+    try { const {downloadCompactQr}=await import('./compact-qr');await downloadCompactQr(kind==='site'?profileUrl:contactQrPayload(profile,siteName,profileUrl),`${siteName||'ksa-men'}-${kind}-qr-light.png`,profilePhoto);track(kind==='vcard'?'vcard':'qr'); }
     catch { notify(t('تعذر تجهيز الصورة؛ حاول مجدداً.','Could not prepare the image. Try again.')); }
     finally {setQrDownloading('');}
   };
