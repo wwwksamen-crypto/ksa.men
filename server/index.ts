@@ -1,3 +1,4 @@
+import {registerOwnerErasure} from './owner-erasure';
 import { registerSubdomains, resolveOwnerRedirect } from './subdomains';
 import { publicInstitutionalContact } from '../shared/institutional-contact';
 import { businessApproach } from '../shared/business-approach';
@@ -127,6 +128,7 @@ app.post('/api/gate', async c => {
   setCookie(c, '__Host-ksa_gate', expiry + '.' + await hmac(c.env.AUTH_SECRET, expiry + ':' + lock.passwordHash + ':' + new URL(c.req.url).hostname), { secure: true, httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 6 * 3600 });
   return c.json({ ok: true });
 });
+registerOwnerErasure(app);
 registerSubdomains(app);
 registerPreview(app);
 registerOG(app);

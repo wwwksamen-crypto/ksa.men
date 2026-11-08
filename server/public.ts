@@ -177,7 +177,7 @@ export function registerPublic(app:App){
 
   app.get('/api/media/:id',async c=>{
     const media:any=await one(c,'SELECT * FROM media WHERE id=?',c.req.param('id'));
-    if(!media)throw new HTTPException(404);
+    if(!media||await one(c,"SELECT resource_id FROM deleted_tombstones WHERE resource_type='media' AND resource_id=?",c.req.param('id')))throw new HTTPException(404);
     const user=c.get('user');
     let authorized=user?.id===media.owner_id;
     if(media.purpose==='receipt'&&!authorized){

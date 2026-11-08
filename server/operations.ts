@@ -661,12 +661,14 @@ export function registerOperations(app: App): void {
        LEFT JOIN wallets w ON w.user_id=u.id
        WHERE (u.email LIKE ? ESCAPE '\\' OR u.name LIKE ? ESCAPE '\\' OR ('C'||u.id) LIKE ? ESCAPE '\\')
          AND u.status LIKE ? ESCAPE '\\'
+         AND (u.status<>'deleted' OR ?='deleted')
          ${scope}
        ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
       queryPart,
       queryPart,
       queryPart,
       statusPart,
+      status,
       ...(user.role === "manager" ? [user.id, user.id, user.id] : []),
       limit,
       offset,
