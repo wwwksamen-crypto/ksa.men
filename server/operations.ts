@@ -864,6 +864,7 @@ export function registerOperations(app: App): void {
       c,
       `SELECT r.*,s.published,s.published_version AS current_published_version,s.status AS site_status,u.name AS submitter_name,u.email AS submitter_email,u.whatsapp AS submitter_whatsapp,
               (SELECT dn.name FROM dns_names dn WHERE dn.site_id=s.id ORDER BY dn.created_at,dn.name LIMIT 1) AS site_name,
+              (SELECT q.new_name FROM subdomain_change_requests q WHERE q.site_id=s.id AND q.status='pending' AND q.requested_version<=r.draft_version) AS requested_name,
               d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
        FROM reviews r JOIN sites s ON s.id=r.site_id JOIN users u ON u.id=r.user_id
        LEFT JOIN review_decisions d ON d.review_id=r.id
@@ -1296,7 +1297,7 @@ export function registerOperations(app: App): void {
     const name = nameValue(body.name);
     const kind = text(body.kind ?? "policy", "kind", { max: 64 });
     const reason = text(body.reason, "reason", { max: 1_000 });
-    const existingName = await one<{ name: string }>(c, "SELECT name FROM dns_names WHERE name=?", name);
+    const existingName = await one<{ name: string }>(c, "SELECT name FROM dns_names WHERE name=? UNION ALL SELECT new_name AS name FROM subdomain_change_requests WHERE new_name=? AND status='pending' LIMIT 1", name,name);
     if (existingName) fail(409, "An owned name cannot be reserved", "name_in_use");
     await run(
       c,

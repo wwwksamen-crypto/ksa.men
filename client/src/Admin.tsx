@@ -21,9 +21,10 @@ import { api, useApp } from './lib';
 import './admin.css';
 import { publicationLabel } from './publication';
 import AdminManaged from './AdminManaged';
+import AdminSubdomainRedirects from './AdminSubdomainRedirects';
 
 type AdminRole = 'owner' | 'manager' | 'moderator';
-type AdminTab = 'overview' | 'managed' | 'users' | 'reviews' | 'membership' | 'payments' | 'services' | 'names' | 'content' | 'pricing' | 'lock' | 'economics' | 'audit' | 'backup' | 'governance';
+type AdminTab = 'overview' | 'managed' | 'users' | 'reviews' | 'membership' | 'payments' | 'services' | 'names' | 'content' | 'pricing' | 'lock' | 'economics' | 'audit' | 'backup' | 'governance' | 'redirects';
 type TabGroup = 'workspace' | 'operations' | 'governance';
 type JsonRecord = Record<string, unknown>;
 type MaybeRecord = JsonRecord | null | undefined;
@@ -82,6 +83,7 @@ const tabs: AdminTabDefinition[] = [
   { id: 'membership', ar: 'طلبات العضوية', en: 'Membership requests', group: 'workspace', icon: ClipboardCheck, roles: ['owner'] },
   { id: 'payments', ar: 'المدفوعات', en: 'Payments', group: 'operations', icon: Banknote, roles: ['owner', 'manager'] },
   { id: 'services', ar: 'الخدمات', en: 'Services', group: 'operations', icon: Wrench, roles: ['owner', 'manager'] },
+  { id: 'redirects', ar: 'روابط التحويل', en: 'Redirect links', group: 'operations', icon: FileKey2, roles: ['owner'] },
   { id: 'names', ar: 'الأسماء', en: 'Names', group: 'operations', icon: FileKey2, roles: ['owner'] },
   { id: 'content', ar: 'المحتوى', en: 'Content', group: 'operations', icon: BookOpen, roles: ['owner'] },
   { id: 'lock', ar: 'قفل المنصة', en: 'Platform lock', group: 'governance', icon: LockKeyhole, roles: ['owner'] },
@@ -799,6 +801,7 @@ export default function Admin() {
         const publicSite = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(siteName) ? `https://${siteName}.ksa.men` : '';
         return <article className="card admin-review" key={id || text(field(review, 'submitted_at'))}>
           <div className="row admin-review-top"><div><h2>{text(field(review, 'site_name', 'name', 'title'))}</h2><p className="muted">{tr('المقدم', 'Submitted by')}: {text(field(review, 'submitter_name', 'user_name', 'email'))} · {asDate(field(review, 'submitted_at', 'created_at'), lang)}</p></div><span className={`admin-status ${statusTone(field(review, 'status'))}`}>{pending ? tr('بانتظار النشر', 'Awaiting publication') : tr('تم اتخاذ القرار', 'Decision recorded')}</span></div>
+          {Boolean(field(review,'requested_name'))&&<p className="muted">{tr('تغيير رابط الموقع إلى','Change site link to')} <bdi dir="ltr">{text(field(review,'requested_name'))}.ksa.men</bdi>. {tr('عند النشر يصبح الاسم السابق متاحاً للآخرين.','Publishing makes the previous name available to others.')}</p>}
           {stale===true&&<p className="muted">{tr('وصل إصدار أحدث لهذا الموقع. حدّث قائمة الطلبات قبل الاعتماد.', 'A newer site version is available. Refresh requests before approval.')}</p>}
           <div className="admin-actions">
             {pending && <button className="button" type="button" disabled={!id || reviewBusy || stale === true} onClick={() => decideReview(review, 'approve')}>{reviewBusy ? tr('جارٍ النشر', 'Publishing') : tr('اعتماد ونشر الموقع', 'Approve & publish site')}</button>}
@@ -954,6 +957,7 @@ export default function Admin() {
     case 'membership': contentView = renderMembership(); break;
     case 'payments': contentView = renderPayments(); break;
     case 'services': contentView = renderServices(); break;
+    case 'redirects': contentView = <AdminSubdomainRedirects/>; break;
     case 'names': contentView = renderNames(); break;
     case 'content': contentView = renderContent(); break;
     case 'pricing': contentView = renderPricing(); break;

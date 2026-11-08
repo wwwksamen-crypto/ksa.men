@@ -1,3 +1,4 @@
+import { registerSubdomains, resolveOwnerRedirect } from './subdomains';
 import { publicInstitutionalContact } from '../shared/institutional-contact';
 import { businessApproach } from '../shared/business-approach';
 import { usageMetricsEnabled } from './optional-metrics';
@@ -97,6 +98,10 @@ app.use('*', async (c, next) => {
     // Root keeps the interactive SPA gate; subdomains use an origin-local gate form.
     if (!rootHost) return c.html(lockHTML(c, lock), 423);
   }
+  if(!rootHost && path==='/' && ['GET','HEAD'].includes(c.req.method) && (!blocked || staff || gateOk)) {
+    const redirect=await resolveOwnerRedirect(c,host.slice(0,-root.length-1));
+    if(redirect){c.header('Referrer-Policy','no-referrer');return c.redirect(redirect,302);}
+  }
   await next();
   security(c);
   if (lock.mode !== 'open') c.header('X-Robots-Tag', 'noindex, nofollow');
@@ -121,6 +126,7 @@ app.post('/api/gate', async c => {
   setCookie(c, '__Host-ksa_gate', expiry + '.' + await hmac(c.env.AUTH_SECRET, expiry + ':' + lock.passwordHash + ':' + new URL(c.req.url).hostname), { secure: true, httpOnly: true, sameSite: 'Lax', path: '/', maxAge: 6 * 3600 });
   return c.json({ ok: true });
 });
+registerSubdomains(app);
 registerPreview(app);
 registerOG(app);
 registerBackup(app);

@@ -1,4 +1,5 @@
 import ReferralPanel from './ReferralPanel';
+import SiteNameEditor from './SiteNameEditor';
 import { referralURL } from '../../shared/referral';
 import QuickLinkShare from './QuickLinkShare';
 import LoadingState from './LoadingState';
@@ -874,6 +875,23 @@ export default function Dashboard() {
     finally { reviewingRef.current=false; setSubmittingReview(false); }
   };
 
+  const requestNamePublication = async (name: string): Promise<boolean> => {
+    if(!activeSite||reviewingRef.current||uploadSiteRef.current||openingSiteRef.current)return false;
+    const siteId=siteIdRef.current; reviewingRef.current=true;setSubmittingReview(true);
+    try {
+      if(!(await saveDraft(true,true))||siteIdRef.current!==siteId)return false;
+      savingRef.current=true;
+      const result=await api<{draftVersion:number;message:string;reviewId?:string}>(`/api/sites/${encodeURIComponent(siteId!)}/name-change`,{method:'POST',body:JSON.stringify({name,version:versionRef.current,currentName:activeSite.name})});
+      if(siteIdRef.current!==siteId)return false;
+      versionRef.current=Math.max(versionRef.current,result.draftVersion);
+      setActiveSite(current=>current?.id===siteId?{...current,draft_version:versionRef.current}:current);
+      setSaveState(dirtyRef.current?'unsaved':'saved');
+      window.dispatchEvent(new Event('ksa:notifications-refresh'));
+      notify(lang==='ar'?result.message:tr('وصل طلب تغيير الرابط؛ يبقى الحالي فعالاً حتى الاعتماد.','Your link change is awaiting approval. The current link remains active until publication.'));return true;
+    }catch(error){notify(errorMessage(error));return false;}
+    finally{savingRef.current=false;reviewingRef.current=false;setSubmittingReview(false);}
+  };
+
   const compressImage = async (file: File, initialMaxSide = 2200): Promise<File> => {
     if (!file.type.startsWith('image/')) throw new Error(tr('اختر ملف صورة صالحاً.', 'Choose a valid image file.'));
     const source = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -1268,6 +1286,7 @@ export default function Dashboard() {
             <button className="dashboard-site-switch" title={activeSite?.status === 'published' ? tr('فتح الموقع المنشور', 'Open published site') : tr('معاينة الهوية قبل النشر', 'Preview before publication')} onClick={() => { if (activeSite?.status === 'published' && activeSiteUrl) window.open(activeSiteUrl, '_blank', 'noopener'); else setPreviewOpen(true); }} disabled={!activeSiteUrl}>
               <Globe2 size={16} /><span dir="ltr"><bdi>{activeSiteUrl ? activeSiteUrl.replace(/^https:\/\//, '') : tr('لا يوجد اسم محجوز', 'No reserved name')}</bdi></span><ExternalLink size={14} />
             </button>
+            {activeSite?.name&&<SiteNameEditor key={activeSite.id} siteId={activeSite.id} currentName={activeSite.name} disabled={submittingReview||Boolean(uploading)||openingSite} onRequest={requestNamePublication} onPublish={()=>void submitForReview()}/>}
             <span className="dashboard-status">{publicationLabel(activeSite?.status, lang)}</span>
             <div className={`dashboard-save-state is-${saveState}`} role="status" aria-live="polite" aria-atomic="true"><span />{tr(...statusText[saveState])}</div>
           </div>}

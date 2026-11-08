@@ -1,3 +1,4 @@
+import { pendingName } from './subdomains';
 import { draftWithIdentities } from '../shared/profile-visibility';
 import { HTTPException } from 'hono/http-exception';
 import { z } from 'zod';
@@ -33,16 +34,18 @@ export async function publishCurrentDraft(c: Ctx, siteId: string, expectedVersio
   if (!account) throw new HTTPException(409, { message: 'فعّل حساب صاحب الموقع أولاً' });
   const name = await one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE site_id=? LIMIT 1', site.id);
   if (!name) throw new HTTPException(409, { message: 'احجز اسم الموقع أولاً' });
+  const nameRequest=await pendingName(c,site.id);
   const snapshot = JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(site.draft),site.published?JSON.parse(site.published):undefined), account.name));
   // Existing immutable evidence may predate private-note separation. Compare its
   // publishable content, never rewrite history or require the user to edit again.
-  if (site.status==='published'&&site.published_version===site.draft_version&&site.published&&JSON.stringify(publicationProfile(JSON.parse(site.published),account.name))===snapshot){
+  if (!nameRequest&&site.status==='published'&&site.published_version===site.draft_version&&site.published&&JSON.stringify(publicationProfile(JSON.parse(site.published),account.name))===snapshot){
     const review=await one<{id:string}>(c,"SELECT r.id FROM reviews r JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND d.status='approved' ORDER BY d.decided_at DESC LIMIT 1",site.id,site.draft_version);
     if(review)await background(c,publicationNotice(c,review.id));
     return {published:true,url:`https://${name.name}.${c.env.ROOT_DOMAIN}`,idempotent:true};
   }
-  const pending = await one<{ id: string; snapshot: string; base_version: number }>(c,
+  let pending = await one<{ id: string; snapshot: string; base_version: number }>(c,
     "SELECT r.id,r.snapshot,r.base_version FROM reviews r LEFT JOIN review_decisions d ON d.review_id=r.id WHERE r.site_id=? AND r.draft_version=? AND r.status='pending' AND d.review_id IS NULL ORDER BY r.created_at DESC LIMIT 1", site.id, site.draft_version);
+  if(pending&&nameRequest&&pending.base_version!==site.published_version)pending=null;
   const reviewId = pending?.id || uid();
   if (pending && (JSON.stringify(publicationProfile(draftWithIdentities(JSON.parse(pending.snapshot),site.published?JSON.parse(site.published):undefined), account.name)) !== snapshot || pending.base_version !== site.published_version)) throw new HTTPException(409, { message: 'تغيّر الموقع. احفظ أحدث تعديل ثم أعد النشر' });
   const clock = now();
@@ -55,12 +58,13 @@ export async function publishCurrentDraft(c: Ctx, siteId: string, expectedVersio
   try { await c.env.DB.batch(statements); }
   catch {
     const committed=await one<{id:string}>(c,"SELECT r.id FROM reviews r JOIN review_decisions d ON d.review_id=r.id JOIN sites s ON s.id=r.site_id WHERE r.site_id=? AND r.draft_version=? AND d.status='approved' AND s.published_version=? AND s.published=?",site.id,site.draft_version,site.draft_version,snapshot);
-    if(committed){await background(c,publicationNotice(c,committed.id));return {published:true,url:`https://${name.name}.${c.env.ROOT_DOMAIN}`,idempotent:true};}
+    if(committed){await background(c,publicationNotice(c,committed.id));const liveName=await one<{name:string}>(c,'SELECT name FROM dns_names WHERE site_id=? ORDER BY created_at LIMIT 1',site.id);return {published:true,url:`https://${liveName?.name||name.name}.${c.env.ROOT_DOMAIN}`,idempotent:true};}
     throw new HTTPException(409,{message:'تغيّر الطلب. حدّث البطاقة ثم أعد النشر'});
   }
   await audit(c, 'site.published', site.id, { reviewId, version: site.draft_version, responsibility: 'administration' });
   await background(c,publicationNotice(c,reviewId));
-  return { published: true, url: `https://${name.name}.${c.env.ROOT_DOMAIN}`, reviewId, idempotent: false };
+  const publishedName=await one<{name:string}>(c,'SELECT name FROM dns_names WHERE site_id=? ORDER BY created_at LIMIT 1',site.id);
+  return { published: true, url: `https://${publishedName?.name||name.name}.${c.env.ROOT_DOMAIN}`, reviewId, idempotent: false };
 }
 
 async function managedScope(c: Ctx, userId: number) {

@@ -1,3 +1,4 @@
+import { pendingName } from './subdomains';
 import { usageMetricsEnabled } from './optional-metrics';
 import { rate } from './core';
 import { submissionNotice } from './publication-notice';
@@ -1097,7 +1098,7 @@ export function registerBusiness(app: App): void {
     }
     const [reserved, existing] = await Promise.all([
       one<{ name: string }>(c, 'SELECT name FROM reserved_names WHERE name=? AND active=1', candidate),
-      one<{ name: string }>(c, 'SELECT name FROM dns_names WHERE name=?', candidate),
+      one<{ name: string }>(c, "SELECT name FROM dns_names WHERE name=? UNION ALL SELECT new_name AS name FROM subdomain_change_requests WHERE new_name=? AND status='pending' LIMIT 1", candidate,candidate),
     ]);
     const available = !reserved && !existing;
     const suffixes = ['-sa', '1', '-pro'];
