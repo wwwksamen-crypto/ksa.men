@@ -36,6 +36,9 @@ import { api, Button, useApp } from './lib';
 import './personal.css';
 import { list, itemText, mediaSource, socialLink, brandNames, youtubeLink } from '../../shared/profile-content';
 import { brandPaths } from './brand-paths';
+import SocialIconGrid from './SocialIconGrid';
+import { orderedSocialLinks } from '../../shared/social-platforms';
+import { contactQrPayload } from './compact-qr';
 import { generateVCard } from './vcard';
 import IdentityExportActions, { type PublicDownloads } from './IdentityExportActions';
 import LoadingState from './LoadingState';
@@ -45,6 +48,7 @@ type ProfileRecord = Record<string, unknown>;
 export type PublicProfileData = {
   profile?: ProfileRecord;
   downloads?: PublicDownloads;
+  socialsVisible?: boolean;
   analyticsEnabled?: boolean;
   site?: string;
   name?: string;
@@ -90,7 +94,9 @@ function roundedCanvasRect(context: CanvasRenderingContext2D, x: number, y: numb
 
 async function brandedQr(url: string, mark: string) {
   const qr = await import('qrcode');
-  const dataUrl = await qr.toDataURL(url, { width: 640, margin: 4, errorCorrectionLevel: 'H', color: { dark: '#004422', light: '#FFFFFFFF' } });
+  let dataUrl='';
+  for(const level of ['H','Q','M'] as const){try{dataUrl=await qr.toDataURL(url,{width:640,margin:4,errorCorrectionLevel:level,color:{dark:'#004422',light:'#FFFFFFFF'}});break;}catch{}}
+  if(!dataUrl)throw new Error('QR capacity exceeded');
 
   try {
     const code = await loadPublicImage(dataUrl);
@@ -293,7 +299,7 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
     void brandedQr(profileUrl, profilePhoto)
       .then((value) => { if (current) setQr(value); })
       .catch(() => { if (current) setQr(''); });
-    void brandedQr(generateVCard(profile, siteName, profileUrl), profilePhoto)
+    void brandedQr(contactQrPayload(profile, siteName, profileUrl), profilePhoto)
       .then((value) => { if (current) setVcardQr(value); })
       .catch(() => { if (current) setVcardQr(''); });
     return () => { current = false; };
@@ -328,6 +334,14 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
     }
   };
 
+  const [qrDownloading,setQrDownloading]=useState('');
+  const downloadLightQr=async(kind:'site'|'vcard')=>{
+    if(!profileUrl||qrDownloading||kind==='vcard'&&data.downloads?.vcard===false)return;
+    setQrDownloading(kind);
+    try { const {downloadCompactQr}=await import('./compact-qr');await downloadCompactQr(kind==='site'?profileUrl:contactQrPayload(profile,siteName,profileUrl),`${siteName||'ksa-men'}-${kind}-qr-light.png`);track(kind==='vcard'?'vcard':'qr'); }
+    catch { notify(t('تعذر تجهيز الصورة؛ حاول مجدداً.','Could not prepare the image. Try again.')); }
+    finally {setQrDownloading('');}
+  };
   const share = async () => {
     if (!profileUrl) return;
     try {
@@ -363,6 +377,8 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
   const skillImages = itemsFor(profile, 'skillImages');
   const workImages = itemsFor(profile, 'workImages');
   const socials = [...itemsFor(profile, 'socials'), ...(youtube ? [{ url: youtube.url }] : [])].map(socialLink).filter((item): item is NonNullable<ReturnType<typeof socialLink>> => Boolean(item)).filter((item, i, all) => all.findIndex(other => other.url === item.url) === i);
+  const chosenSocialUrls=new Set(orderedSocialLinks(socials).map(link=>link.url));
+  const extraSocials=socials.filter(link=>!chosenSocialUrls.has(link.url));
   const hasRadar = skillRadar.some(group => group.items.map(itemText).some(Boolean));
   const buttons = itemsFor(profile, 'buttons');
   const allowContact = profile.allowContact !== false;
@@ -487,15 +503,13 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
           </div> : <p className="identity-aside__empty">{t('لا توجد وسيلة تواصل عامة مضافة.', 'No public contact method has been added.')}</p>}
         </section>
 
-        {(socials.length > 0 || buttons.length > 0) && <section className="identity-card identity-aside__links">
+        {(data.socialsVisible !== false || buttons.length > 0) && <section className="identity-card identity-aside__links">
           <div className="identity-aside__marker"><Link2 size={18}/><span>{t('روابط مختارة', 'SELECTED LINKS')}</span></div>
-          <div className="identity-social-icons" aria-label={t('حسابات التواصل', 'Social profiles')}>
-            {socials.map(social => <a key={social.url} href={social.url} target="_blank" rel="noopener noreferrer" title={social.brand === 'website' ? social.label : brandNames[social.brand]} aria-label={`${social.brand === 'website' ? social.label : brandNames[social.brand]} — ${new URL(social.url).pathname.slice(1) || social.host}`} onClick={() => track('contact')}><BrandIcon brand={social.brand}/></a>)}
-          </div><div className="identity-link-list">
+          {data.socialsVisible !== false && <><SocialIconGrid values={socials} className="identity-social-icons" onClick={()=>track('contact')}/>{extraSocials.length>0&&<div className="identity-social-extra" aria-label={t('روابط اجتماعية إضافية','Additional social links')}>{extraSocials.map(social=><a key={social.url} href={social.url} target="_blank" rel="noopener noreferrer" aria-label={social.brand==='website'?social.label:brandNames[social.brand]} onClick={()=>track('contact')}><BrandIcon brand={social.brand}/></a>)}</div>}</>}<div className="identity-link-list">
             {buttons.map((item, index) => {
               const link = socialLink(item);
               if (!link) return null;
-              return <a key={`${link.url}-${index}`} href={link.url} target="_blank" rel="noopener noreferrer" onClick={() => track('contact')}><Link2 size={17}/><span>{link.label}</span><ArrowUpRight size={14}/></a>;
+              return <a key={`${link.url}-${index}`} href={link.url} target="_blank" rel="noopener noreferrer" onClick={() => track('contact')}><Link2 size={17}/><span dir="auto">{link.label}</span><ArrowUpRight size={14}/></a>;
             })}
           </div>
         </section>}
@@ -503,8 +517,8 @@ export function IdentityView({ data, previewMode = false }: { data: PublicProfil
         <section ref={qrRef} className="identity-card identity-qr">
           <div className="identity-aside__marker"><span>{t('للوصول السريع', 'SCAN TO CONNECT')}</span></div>
           <div className="identity-qr__dual">
-            {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز الاستجابة السريعة لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><a download={`${siteName || 'ksa-men'}-site-qr.png`} href={qr} className="identity-page__text-link" onClick={() => track('qr')}><Download size={15}/>{t('تنزيل', 'Download')}</a></div>}
-            {vcardQr && data.downloads?.vcard !== false && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز بطاقة الاتصال', 'QR code for the contact card')}/></div><strong>vCard</strong><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
+            {qr && <div><div className="identity-qr__image"><img src={qr} alt={t('رمز الاستجابة السريعة لموقع الهوية', 'QR code for this identity site')}/></div><strong>{t('الموقع', 'Website')}</strong><button type="button" disabled={Boolean(qrDownloading)} className="identity-page__text-link" onClick={()=>void downloadLightQr('site')}><Download size={15}/>{t('تنزيل PNG خفيف','Light PNG')}</button></div>}
+            {vcardQr && data.downloads?.vcard !== false && <div><div className="identity-qr__image"><img src={vcardQr} alt={t('رمز بطاقة الاتصال', 'QR code for the contact card')}/></div><strong>{t('بطاقة الاتصال','vCard')}</strong><button type="button" disabled={Boolean(qrDownloading)} className="identity-page__text-link" onClick={()=>void downloadLightQr('vcard')}><Download size={15}/>{t('تنزيل PNG خفيف','Light PNG')}</button><button type="button" className="identity-page__text-link" onClick={() => void downloadVCard()}><Download size={15}/>{t('حفظ جهة الاتصال', 'Save contact')}</button></div>}
           </div>
           <p>{t('رمز للموقع ورمز مستقل لبطاقة الاتصال؛ لا يتضمنان حقولاً اختار صاحب الهوية إخفاءها.', 'One code opens the site and one saves the contact card; neither includes fields the owner chose to hide.')}</p>
         </section>

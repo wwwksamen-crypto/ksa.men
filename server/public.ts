@@ -101,7 +101,7 @@ export function registerPublic(app:App){
     if(!await personalGate(c,site)){
       return c.json({locked:true,site:site.id,name:site.name,photo:typeof profile.photo==='string'?profile.photo:'/assets/logo.webp',message:site.lock_message});
     }
-    return c.json({profile,downloads:publicDownloads(policy.hidden),site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,analyticsEnabled:await usageMetricsEnabled(c),userId:site.user_id?'C'+site.user_id:null});
+    return c.json({profile,socialsVisible:!policy.hidden.includes('socials'),downloads:publicDownloads(policy.hidden),site:site.id,name:site.name,indexable:policy.indexable&&c.get('platformLockMode')==='open',branding:!!site.branding,analyticsEnabled:await usageMetricsEnabled(c),userId:site.user_id?'C'+site.user_id:null});
   });
 
   app.post('/api/public/unlock',async c=>{

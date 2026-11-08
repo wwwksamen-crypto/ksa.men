@@ -1,3 +1,4 @@
+import { socialOverrides, validateSocialOverrides } from '../shared/social-platforms';
 import { decideMembershipRequest } from './membership-decisions';
 import { background } from './managed';
 import { publicationNotice } from './publication-notice';
@@ -74,7 +75,7 @@ const MESSAGE_WINDOW = 24 * 60 * 60;
 // This is deliberately a closed picker allow-list. Store the heart in its base
 // form because Unicode property matching exposes U+2764 separately from VS16.
 const POSITIVE_EMOJI = new Set(["🙂", "😊", "👍", "🙏", "✨", "🌟", "🎉", "🤝", "💚", "❤"]);
-const PUBLIC_SETTING_KEYS = new Set(["lock", "bank", "contact", "retention", "prices", "season"]);
+const PUBLIC_SETTING_KEYS = new Set(["lock", "bank", "contact", "retention", "prices", "season", "social_links"]);
 const BACKUP_TABLES = [
   "settings",
   "users",
@@ -358,9 +359,9 @@ function decisionValue(value: unknown): "approved" | "rejected" {
   fail(400, "Decision is invalid", "invalid_input");
 }
 
-function settingKey(value: unknown): "lock" | "bank" | "contact" | "retention" | "prices" | "season" {
+function settingKey(value: unknown): "lock" | "bank" | "contact" | "retention" | "prices" | "season" | "social_links" {
   const requested = text(value, "key", { max: 64 });
-  const aliases: Record<string, "lock" | "bank" | "contact" | "retention" | "prices" | "season"> = {
+  const aliases: Record<string, "lock" | "bank" | "contact" | "retention" | "prices" | "season" | "social_links"> = {
     lock: "lock",
     platform_lock: "lock",
     bank: "bank",
@@ -370,6 +371,7 @@ function settingKey(value: unknown): "lock" | "bank" | "contact" | "retention" |
     prices: "prices",
     season: "season",
     seasonal: "season",
+    social_links: "social_links",
   };
   const key = aliases[requested];
   if (!key || !PUBLIC_SETTING_KEYS.has(key)) fail(400, "This setting cannot be changed through the operations API", "invalid_setting");
@@ -1222,7 +1224,8 @@ export function registerOperations(app: App): void {
     fresh(c);
     const body = await input(c);
     const key = settingKey(body.key);
-    const existing = await storedSetting(c, key);
+    const stored = key === 'social_links' ? await one<{key:string;value:string}>(c,"SELECT key,value FROM settings WHERE key=?",key) : await storedSetting(c,key);
+    const existing = stored || {key,value:'{}'};
     let value: string;
     if (key === "lock") {
       const raw = body.value;
@@ -1233,13 +1236,22 @@ export function registerOperations(app: App): void {
       const decoded = parseJson(normalized) as Record<string, unknown>;
       if (typeof password === "string" && password.trim()) decoded.passwordHash = await hashSecret(password.trim());
       value = JSON.stringify(decoded);
+    } else if (key === 'social_links') {
+      try {
+        value=JSON.stringify(validateSocialOverrides(body.value));
+        const previous=JSON.stringify(validateSocialOverrides(body.previous));
+        if(previous!==JSON.stringify(socialOverrides(parseJson(existing.value))))fail(409,'حدّث روابط المنصة قبل الحفظ؛ وصلت نسخة أحدث.','stale_setting');
+      } catch(error) { if(error instanceof HTTPException)throw error;fail(400,error instanceof Error?error.message:'روابط غير صحيحة','invalid_input'); }
     } else if (key === 'season') {
       value = normalizeSeason(body.value);
     } else {
       value = JSON.stringify(key === "bank" && body.value === undefined ? body.instructions ?? {} : body.value ?? {});
       if (value.length > 20_000) fail(400, "Setting value is too large", "invalid_input");
     }
-    await run(c, "UPDATE settings SET value=? WHERE key=?", value, key);
+    if(key==='social_links') {
+      const changedSetting=stored ? await run(c,"UPDATE settings SET value=? WHERE key=? AND value=?",value,key,existing.value) : await run(c,"INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING",key,value);
+      if(!changed(changedSetting))fail(409,'حدّث روابط المنصة قبل الحفظ؛ وصلت نسخة أحدث.','stale_setting');
+    } else await run(c, "UPDATE settings SET value=? WHERE key=?", value, key);
     await audit(c, "setting.update", `setting:${key}`, JSON.stringify({ actor: user.id }));
     const setting = publicSetting({ key, value });
     return c.json({

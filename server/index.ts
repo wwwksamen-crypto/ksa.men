@@ -1,6 +1,7 @@
 import { registerSubdomains, resolveOwnerRedirect } from './subdomains';
 import { publicInstitutionalContact } from '../shared/institutional-contact';
 import { businessApproach } from '../shared/business-approach';
+import { socialOverrides } from '../shared/social-platforms';
 import { usageMetricsEnabled } from './optional-metrics';
 import { registerReferrals } from './referrals';
 import { registerSEO, rootHTML, knownRootPage } from './seo';
@@ -115,7 +116,7 @@ function publicSeason(value: unknown) {
 }
 app.get('/api/platform', async c => {
   const lock: any = await setting(c, 'lock', { mode: 'private' });
-  return c.json({ lock: { mode: lock.mode, message: lock.message, reason: lock.reason, passwordEnabled: !!lock.passwordHash }, access: lock.mode === 'open' || ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '') || await gate(c, lock), contact: publicInstitutionalContact(await setting(c, 'contact')), season: publicSeason(await setting(c, 'season')), optionalMetrics: await usageMetricsEnabled(c) });
+  return c.json({ lock: { mode: lock.mode, message: lock.message, reason: lock.reason, passwordEnabled: !!lock.passwordHash }, access: lock.mode === 'open' || ['owner', 'manager', 'moderator'].includes(c.get('user')?.role || '') || await gate(c, lock), contact: publicInstitutionalContact(await setting(c, 'contact')), socialLinks:socialOverrides(await setting(c,'social_links')),  season: publicSeason(await setting(c, 'season')), optionalMetrics: await usageMetricsEnabled(c) });
 });
 app.post('/api/gate', async c => {
   const lock: any = await setting(c, 'lock');

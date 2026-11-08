@@ -77,3 +77,12 @@ describe('the same complete visitor view in a local draft preview', () => {
     expect(container.querySelectorAll('input')).toHaveLength(1);expect(container.querySelector('path')?.getAttribute('d')).toBeTruthy();
   });
 });
+
+describe('default social grid and owner privacy — local identity DOM',()=>{
+ it('shows exactly eight defaults when the member has no accounts, and keeps custom external CTAs',async()=>{
+  await render({...fixture,socials:[],youtube:''});const links=container.querySelectorAll('.social-icon-grid a');expect(links).toHaveLength(8);expect(links[0].getAttribute('href')).toBe('https://www.linkedin.com/');expect(links[7].getAttribute('href')).toBe('https://telegram.org/');expect(container.querySelector('.identity-link-list a[href="https://example.org/"]')?.textContent).toContain('وجهتي');
+ });
+ it('never recreates social links hidden by the policy flag, while retaining separately visible buttons',async()=>{
+  await act(async()=>root.render(<IdentityView previewMode data={{profile:sanitizeProfile({...fixture,hidden:['socials']}),name:'local-profile',socialsVisible:false,downloads:{profile:true,ats:true,badge:true,vcard:false}}}/>));expect(container.querySelector('.social-icon-grid')).toBeNull();expect(container.querySelector('.identity-social-extra')).toBeNull();expect(container.querySelector('.identity-link-list a[href="https://example.org/"]')).not.toBeNull();expect([...container.querySelectorAll('button')].some(button=>button.textContent?.includes('حفظ جهة الاتصال'))).toBe(false);
+ });
+});

@@ -42,6 +42,24 @@ beforeAll(async()=>{
 },30000);
 
 describe.sequential('KSA.MEN integrated functional and security pass',()=>{
+ it('social links have eight official defaults and only the owner can customize them',async()=>{
+  const platform=await request('/api/platform');expect(platform.data.socialLinks).toEqual({});
+  for(const actor of ['alice','manager','moderator'])expect((await request('/api/admin/settings',actor,'PUT',{key:'social_links',value:{x:'https://x.com/local'},previous:{}})).status).toBe(403);
+  expect(bridge({sql:"SELECT key FROM settings WHERE key='social_links'"}).results).toHaveLength(0);
+ });
+ it('social owner saves one isolated setting with audit, no change to contact and safe public projection',async()=>{
+  const before=bridge({sql:"SELECT value FROM settings WHERE key='contact'"}).results[0];
+  const saved=await request('/api/admin/settings','owner','PUT',{key:'social_links',value:{linkedin:'https://www.linkedin.com/company/local',x:'https://x.com/local'},previous:{}});expect(saved.status).toBe(200);
+  expect((await request('/api/platform')).data.socialLinks.x).toBe('https://x.com/local');expect(bridge({sql:"SELECT value FROM settings WHERE key='contact'"}).results[0]).toEqual(before);
+  expect(bridge({sql:"SELECT action FROM audit WHERE target='setting:social_links'"}).results).toHaveLength(1);
+ });
+ it('social invalid host, unsafe URL and stale updates cannot overwrite the saved owner links',async()=>{
+  const previous={linkedin:'https://www.linkedin.com/company/local',x:'https://x.com/local'};
+  expect((await request('/api/admin/settings','owner','PUT',{key:'social_links',value:{x:'https://x.com.evil.example'},previous})).status).toBe(400);
+  expect((await request('/api/admin/settings','owner','PUT',{key:'social_links',value:{x:'javascript:alert(1)'},previous})).status).toBe(400);
+  expect((await request('/api/admin/settings','owner','PUT',{key:'social_links',value:{x:'https://x.com/new'},previous:{}})).status).toBe(409);
+  expect((await request('/api/platform')).data.socialLinks.x).toBe('https://x.com/local');
+ });
  it('registration fixtures get unique ascending C ids and exactly 100 points',async()=>{expect(new Set(Object.values(users).map(u=>u.id)).size).toBe(6);for(const user of Object.values(users)){const row=bridge({sql:'SELECT balance FROM wallets WHERE user_id=?',params:[user.id]}).results[0];expect(row.balance).toBe(100);}expect(bridge({sql:"SELECT COUNT(*) AS n FROM ledger WHERE kind='registration'"}).results[0].n).toBe(6);});
  it('unauthenticated administration is denied with security/no-store headers',async()=>{const x=await request('/api/admin/users');expect(x.status).toBe(401);expect(x.r.headers.get('Cache-Control')).toContain('no-store');expect(x.r.headers.get('Content-Security-Policy')).toContain("object-src 'none'");});
  it('ordinary user cannot read administration or write roles',async()=>{expect((await request('/api/admin/users','alice')).status).toBe(403);expect((await request('/api/admin/users/'+users.bob.id+'/action','alice','POST',{action:'role',role:'owner'})).status).toBe(403);});

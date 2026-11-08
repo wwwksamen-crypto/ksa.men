@@ -2,6 +2,7 @@ import { displayCountry } from '../../shared/display-country';
 import { displayError } from './lib';
 import { pdfText } from './pdf-text';
 import type { PdfInlineText } from './pdf-text';
+import { contactQrPayload, downloadCompactQr } from './compact-qr';
 import { generateVCard } from './vcard';
 export { generateVCard } from './vcard';
 import { sanitizeProfile } from '../../shared/profile-visibility';
@@ -520,8 +521,8 @@ export default function Exports() {
   }, [avatar, publicUrl]);
   const buildVCardQr = useCallback(async () => {
     if (!vcardPayload) throw new Error('A contact card is required for QR export.');
-    return qrDataUrl(vcardPayload, { width: 1800, centerImage: avatar });
-  }, [avatar, vcardPayload]);
+    return qrDataUrl(contactQrPayload(profile as Record<string,unknown>,data!.name,publicUrl), { width: 1800, centerImage: avatar });
+  }, [avatar, vcardPayload, profile, data, publicUrl]);
 
   useEffect(() => {
     let disposed = false;
@@ -662,11 +663,17 @@ export default function Exports() {
     notify(t('بدأ تنزيل بطاقة الاتصال.', 'Your contact card download has started.'));
   };
 
+  const downloadLightQr=async()=>{
+    if(!profile||!data||!verified||loading||qrMode==='vcard'&&!isVisible(profile,'exportVcard'))return;setBusy('qr');
+    try {await downloadCompactQr(qrMode==='vcard'?contactQrPayload(profile,data.name,publicUrl):publicUrl,filename(qrMode==='vcard'?'vcard-qr-light':'site-qr-light','png'));notify(t('بدأ تنزيل صورة PNG الخفيفة.','Your lightweight PNG download has started.'));}
+    catch(cause){notify(displayError(cause,t('تعذر إنشاء الرمز.','Could not create the code.')));}finally{setBusy('');}
+  };
   const downloadQr = async () => {
     if (!data || !publicUrl) return;
     setBusy('qr');
     try {
       const isVcard = qrMode === 'vcard';
+      if(isVcard&&profile&&!isVisible(profile,'exportVcard'))return;
       const image = isVcard ? (vcardQr || await buildVCardQr()) : (profileQr || await buildProfileQr());
       downloadDataUrl(image, filename(isVcard ? 'vcard-qr' : 'site-qr', 'png'));
       notify(t('تم تجهيز رمز الاستجابة السريعة عالي الدقة للطباعة.', 'A high-resolution print QR has been prepared.'));
@@ -702,7 +709,7 @@ export default function Exports() {
   const actionForRoute = () => {
     if (kind === 'ats') return <Button onClick={() => void downloadPdf(true)} disabled={!verified || Boolean(busy)}><FileText size={17}/>{busy === 'ats' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل السيرة الذاتية', 'Download ATS résumé')}</Button>;
     if (kind === 'vcard') return <Button onClick={downloadVCard} disabled={!verified}><ContactRound size={17}/>{t('تنزيل بطاقة الاتصال', 'Download vCard')}</Button>;
-    if (kind === 'qr') return <Button onClick={() => void downloadQr()} disabled={!verified || Boolean(busy)}><QrCode size={17}/>{busy === 'qr' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {qrMode === 'vcard' ? t('تنزيل رمز الاستجابة السريعة لبطاقة الاتصال', 'Download vCard QR') : t('تنزيل رمز الاستجابة السريعة للموقع', 'Download site QR')}</Button>;
+    if (kind === 'qr') return <><Button onClick={()=>void downloadLightQr()} disabled={!verified||Boolean(busy)}><Download size={17}/>{t('تنزيل PNG خفيف','Download light PNG')}</Button><Button onClick={() => void downloadQr()} disabled={!verified || Boolean(busy)}><QrCode size={17}/>{busy === 'qr' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {qrMode === 'vcard' ? t('تنزيل رمز الاستجابة السريعة لبطاقة الاتصال', 'Download vCard QR') : t('تنزيل رمز الاستجابة السريعة للموقع', 'Download site QR')}</Button></>;
     if (kind === 'badge') return <Button onClick={printBadge} disabled={!verified}><Printer size={17}/>{t('طباعة شارة المؤتمر', 'Print conference badge')}</Button>;
     if (kind === 'card') return <Button onClick={() => void imageFromCard('badge')} disabled={!verified || Boolean(busy)}><ImageDown size={17}/>{busy === 'badge' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل البطاقة الرقمية', 'Download digital card')}</Button>;
     if (kind === 'social') return <Button onClick={() => void imageFromCard('social')} disabled={!verified || Boolean(busy)}><Share2 size={17}/>{busy === 'social' ? <LoaderCircle className="exports-spin" size={17}/> : <Download size={17}/>} {t('تنزيل بطاقة المشاركة', 'Download social card')}</Button>;
@@ -798,7 +805,7 @@ export default function Exports() {
         </section>}
 
         {kind === 'qr' && <section className="exports-qr-preview card">
-          <div><p className="exports-kicker"><QrCode size={15}/>{t('معاينة قابلة للمسح', 'Scannable preview')}</p><h2>{qrMode === 'site' ? t('رمز موقع الهوية', 'Identity website code') : t('رمز بطاقة الاتصال', 'Contact-card code')}</h2><p>{qrMode === 'site' ? t('يرتبط هذا الرمز بعنوان ملفك المنشور.', 'This code opens your published identity address.') : t('يحمل هذا الرمز بطاقة بطاقة الاتصال بوسائل الاتصال العامة فقط.', 'This code carries a vCard with public contact channels only.')}</p><div className="exports-qr-mode-switch" role="group" aria-label={t('نوع رمز الاستجابة السريعة', 'QR type')}><button type="button" className={qrMode === 'site' ? 'is-active' : ''} onClick={() => setQrMode('site')}>{t('الموقع', 'Website')}</button><button type="button" className={qrMode === 'vcard' ? 'is-active' : ''} onClick={() => setQrMode('vcard')}>{t('بطاقة الاتصال', 'vCard')}</button></div><bdi dir="ltr">{qrMode === 'site' ? publicUrl : t('بطاقة اتصال عامة', 'Public contact card')}</bdi></div>
+          <div><p className="exports-kicker"><QrCode size={15}/>{t('معاينة قابلة للمسح', 'Scannable preview')}</p><h2>{qrMode === 'site' ? t('رمز موقع الهوية', 'Identity website code') : t('رمز بطاقة الاتصال', 'Contact-card code')}</h2><p>{qrMode === 'site' ? t('يرتبط هذا الرمز بعنوان ملفك المنشور.', 'This code opens your published identity address.') : t('يحمل الرمز أساسيات الاتصال العامة، وتبقى الملاحظات الطويلة في ملف جهة الاتصال.', 'This code carries essential public contacts; long notes remain in the contact file.')}</p><div className="exports-qr-mode-switch" role="group" aria-label={t('نوع رمز الاستجابة السريعة', 'QR type')}><button type="button" className={qrMode === 'site' ? 'is-active' : ''} onClick={() => setQrMode('site')}>{t('الموقع', 'Website')}</button><button type="button" className={qrMode === 'vcard' ? 'is-active' : ''} disabled={!isVisible(profile,'exportVcard')} onClick={() => setQrMode('vcard')}>{t('بطاقة الاتصال', 'vCard')}</button></div><bdi dir="ltr">{qrMode === 'site' ? publicUrl : t('بطاقة اتصال عامة', 'Public contact card')}</bdi></div>
           <div className="exports-qr-preview__code">{(qrMode === 'site' ? profileQr : vcardQr) ? <img src={qrMode === 'site' ? profileQr : vcardQr} alt={qrMode === 'site' ? t('رمز الاستجابة السريعة للملف العام', 'QR code for the public profile') : t('رمز الاستجابة السريعة لبطاقة الاتصال', 'QR code for the contact card')}/> : <LoaderCircle className="exports-spin" size={28}/>}</div>
         </section>}
 
