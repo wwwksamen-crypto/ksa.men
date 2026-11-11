@@ -89,4 +89,19 @@ describe('member creation and existing editor — local DOM/mock API only',()=>{
     history.replaceState({},'', '/dashboard?tab=services');await mount();expect(container.querySelector('.dashboard-services')?.firstElementChild?.classList).toContain('dashboard-exports');
     const links=[...container.querySelectorAll<HTMLAnchorElement>('.dashboard-export-grid a')];expect(links).toHaveLength(6);expect(links[0].getAttribute('href')).toBe('/export/profile?site=local-site&lang=ar');expect(links[1].getAttribute('href')).toBe('/export/ats?site=local-site&lang=ar');
   });
+  it('connects guide navigation to the stable editor and output/account workspaces without submitting',async()=>{
+    site.status='published';site.published_version=2;await mount();
+    for(const action of ['member-edit','member-outputs','member-account']){
+      await act(async()=>window.dispatchEvent(new CustomEvent('ksa:sanad-action',{detail:{action}})));await flush();
+      if(action==='member-edit')expect(container.querySelector('.dashboard-edit-card')).not.toBeNull();
+      if(action==='member-outputs')expect(container.querySelector('.dashboard-exports')).not.toBeNull();
+      if(action==='member-account')expect(container.querySelector('.member-account-tabs')).not.toBeNull();
+    }
+    expect(site.draft.notes).toBe('ملاحظات لا تحذف');expect(vi.mocked(api).mock.calls.some(([p,o])=>o?.method&&o.method!=='GET')).toBe(false);
+  });
+  it('reuses deliberate preview from the guide, while unknown/destructive actions remain ignored',async()=>{
+    await mount();await act(async()=>window.dispatchEvent(new CustomEvent('ksa:sanad-action',{detail:{action:'erase-everything'}})));await flush();expect(container.querySelector('.dashboard-preview-modal')).toBeNull();
+    await act(async()=>window.dispatchEvent(new CustomEvent('ksa:sanad-action',{detail:{action:'member-preview'}})));await flush();expect(container.querySelector('.dashboard-preview-modal')).not.toBeNull();expect(vi.mocked(api).mock.calls.some(([p])=>p.endsWith('/submit')||p.includes('erasure'))).toBe(false);
+  });
+
 });

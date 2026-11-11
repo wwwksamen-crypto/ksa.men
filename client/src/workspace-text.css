@@ -1,0 +1,67 @@
+/* Scoped composition. No truncation of editable/user text or change to PDF/ATS templates. */
+:is(.dashboard.member-workspace, .admin-console.admin-focused, .sanad-dialog) {
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures;
+  line-height: 1.75;
+}
+:is(.dashboard.member-workspace, .admin-console.admin-focused) :is(h1,h2,h3,h4) {
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+:is(.dashboard.member-workspace, .admin-console.admin-focused) :is(p,li,dd,.muted,.field>span,label>span) {
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.85;
+  text-wrap: pretty;
+}
+:is(.dashboard.member-workspace, .admin-console.admin-focused) :is(.field,.stack,.admin-mini-form,.dashboard-settings-grid>div) { min-inline-size: 0; }
+:is(.dashboard.member-workspace, .admin-console.admin-focused) :is(input,textarea,select) { font-size: max(16px,1rem); line-height: 1.65; min-inline-size: 0; }
+:is(.dashboard.member-workspace, .admin-console.admin-focused) textarea { white-space: pre-wrap; overflow-wrap: anywhere; }
+:is(.dashboard.member-workspace, .admin-console.admin-focused) :is(button,.button,summary) {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  min-block-size: 44px;
+}
+:is(.dashboard.member-workspace, .admin-console.admin-focused) :is(button,.button,summary)>svg { flex-shrink: 0; }
+:is(.member-workspace,.admin-focused) bdi { unicode-bidi: isolate; overflow-wrap: anywhere; }
+:is(.member-workspace,.admin-focused) [dir="auto"]:not(input):not(textarea) { unicode-bidi: plaintext; }
+.member-workspace .dashboard-section-heading h2 { font-size: clamp(20px,2.5vw,27px); line-height: 1.55; }
+.member-workspace .dashboard-hero h1 { line-height: 1.4; margin-block-end: 10px; }
+.member-workspace :is(.member-basics,.member-site-overview) header p { max-inline-size: 65ch; font-size: 16px; }
+.member-workspace .dashboard-basics-grid { min-inline-size: 0; }
+.admin-focused .admin-key-values strong { font-size: 16px; line-height: 1.65; }
+.admin-focused .admin-record-list p { text-align: start; }
+.admin-focused .admin-sidebar button span { line-height: 1.5; }
+.sanad-dock .sanad-dialog { max-block-size: min(780px,calc(100dvh - 24px)); }
+.sanad-dialog :is(p,small) { text-align: start; text-wrap: pretty; overflow-wrap: anywhere; line-height: 1.85; }
+.sanad-dialog .sanad-copy-block p { font-size: 16px; }
+.sanad-dialog .sanad-label { font-size: 13px; line-height: 1.6; }
+.sanad-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 14px 18px; }
+.sanad-actions .sanad-control { flex: 1 1 150px; min-height: 46px; font-size: 15px; text-decoration: none; }
+.sanad-dialog .sanad-portrait-panel { min-block-size: 180px; }
+.sanad-dialog .sanad-state-copy { display: block; font-size: 14px !important; }
+.sanad-dialog .sanad-dialog-header h2 { line-height: 1.5; }
+html[lang="ar"] :is(.member-workspace,.admin-focused,.sanad-dialog) :is(h1,h2,h3,h4,button,summary) { letter-spacing: normal; }
+@media(max-width:600px) {
+ .member-workspace .dashboard-tabs button { font-size: 15px; }
+ .member-workspace .member-creation-steps li { font-size: 13px; line-height: 1.6; }
+ .member-workspace .dashboard-hero p { font-size: 16px; line-height: 1.85; }
+ .member-workspace .dashboard-hero__actions { align-items: stretch; }
+ .member-workspace .dashboard-hero__actions .dashboard-site-link { flex: 1 1 100%; min-width: 0; }
+ .admin-console.admin-focused .admin-navigation { grid-template-columns: repeat(3,minmax(0,1fr)); }
+ .admin-console.admin-focused .admin-navigation button { flex-direction: row; font-size: 14px; min-height: 52px; gap: 6px; padding: 9px 5px; }
+ .admin-console.admin-focused .admin-navigation button svg { width: 16px; }
+ .admin-focused .admin-page-heading h1 { font-size: clamp(23px,5.5vw,30px); line-height: 1.5; }
+ .sanad-dock .sanad-dialog { max-block-size: 90dvh; padding-block-end: env(safe-area-inset-bottom); }
+ .sanad-dialog .sanad-portrait-panel { min-block-size: 0; grid-template-columns: auto minmax(0,1fr); gap: 12px; padding: 12px 18px; }
+ .sanad-dialog .sanad-portrait-panel .sanad-sprite { inline-size: 76px; }
+ .sanad-dialog .sanad-content { padding: 16px 18px; }
+ .sanad-dialog .sanad-control { font-size: 14px; line-height: 1.6; }
+ .sanad-dialog .sanad-actions .sanad-control { flex-basis: 100%; }
+}
+@media(prefers-reduced-motion:reduce) { :is(.member-workspace,.admin-focused,.sanad-dialog) { scroll-behavior: auto; } }

@@ -17,4 +17,14 @@ describe('focused administrator workspace — local DOM/mock API only',()=>{
  it('keeps manager account editing but never exposes permanent deletion',async()=>{await mount('manager','?tab=users');await click('فتح بطاقة عضو محلي','button[aria-label="فتح بطاقة عضو محلي"]');expect(box.querySelector('.owner-erasure')).toBeNull();expect(box.textContent).toContain('العضوية والنقاط والخدمات');expect(box.textContent).not.toContain('التفويض وإسناد الإدارة');});
  it('selects the subtab lazily and synchronizes its same old URL',async()=>{await mount();await click('المنصة');await click('قفل المنصة','.admin-subnavigation button');expect(location.search).toContain('tab=lock');expect(box.querySelector('.admin-subnavigation [aria-current="page"]')?.textContent).toBe('قفل المنصة');expect(vi.mocked(api).mock.calls.some(([p])=>p.includes('/erasure'))).toBe(false);});
  it('labels important deletion outcomes without inventing success for arbitrary historical events',()=>{expect(auditOutcomeLabel('owner.erasure.completed',t)).toBe('تم التنفيذ');expect(auditOutcomeLabel('owner.erasure.requested',t)).toContain('ليس تنفيذ');expect(auditOutcomeLabel('owner.erasure.failed',t)).toContain('إخفاق');expect(auditOutcomeLabel('unknown',t)).toBe('راجع تفاصيل القرار');expect(auditActionLabel('unknown',t)).toBe('إجراء مسجل');});
+ it('connects guide actions to requests, accounts and owner records without executing a decision',async()=>{
+   await mount();for(const[action,label]of [['admin-requests','الطلبات'],['admin-accounts','الحسابات'],['admin-records','السجل']]){
+     await act(async()=>window.dispatchEvent(new CustomEvent('ksa:sanad-action',{detail:{action}})));await flush();expect(box.querySelector('.admin-sidebar [aria-current="page"]')?.textContent).toBe(label);
+   }
+   expect(vi.mocked(api).mock.calls.some(([,o])=>o?.method&&o.method!=='GET')).toBe(false);
+ });
+ it('does not use guide navigation to expose owner records to a manager',async()=>{
+   await mount('manager');await act(async()=>window.dispatchEvent(new CustomEvent('ksa:sanad-action',{detail:{action:'admin-records'}})));await flush();expect(vi.mocked(api).mock.calls.some(([p])=>p.includes('/audit')||p.includes('/erasure'))).toBe(false);
+ });
+
 });

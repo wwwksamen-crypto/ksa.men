@@ -1,3 +1,5 @@
+import { SANAD_ACTION_EVENT, type SanadAction } from './sanad-journey';
+import { publishSanadContext } from './sanad-context';
 import { adminWorkspaces, adminWorkspace, initialAdminTab } from './admin-workspace';
 import { auditActionLabel, auditOutcomeLabel } from './audit-copy';
 import './admin-workspace.css';
@@ -701,6 +703,19 @@ export default function Admin() {
     const url = new URL(location.href); url.searchParams.set('tab', next); history.replaceState({}, '', url.pathname + url.search + url.hash);
   };
 
+  useEffect(()=>{
+    publishSanadContext({section:'admin',step:adminWorkspace(tab),state:ownRole,requiredMissing:[],error:'',saveStatus:busy?'saving':'',reviewStatus:''});
+  },[tab,ownRole,busy]);
+  useEffect(()=>{
+    const onGuideAction=(event:Event)=>{
+      const action=(event as CustomEvent<{action:SanadAction}>).detail?.action;
+      if(action==='admin-requests')switchTab('reviews');
+      else if(action==='admin-accounts')switchTab('users');
+      else if(action==='admin-records'&&owner)switchTab('audit');
+    };
+    window.addEventListener(SANAD_ACTION_EVENT,onGuideAction);
+    return()=>window.removeEventListener(SANAD_ACTION_EVENT,onGuideAction);
+  },[tab,ownRole,busy]);
   const renderOverview = () => (
     <div className="stack admin-stack">
       <section className="admin-page-heading admin-overview-heading">

@@ -1,3 +1,4 @@
+import { SANAD_ACTION_EVENT, sanadLinks, journeyGuidance } from './sanad-journey';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {AudioLines, CirclePause, CirclePlay, Eye, EyeOff, RotateCcw, Square, Volume2, X} from 'lucide-react';
 import {useApp} from './lib';
@@ -69,10 +70,10 @@ export const SANAD_AUDIO_SCRIPTS: Record<string, AudioScript> = {
   },
 };
 
-const knownSections = new Set<SanadSection>(['home', 'auth', 'editor', 'review', 'wallet', 'admin', 'qr']);
+const knownSections = new Set<SanadSection>(['home', 'auth', 'editor', 'review', 'wallet', 'admin', 'qr', 'outputs', 'account']);
 
 function sectionFromPath(path: string): SanadSection {
-  if (path === '/auth') return 'auth';
+  if (['/auth','/start','/login'].includes(path)) return 'auth';
   if (path === '/dashboard') return 'editor';
   if (path === '/admin') return 'admin';
   if (path === '/qr') return 'qr';
@@ -114,17 +115,27 @@ const STEP_GUIDANCE: Record<string, Guidance> = {
   timeline: {ar: 'رتّب المحطات المهنية زمنيًا ليصبح أثر مسيرتك واضحًا.', en: 'Order milestones chronologically so the impact of your journey is clear.'},
   السجلالزمني: {ar: 'رتّب المحطات المهنية زمنيًا ليصبح أثر مسيرتك واضحًا.', en: 'Order milestones chronologically so the impact of your journey is clear.'},
   evidence: {ar: 'اختر أدلة مختصرة ومرتبطة بمهاراتك، مع مراعاة الخصوصية.', en: 'Choose concise evidence that relates to your skills, while respecting privacy.'},
-  skillsvidence: {ar: 'اختر أدلة مختصرة ومرتبطة بمهاراتك، مع مراعاة الخصوصية.', en: 'Choose concise evidence that relates to your skills, while respecting privacy.'},
+  skillevidence: {ar: 'اختر أدلة مختصرة ومرتبطة بمهاراتك، مع مراعاة الخصوصية.', en: 'Choose concise evidence that relates to your skills, while respecting privacy.'},
   worksamples: {ar: 'اختر نماذج تمثل مستوى عملك الحالي وتشرح دورك بوضوح.', en: 'Choose samples that represent your current standard and clearly explain your role.'},
   نماذجالأعمال: {ar: 'اختر نماذج تمثل مستوى عملك الحالي وتشرح دورك بوضوح.', en: 'Choose samples that represent your current standard and clearly explain your role.'},
   video: {ar: 'استخدم رابط فيديو تعريفيًا واضحًا؛ لن يظهر للزوار قبل تفاعلهم.', en: 'Use a clear introduction-video link; it will not appear to visitors before they interact.'},
   links: {ar: 'استخدم روابط موثوقة تعزز حضورك المهني.', en: 'Use trusted links that strengthen your professional presence.'},
   sociallinks: {ar: 'استخدم روابط موثوقة تعزز حضورك المهني.', en: 'Use trusted links that strengthen your professional presence.'},
+  hobbies: {ar:'اختر اهتمامات تعرّف الزائر بك، دون مشاركة ما لا ترغب بإظهاره.',en:'Choose interests that introduce you without sharing anything you prefer to keep private.'},
+  skillimages: {ar:'أضف حتى أربع صور لشواهد مهاراتك، منفردة أو دفعة واحدة، ثم اختر ما يظهر منها.',en:'Add up to four skill-evidence images, individually or together, and choose which to show.'},
+  workimages: {ar:'اختر نماذج أعمالك وارفعها دفعة واحدة إن رغبت؛ يمكنك تكبير الصور في المعاينة.',en:'Choose work samples and upload them together if you wish; preview images can be enlarged.'},
+  youtube: {ar:'ضع رابط الفيديو التعريفي، ثم عاينه واختر إظهاره أو إخفاءه.',en:'Add an introduction-video link, then preview it and choose whether to display it.'},
+  socials: {ar:'خصص روابط حساباتك؛ الأيقونات التي لم تخصصها تقود إلى منصاتها الأصلية.',en:'Customize your account links; uncustomized icons lead to the original platforms.'},
+  buttons: {ar:'أضف عنواناً واضحاً ورابطاً موثوقاً لكل زر؛ سيظهر أفقياً مع هوية موقعك.',en:'Give each button a clear label and trusted link; it will match your site design.'},
+  blog: {ar:'اكتب مقالاتك من هنا، واختر ما تنشره منها في موقعك.',en:'Write articles here and choose which to publish on your site.'},
+  notes: {ar:'هذه ملاحظاتك الخاصة؛ لا تظهر في موقعك العام أو مخرجاته.',en:'These notes are private and do not appear on your public site or its downloads.'},
   privacy: {ar: 'راجع الحقول المخفية قبل الإرسال؛ الإخفاء يمنع ظهورها العام.', en: 'Review hidden fields before submitting; hidden fields stay out of public display.'},
   الخصوصية: {ar: 'راجع الحقول المخفية قبل الإرسال؛ الإخفاء يمنع ظهورها العام.', en: 'Review hidden fields before submitting; hidden fields stay out of public display.'},
 };
 
 function getDynamicGuidance(context: SanadContextState, section: SanadSection): Guidance {
+  const journey = journeyGuidance(context);
+  if (journey) return journey;
   const step = STEP_GUIDANCE[normaliseStep(context.step)];
   if (step) return step;
   if (context.error) {
@@ -134,6 +145,7 @@ function getDynamicGuidance(context: SanadContextState, section: SanadSection): 
     };
   }
   if (section === 'auth') return {ar: 'استخدم بريدًا تملكه وتستطيع الوصول إليه، ثم أكمل التحقق بهدوء.', en: 'Use an email address you own and can access, then complete verification at your pace.'};
+  if (section === 'editor') return {ar:'اختر قسماً واحداً وعدّل ما تحتاجه؛ يحفظ الموقع عملك تلقائياً، ثم يمكنك المعاينة وطلب النشر.',en:'Choose one section and edit what you need; your changes save automatically, then you can preview and request publication.'};
   if (section === 'review') return {ar: 'راجع الوضوح والدقة قبل الإرسال؛ التعديل الصادق هو أفضل مراجعة.', en: 'Review clarity and accuracy before submitting; an honest edit is the best review.'};
   if (section === 'wallet') return {ar: 'راجع رصيدك وسجل الحركة من داخل الحساب قبل اختيار أي خدمة.', en: 'Review your balance and activity inside your account before choosing a service.'};
   if (section === 'admin') return {ar: 'اعمل من الحالة المعروضة في النظام، وراجع الطلب قبل اعتماد أي إجراء.', en: 'Work from the status shown in the system and review each request before approving an action.'};
@@ -216,7 +228,8 @@ function useOtherModalOpen(): boolean {
 
 function audioFor(section: SanadSection, lang: 'ar' | 'en'): AudioScript {
   if (lang === 'en') return SANAD_AUDIO_SCRIPTS['home-en'];
-  const id = `${section}-ar`;
+  const audioSection = section === 'outputs' ? 'editor' : section === 'account' ? 'home' : section;
+  const id = `${audioSection}-ar`;
   return SANAD_AUDIO_SCRIPTS[id] || SANAD_AUDIO_SCRIPTS['home-ar'];
 }
 
@@ -228,6 +241,9 @@ export default function Sanad() {
   const otherModalOpen = useOtherModalOpen();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playRequest = useRef(0);
+  const playIntent = useRef(false);
+  const dialogTrigger = useRef<HTMLElement|null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -246,6 +262,7 @@ export default function Sanad() {
   const section = useMemo<SanadSection>(() => knownSections.has(context.section) ? context.section : sectionFromPath(window.location.pathname), [context.section]);
   const audioScript = useMemo(() => audioFor(section, lang), [section, lang]);
   const dynamicGuidance = useMemo(() => getDynamicGuidance(context, section), [context, section]);
+  const links = useMemo(() => sanadLinks(section,context), [section,context]);
   const guidance = lang === 'ar' ? dynamicGuidance.ar : dynamicGuidance.en;
   const missingGuidance = useMemo(() => getMissingGuidance(context.requiredMissing, lang), [context.requiredMissing, lang]);
   const transcript = lang === 'ar' ? audioScript.ar : audioScript.en;
@@ -266,6 +283,8 @@ export default function Sanad() {
   }, [motionEnabled, prefersReducedMotion]);
 
   const stopAudio = useCallback((reset = true) => {
+    playRequest.current++;
+    playIntent.current=false;
     stopAnimationLoop();
     const audio = audioRef.current;
     if (audio) {
@@ -340,24 +359,31 @@ export default function Sanad() {
   const play = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
+    const request = ++playRequest.current;
+    playIntent.current=true;
     setPlayerError('');
     try {
       const audioContext = ensureAudioGraph();
       if (audioContext?.state === 'suspended') await audioContext.resume();
+      if(request!==playRequest.current)return;
       await audio.play();
+      if(request!==playRequest.current){if(!playIntent.current)audio.pause();return;}
       setPlayerStatus('playing');
       blink();
       startAnimationLoop();
     } catch {
+      if(request!==playRequest.current)return;
       stopAnimationLoop();
       setPlayerStatus('error');
-      setPlayerError(t('تعذر تشغيل التسجيل الآن. تأكد من توفر الملف ثم أعد المحاولة.', 'The recording could not play. Confirm the file is available and try again.'));
+      setPlayerError(t('تعذر تشغيل الصوت الآن. تابع التوجيه المكتوب أو حاول مجدداً.', 'Audio could not play. Continue with the written guide or retry.'));
     }
   }, [blink, ensureAudioGraph, startAnimationLoop, stopAnimationLoop, t]);
 
   const pause = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
+    playRequest.current++;
+    playIntent.current=false;
     audio.pause();
     stopAnimationLoop();
     setPlayerStatus('paused');
@@ -367,10 +393,14 @@ export default function Sanad() {
   const close = useCallback(() => {
     stopAudio(true);
     setOpen(false);
+    window.setTimeout(()=>{if(dialogTrigger.current?.isConnected)dialogTrigger.current.focus({preventScroll:true});},0);
   }, [stopAudio]);
 
   const openGuide = useCallback(() => {
     if (isTemporarilyUnavailable) return;
+    dialogTrigger.current=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    try{localStorage.removeItem('ksa-sanad');}catch{/* Local preference is optional. */}
+    setHiddenPreference(false);
     setOpen(true);
     blink();
   }, [blink, isTemporarilyUnavailable]);
@@ -393,19 +423,19 @@ export default function Sanad() {
     analyserRef.current?.disconnect();
     if (audioContextRef.current && audioContextRef.current.state !== 'closed') void audioContextRef.current.close();
     audioContextRef.current = null; sourceRef.current = null; analyserRef.current = null; analyserDataRef.current = null;
-    localStorage.setItem('ksa-sanad', 'hidden');
+    try{localStorage.setItem('ksa-sanad', 'hidden');}catch{/* Local preference is optional. */}
     setHiddenPreference(true);
   }, [close]);
 
   const restoreGuide = useCallback(() => {
-    localStorage.removeItem('ksa-sanad');
+    try{localStorage.removeItem('ksa-sanad');}catch{/* Local preference is optional. */}
     setHiddenPreference(false);
     window.setTimeout(openGuide, 0);
   }, [openGuide]);
 
   const toggleMotion = useCallback(() => {
     const next = !motionEnabled;
-    localStorage.setItem('ksa-sanad-motion', next ? 'on' : 'off');
+    try{localStorage.setItem('ksa-sanad-motion', next ? 'on' : 'off');}catch{/* Local preference is optional. */}
     userMotionPreference.current = next ? 'on' : 'off';
     setMotionEnabled(next);
     if (!next) {
@@ -437,7 +467,7 @@ export default function Sanad() {
 
   useEffect(() => {
     stopAudio(true);
-  }, [audioScript.id, context.step, stopAudio]);
+  }, [audioScript.id, context.step, context.state, stopAudio]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -449,6 +479,8 @@ export default function Sanad() {
 
   useEffect(() => {
     return () => {
+      playRequest.current++;
+      playIntent.current=false;
       stopAnimationLoop();
       if (blinkTimerRef.current !== null) window.clearTimeout(blinkTimerRef.current);
       const audio = audioRef.current;
@@ -542,11 +574,13 @@ export default function Sanad() {
             <section className="sanad-copy-block" aria-labelledby="sanad-current-title">
               <span className="sanad-label" id="sanad-current-title">{t('توجيهك الحالي', 'Your current guidance')}</span>
               <p>{guidance}</p>
-              <p className="sanad-missing-copy">{missingGuidance}</p>
+              {context.requiredMissing.length>0&&<p className="sanad-missing-copy">{missingGuidance}</p>}
               {(context.state || context.saveStatus || context.reviewStatus) && (
                 <p className="sanad-state-copy">{context.saveStatus==='saving'?t('نحفظ تعديلاتك…','Saving your changes…'):context.saveStatus==='saved'?t('تعديلاتك محفوظة.','Your changes are saved.'):t('راجع بياناتك قبل المتابعة.','Review your details before continuing.')}</p>
               )}
             </section>
+
+            <nav className="sanad-actions" aria-label={t('انتقل مع سند', 'Continue with Sanad')}>{links.map(link=>link.href?<a className="sanad-control" key={link.href} href={link.href}>{t(link.ar,link.en)}</a>:<button type="button" className="sanad-control" key={link.action} disabled={context.saveStatus==='saving'} onClick={()=>{close();window.dispatchEvent(new CustomEvent(SANAD_ACTION_EVENT,{detail:{action:link.action}}));}}>{t(link.ar,link.en)}</button>)}</nav>
 
             <details className="sanad-transcript">
               <summary>{t('قراءة النص الصوتي', 'Read the audio transcript')}</summary>

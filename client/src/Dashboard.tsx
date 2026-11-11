@@ -1,3 +1,4 @@
+import { SANAD_ACTION_EVENT, type SanadAction } from './sanad-journey';
 import { CreationSteps, MemberBasics, MemberSiteOverview } from './MemberSiteJourney';
 import { memberSection, memberWorkspace, editRequested, type MemberWorkspace, type CreationStep } from './member-journey';
 import ReferralPanel from './ReferralPanel';
@@ -595,13 +596,15 @@ export default function Dashboard() {
     window.dispatchEvent(new CustomEvent('ksa:sanad-context', {
       detail: {
         section: activeTab,
-        step: activeTab === 'editor' ? editorSection : '',
+        step: activeTab === 'editor' && siteWorkspace==='edit' ? editorSection : '',
+        state: activeTab==='editor' ? !activeSite?'creating-address':siteWorkspace==='create'?`creating-${creationStep}`:siteWorkspace : activeTab==='services'?'outputs':activeTab==='wallet'?'wallet':'account',
+        error: saveState==='error'?'saving-incomplete':'',
         requiredMissing,
         saveStatus: saveState,
         reviewStatus: activeSite?.status || 'draft',
       },
     }));
-  }, [activeSite?.status, activeTab, draft.name, draft.title, editorSection, saveState, tr]);
+  }, [activeSite?.status, activeSite?.id, activeTab, creationStep, editorSection, saveState, siteWorkspace, tr]);
   useEffect(() => {
     const interactive = dashboardInteractiveRef.current;
     if (!interactive || !previewOpen) return;
@@ -1255,6 +1258,18 @@ export default function Dashboard() {
   };
 
 
+  useEffect(() => {
+    const onGuideAction=(event:Event)=>{
+      const action=(event as CustomEvent<{action:SanadAction}>).detail?.action;
+      if(reviewingRef.current || preparingPreviewRef.current || savingRef.current || uploadSiteRef.current || openingSiteRef.current)return;
+      if(action==='member-edit') changeTab('editor',activeSite?memberWorkspace(activeSite,true):undefined);
+      else if(action==='member-preview' && activeSite) void previewCreation();
+      else if(action==='member-outputs') changeTab('services');
+      else if(action==='member-account') changeTab('settings');
+    };
+    window.addEventListener(SANAD_ACTION_EVENT,onGuideAction);
+    return()=>window.removeEventListener(SANAD_ACTION_EVENT,onGuideAction);
+  },[activeSite,activeTab,siteWorkspace,creationStep]);
   const balance = Number(dashboard?.wallet?.balance ?? (user as { balance?: number }).balance ?? 0);
   const memberPreferences = dashboard?.preferences ?? defaultMemberPreferences;
   const loyalty = dashboard?.loyalty;

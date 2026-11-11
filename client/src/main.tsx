@@ -16,6 +16,7 @@ import {ArrowUpLeft,ArrowUpRight,Search,Menu,X,Sun,Moon,Globe,ShieldCheck,LockKe
 import {api,AppContext,setCSRF,type User,useApp,Button} from './lib';
 import './style.css';
 import './text-layout.css';
+import './workspace-text.css';
 import './public-copy-layout.css';
 
 

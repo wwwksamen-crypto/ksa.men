@@ -1,6 +1,6 @@
 import {useEffect, useState} from 'react';
 
-export type SanadSection = 'home' | 'auth' | 'editor' | 'review' | 'wallet' | 'admin' | 'qr' | 'unknown';
+export type SanadSection = 'home' | 'auth' | 'editor' | 'review' | 'wallet' | 'admin' | 'qr' | 'outputs' | 'account' | 'unknown';
 
 export interface SanadContextDetail {
   /** A generic app area; do not include a person's profile data in this event. */
@@ -51,6 +51,7 @@ const sectionAliases: Record<string, SanadSection> = {
   wallet: 'wallet',
   admin: 'admin',
   qr: 'qr',
+  outputs: 'outputs', services: 'outputs', account: 'account', messages: 'account', subscription: 'account', settings: 'account',
   unknown: 'unknown',
 };
 
