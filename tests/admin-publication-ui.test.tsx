@@ -23,7 +23,7 @@ beforeEach(()=>{
 afterEach(async()=>{await act(async()=>root.unmount());container.remove();vi.restoreAllMocks();});
 async function usersTab(){
   await act(async()=>root.render(<AppContext.Provider value={{user,lang:'ar',t,notify,refresh:async()=>{}}}><Admin/></AppContext.Provider>));await flush();
-  await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.admin-sidebar button')].find(button=>button.textContent?.includes('المستخدمون'))!.click());await flush();
+  await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.admin-sidebar button')].find(button=>button.textContent?.includes('الحسابات'))!.click());await flush();
 }
 describe('one-click administrative publication — DOM and mocked API',()=>{
   it.each(['list','detail'])('publishes from the %s card without opening Reviews or showing false success',async place=>{

@@ -1,6 +1,6 @@
 import {HTTPException} from 'hono/http-exception';
 import type {App,Ctx} from './core';
-import {all,audit,fresh,now,one,role,setting,uid} from './core';
+import {all,audit,digest,fresh,now,one,role,setting,uid} from './core';
 
 type Scope='account'|'site';
 type Site={id:string;user_id:number|null;draft_version:number;published_version:number;status:string};
@@ -10,36 +10,62 @@ async function impact(c:Ctx,scope:Scope,id:string){
  const account=scope==='account'?await one<{id:number;role:string;status:string}>(c,'SELECT id,role,status FROM users WHERE id=?',Number(id)):null;
  if(scope==='account'&&!account)throw new HTTPException(404,{message:'الحساب غير موجود'});
  if(account?.role==='owner')throw new HTTPException(409,{message:'لا يمكن إزالة حساب المشرف الرئيسي؛ انقل المسؤولية أولاً'});
- const sites=scope==='account'?await all<Site>(c,'SELECT id,user_id,draft_version,published_version,status FROM sites WHERE user_id=?',Number(id)):await all<Site>(c,'SELECT id,user_id,draft_version,published_version,status FROM sites WHERE id=?',id);
+ const sites=scope==='account'?await all<Site>(c,'SELECT id,user_id,draft_version,published_version,status FROM sites WHERE user_id=? ORDER BY id',Number(id)):await all<Site>(c,'SELECT id,user_id,draft_version,published_version,status FROM sites WHERE id=?',id);
  if(scope==='site'&&!sites.length)throw new HTTPException(404,{message:'الموقع غير موجود'});
  const prior=await one<{deletion_request_id:string|null}>(c,'SELECT deletion_request_id FROM deleted_tombstones WHERE resource_type=? AND resource_id=? AND source=?',scope,id,'owner-erasure');
  const userId=scope==='account'?Number(id):sites[0].user_id;
  const holds=await all<{resource_type:string}>(c,`SELECT resource_type FROM retention_holds WHERE status='active' AND (user_id=? OR (resource_type=? AND resource_id=?) OR resource_id IN (${sites.map(()=>'?').join(',')||"''"}) OR (resource_type='media' AND resource_id IN (SELECT id FROM media WHERE site_id IN (${sites.map(()=>'?').join(',')||"''"}))))`,userId,scope,id,...sites.map(s=>s.id),...sites.map(s=>s.id));
  const openReport=userId?await one(c,"SELECT id FROM reports WHERE user_id=? AND status<>'closed' LIMIT 1",userId):null;
  const media=await all<{id:string;bucket_key:string}>(c,scope==='account'?'SELECT m.id,m.bucket_key FROM media m WHERE (m.owner_id=? OR m.site_id IN (SELECT id FROM sites WHERE user_id=?)) AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.receipt_id=m.id)':'SELECT m.id,m.bucket_key FROM media m WHERE m.site_id=? AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.receipt_id=m.id)',...(scope==='account'?[Number(id),Number(id)]:[id]));
- return {scope,id,account,sites,media,prior,holds:[...new Set(holds.map(h=>h.resource_type)),...(openReport?['open_report']:[])],userId};
+ const impactToken=await digest(JSON.stringify({scope,id,account,sites,media:media.slice().sort((a,b)=>a.id.localeCompare(b.id))}));
+ return {impactToken,scope,id,account,sites,media,prior,holds:[...new Set(holds.map(h=>h.resource_type)),...(openReport?['open_report']:[])],userId};
 }
 export function registerOwnerErasure(app:App){
- app.get('/api/admin/erasure-records',async c=>{role(c,['owner']);fresh(c);return c.json({records:await all(c,"SELECT id,user_id,reason,status,created_at,executed_at,requested_action FROM deletion_requests WHERE requested_action IN ('owner-account','owner-site') ORDER BY created_at DESC LIMIT 100")});});
+ app.get('/api/admin/erasure-records',async c=>{
+  role(c,['owner']);fresh(c);
+  const records=await all(c,`SELECT d.id,d.user_id,d.reason,d.status,d.created_at,d.executed_at,d.requested_action,
+   a.actor_id,u.name AS actor_name,a.target,a.row_hash AS evidence_hash,
+   (SELECT COUNT(*) FROM media_purge_queue q WHERE q.deletion_request_id=d.id) AS files_total,
+   (SELECT COUNT(*) FROM media_purge_queue q WHERE q.deletion_request_id=d.id AND q.status='deleted') AS files_removed,
+   (SELECT COUNT(*) FROM media_purge_queue q WHERE q.deletion_request_id=d.id AND q.status='failed') AS files_failed
+   FROM deletion_requests d LEFT JOIN audit a ON a.id=(SELECT MIN(a2.id) FROM audit a2 WHERE a2.action='owner.erasure.requested' AND json_valid(a2.detail) AND json_extract(a2.detail,'$.requestId')=d.id)
+   LEFT JOIN users u ON u.id=a.actor_id WHERE d.requested_action IN ('owner-account','owner-site') ORDER BY d.created_at DESC LIMIT 100`);
+  return c.json({records});
+ });
  for(const scope of ['account','site'] as const){
   const resource=scope==='account'?'users':'sites';
-  app.get(`/api/admin/${resource}/:id/erasure-impact`,async c=>{const x=await impact(c,scope,c.req.param('id'));return c.json({scope,siteCount:x.sites.length,mediaCount:x.media.length,holdKinds:x.holds,alreadyErased:!!x.prior,versions:x.sites.map(s=>({id:s.id,draft:s.draft_version,published:s.published_version})),retained:['financial_records','audit_and_review_evidence','reference_identifiers'],mediaRemoval:'queued_after_explicit_confirmation'});});
-  app.post(`/api/admin/${resource}/:id/erase`,async c=>{
-   const actor=role(c,['owner']);fresh(c);
-   const body=await c.req.json<{reason?:unknown;affirmation?:unknown;confirmation?:unknown;versions?:Array<{id:string;draft:number;published:number}>}>();
-   const reason=typeof body.reason==='string'?body.reason.trim():'';
-   if(reason.length<8||reason.length>1000||body.affirmation!==true||body.confirmation!==c.req.param('id'))throw new HTTPException(422,{message:'اكتب سبباً واضحاً، وأكد الإزالة بإدخال المعرّف المعروض'});
+  app.get(`/api/admin/${resource}/:id/erasure-impact`,async c=>{
    const x=await impact(c,scope,c.req.param('id'));
-   if(x.prior)return c.json({erased:true,idempotent:true,requestId:x.prior.deletion_request_id,retainedRecords:true,mediaRemoval:'queued_or_completed'});
-   if(x.holds.length)throw new HTTPException(409,{message:'تعذر الإزالة لوجود حصانة احتفاظ أو بلاغ مفتوح. راجع السجل أولاً'});
-   if(!Array.isArray(body.versions)||JSON.stringify(body.versions)!==JSON.stringify(x.sites.map(s=>({id:s.id,draft:s.draft_version,published:s.published_version}))))throw new HTTPException(409,{message:'تغيّرت بيانات الموقع؛ راجع أثر الإزالة من جديد قبل التأكيد'});
+   await audit(c,'owner.erasure.reviewed',`${scope}:${x.id}`,{scope,siteCount:x.sites.length,mediaCount:x.media.length,blocked:!!x.holds.length,alreadyErased:!!x.prior});
+   return c.json({scope,impactToken:x.impactToken,siteCount:x.sites.length,mediaCount:x.media.length,holdKinds:x.holds,alreadyErased:!!x.prior,versions:x.sites.map(s=>({id:s.id,draft:s.draft_version,published:s.published_version})),retained:['financial_records','audit_and_review_evidence','reference_identifiers'],mediaRemoval:'queued_after_explicit_confirmation'});
+  });
+  app.post(`/api/admin/${resource}/:id/erase`,async c=>{
+   try { role(c,['owner']);fresh(c); }
+   catch(error) { if(c.get('user')?.status==='active')await audit(c,'owner.erasure.denied',`${scope}:${c.req.param('id')}`,{scope,outcome:'not-executed'});throw error; }
+   const actor=role(c,['owner']);
+   const body=await c.req.json<{reason?:unknown;affirmation?:unknown;confirmation?:unknown;impactToken?:unknown;versions?:Array<{id:string;draft:number;published:number}>}>();
+   const reason=typeof body.reason==='string'?body.reason.trim():'';
+   if(reason.length<8||reason.length>1000||body.affirmation!==true||body.confirmation!==c.req.param('id')){await audit(c,'owner.erasure.invalid',`${scope}:${c.req.param('id')}`,{scope,outcome:'not-executed'});throw new HTTPException(422,{message:'اكتب سبباً واضحاً وراجع الأثر ثم أكد الحذف النهائي'});}
+   let x:Awaited<ReturnType<typeof impact>>;
+   try{x=await impact(c,scope,c.req.param('id'));}catch(error){await audit(c,'owner.erasure.blocked',`${scope}:${c.req.param('id')}`,{scope,outcome:'not-executed'});throw error;}
+   if(x.prior){await audit(c,'owner.erasure.repeated',`${scope}:${x.id}`,{scope,requestId:x.prior.deletion_request_id,outcome:'no-new-effect'});return c.json({erased:true,idempotent:true,requestId:x.prior.deletion_request_id,retainedRecords:true,mediaRemoval:'queued_or_completed'});}
+   if(x.holds.length){await audit(c,'owner.erasure.blocked',`${scope}:${x.id}`,{scope,holdKinds:x.holds,outcome:'not-executed'});throw new HTTPException(409,{message:'تعذر الإزالة لوجود حصانة احتفاظ أو بلاغ مفتوح. راجع السجل أولاً'});}
+   if(body.impactToken!==x.impactToken||!Array.isArray(body.versions)||JSON.stringify(body.versions)!==JSON.stringify(x.sites.map(s=>({id:s.id,draft:s.draft_version,published:s.published_version})))){await audit(c,'owner.erasure.conflict',`${scope}:${x.id}`,{scope,outcome:'not-executed'});throw new HTTPException(409,{message:'تغيّرت البيانات؛ راجع أثر الإزالة من جديد قبل التأكيد'});}
    const requestId=uid(),clock=now(),notice=await setting<string>(c,'privacy_notice_version','2026-11-08');
    await audit(c,'owner.erasure.requested',`${scope}:${x.id}`,{requestId,reason,scope,siteCount:x.sites.length,mediaCount:x.media.length,affirmation:true,retained:'financial,audit,review,reference-identifiers'});
    const gate='EXISTS(SELECT 1 FROM deletion_requests WHERE id=?)';
    const statements:D1PreparedStatement[]=[];
-   const cas=x.sites.map(()=> 'EXISTS(SELECT 1 FROM sites WHERE id=? AND draft_version=? AND published_version=?)').join(' AND ');
-   const alive=scope==='account'?'EXISTS(SELECT 1 FROM users WHERE id=? AND status<>\'deleted\')':'EXISTS(SELECT 1 FROM sites WHERE id=? AND status<>\'deleted\')';
-   statements.push(c.env.DB.prepare(`INSERT INTO deletion_requests(id,user_id,reason,status,created_at,requested_action,executed_at,notice_version) SELECT ?,?,?,'destroyed',?,'owner-${scope}',?,? WHERE ${alive} ${cas?'AND '+cas:''}`).bind(requestId,x.userId??0,reason,clock,clock,notice,scope==='account'?Number(x.id):x.id,...x.sites.flatMap(s=>[s.id,s.draft_version,s.published_version])));
+   const cas=x.sites.map(()=> 'EXISTS(SELECT 1 FROM sites WHERE id=? AND draft_version=? AND published_version=? AND user_id IS ?)').join(' AND ');
+   const alive=scope==='account'?'EXISTS(SELECT 1 FROM users WHERE id=? AND status<>\'deleted\' AND role<>\'owner\')':'EXISTS(SELECT 1 FROM sites WHERE id=? AND status<>\'deleted\')';
+   // The same transaction rechecks full site membership, open reports, active holds and the confirmed media set.
+   const siteSet=scope==='account'?'(SELECT COUNT(*) FROM sites WHERE user_id=?)=?':'1=1';
+   const mediaSource=scope==='account'?'(m.owner_id=? OR m.site_id IN (SELECT id FROM sites WHERE user_id=?))':'m.site_id=?';
+   const mediaArgs=scope==='account'?[Number(x.id),Number(x.id)]:[x.id];
+   const mediaCount=`(SELECT COUNT(*) FROM media m WHERE ${mediaSource} AND NOT EXISTS(SELECT 1 FROM payments p WHERE p.receipt_id=m.id))=?`;
+   const mediaCas=x.media.map(()=> 'EXISTS(SELECT 1 FROM media WHERE id=? AND bucket_key=?)').join(' AND ');
+   const siteIds=x.sites.map(s=>s.id),slots=siteIds.map(()=>'?').join(',')||"''";
+   const unheld=`NOT EXISTS(SELECT 1 FROM retention_holds WHERE status='active' AND (user_id=? OR (resource_type=? AND resource_id=?) OR resource_id IN (${slots}) OR (resource_type='media' AND resource_id IN (SELECT id FROM media WHERE site_id IN (${slots})))))`;
+   statements.push(c.env.DB.prepare(`INSERT INTO deletion_requests(id,user_id,reason,status,created_at,requested_action,executed_at,notice_version) SELECT ?,?,?,'destroyed',?,'owner-${scope}',?,? WHERE ${alive} ${cas?'AND '+cas:''} AND ${siteSet} AND ${mediaCount} ${mediaCas?'AND '+mediaCas:''} AND ${unheld} AND NOT EXISTS(SELECT 1 FROM reports WHERE user_id=? AND status<>'closed')`).bind(requestId,x.userId??0,reason,clock,clock,notice,scope==='account'?Number(x.id):x.id,...x.sites.flatMap(s=>[s.id,s.draft_version,s.published_version,s.user_id]),...(scope==='account'?[Number(x.id),x.sites.length]:[]),...mediaArgs,x.media.length,...x.media.flatMap(m=>[m.id,m.bucket_key]),x.userId,scope,x.id,...siteIds,...siteIds,x.userId));
    const stone=(kind:string,key:string)=>statements.push(c.env.DB.prepare(`INSERT OR IGNORE INTO deleted_tombstones(resource_type,resource_id,deletion_request_id,deleted_at,source) SELECT ?,?,?,?,'owner-erasure' WHERE ${gate}`).bind(kind,key,requestId,clock,requestId));
    const update=(sql:string,...args:unknown[])=>statements.push(c.env.DB.prepare(sql+` AND ${gate}`).bind(...args,requestId));
    if(scope==='account')stone('account',x.id);
@@ -73,7 +99,7 @@ export function registerOwnerErasure(app:App){
     update('UPDATE consent_records SET withdrawn_at=? WHERE user_id=? AND withdrawn_at IS NULL',clock,id);
    }
    try{const results=await c.env.DB.batch(statements);if(Number(results[0].meta.changes)!==1)throw new HTTPException(409,{message:'تغيّرت بيانات الحساب؛ أعد مراجعة أثر الإزالة'});}
-   catch(error){if(error instanceof HTTPException)throw error;throw new HTTPException(409,{message:'لم تكتمل الإزالة؛ لم يطبّق التغيير الجزئي. حدّث السجل وراجع الحصانات'});}
+   catch(error){await audit(c,error instanceof HTTPException?'owner.erasure.conflict':'owner.erasure.failed',`${scope}:${x.id}`,{requestId,scope,outcome:'not-executed'});if(error instanceof HTTPException)throw error;throw new HTTPException(409,{message:'لم تكتمل الإزالة؛ لم يطبّق التغيير الجزئي. حدّث السجل وراجع الحصانات'});}
    await audit(c,'owner.erasure.completed',`${scope}:${x.id}`,{requestId,reason,scope,siteCount:x.sites.length,mediaCount:x.media.length,retainedRecords:true,mediaRemoval:'queued'});
    return c.json({erased:true,idempotent:false,requestId,siteCount:x.sites.length,mediaCount:x.media.length,retainedRecords:true,mediaRemoval:'queued'});
   });

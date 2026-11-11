@@ -1,13 +1,87 @@
-import{useEffect,useState}from'react';
-import{Trash2,ShieldAlert}from'lucide-react';
-import{api,useApp}from'./lib';
+import { useEffect, useRef, useState } from 'react';
+import { Trash2, ShieldAlert } from 'lucide-react';
+import { api, useApp } from './lib';
 import './owner-erasure.css';
-type Impact={siteCount:number;mediaCount:number;holdKinds:string[];alreadyErased:boolean;versions:{id:string;draft:number;published:number}[]};
-export default function OwnerErasurePanel({accountId,siteId,onErase}:{accountId:string;siteId:string;onErase:(path:string,body:Record<string,unknown>)=>Promise<unknown>}){
- const{t}=useApp(),[scope,setScope]=useState<'account'|'site'>('site'),[open,setOpen]=useState(false),[impact,setImpact]=useState<Impact|null>(null),[reason,setReason]=useState(''),[confirm,setConfirm]=useState(''),[agree,setAgree]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false);
- const id=scope==='account'?accountId:siteId,resource=scope==='account'?'users':'sites';
- useEffect(()=>{setOpen(false);setImpact(null);setReason('');setConfirm('');setAgree(false);setError('');},[accountId,siteId]);
- const review=async()=>{if(!id)return;setBusy(true);setError('');try{setImpact(await api<Impact>(`/api/admin/${resource}/${encodeURIComponent(id)}/erasure-impact`));setOpen(true);}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
- const erase=async()=>{if(!impact||busy)return;setBusy(true);setError('');try{await onErase(`/api/admin/${resource}/${encodeURIComponent(id)}/erase`,{reason,confirmation:confirm,affirmation:agree,versions:impact.versions});}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
- return <section className="owner-erasure"><div className="owner-erasure__heading"><ShieldAlert size={20}/><h3>{t('إزالة نهائية موثقة','Documented permanent removal')}</h3></div><p>{t('اختر إزالة الموقع وحده أو الحساب ومواقعه. لا يمكن إعادة الهوية نفسها بعد الإزالة. تبقى السجلات المالية والتدقيقية وأدلة المراجعات الملزم حفظها، وتمنع حصانات الاحتفاظ الإزالة.','Remove a website alone, or its account and websites. This identity cannot be restored afterward. Required financial, audit and review evidence remains; active retention holds block removal.')}</p><label>{t('نطاق الإزالة','Removal scope')}<select disabled={busy} value={scope} onChange={e=>{setScope(e.target.value as typeof scope);setImpact(null);setOpen(false);setAgree(false);setConfirm('');}}><option value="site" disabled={!siteId}>{t('الموقع فقط — يبقى الحساب','Website only — keep account')}</option><option value="account">{t('الحساب ومواقعه','Account and its websites')}</option></select></label><button className="button button-danger" type="button" disabled={busy||!id} onClick={()=>void review()}><Trash2 size={17}/>{t('مراجعة أثر الإزالة','Review removal impact')}</button>{open&&impact&&<div className="owner-erasure__confirmation"><p>{t(`يشمل الإجراء ${impact.siteCount} موقعاً و${impact.mediaCount} ملفاً. تصبح غير متاحة فوراً؛ إزالة الملفات المخزنة تتابَع في طابور موثق.`,`Includes ${impact.siteCount} websites and ${impact.mediaCount} files. They become unavailable immediately; stored files are removed through a documented queue.`)}</p>{impact.alreadyErased?<p role="status">{t('هذا المورد مزال بالفعل.','This resource is already removed.')}</p>:impact.holdKinds.length?<p role="alert">{t('توجد حصانة احتفاظ أو بلاغ مفتوح. راجع السجل قبل الإزالة.','An active retention hold or open report blocks removal. Review the audit first.')}</p>:<><label>{t('سبب الإزالة','Reason for removal')}<textarea dir="auto" rows={3} value={reason} maxLength={1000} onChange={e=>setReason(e.target.value)}/></label><label>{t('للتأكيد أدخل المعرّف التالي','To confirm, enter this identifier')} <bdi dir="ltr">{id}</bdi><input dir="ltr" value={confirm} onChange={e=>setConfirm(e.target.value)} autoComplete="off"/></label><label className="owner-erasure__check"><input type="checkbox" checked={agree} onChange={e=>setAgree(e.target.checked)}/><span>{t('أفهم أن الإزالة نهائية وأوافق على أثرها المبين أعلاه.','I understand removal is permanent and approve the impact described above.')}</span></label><button type="button" className="button button-danger" disabled={busy||!agree||confirm!==id||reason.trim().length<8} onClick={()=>void erase()}>{t('تأكيد الإزالة النهائية','Confirm permanent removal')}</button></>}</div>}{error&&<p className="error" role="alert">{error}</p>}</section>;
+
+type Impact = { impactToken: string; siteCount: number; mediaCount: number; holdKinds: string[]; alreadyErased: boolean; versions: { id: string; draft: number; published: number }[] };
+type Result = { erased?: boolean; requestId?: string; mediaRemoval?: string };
+export default function OwnerErasurePanel({ accountId, siteId, accountLabel, siteLabel, onErase, onAudit }: {
+  accountId: string; siteId: string; accountLabel?: string; siteLabel?: string;
+  onErase: (path: string, body: Record<string, unknown>) => Promise<unknown>; onAudit?: () => void;
+}) {
+  const { t } = useApp();
+  const [scope, setScope] = useState<'account' | 'site'>(siteId ? 'site' : 'account');
+  const [open, setOpen] = useState(false), [impact, setImpact] = useState<Impact | null>(null);
+  const [reason, setReason] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Result | null>(null);
+  const requestSequence = useRef(0), acting = useRef(false);
+  const id = scope === 'account' ? accountId : siteId, resource = scope === 'account' ? 'users' : 'sites';
+  const target = scope === 'account' ? `${accountLabel || t('الحساب', 'Account')} — C${accountId}` : (siteLabel || siteId);
+  useEffect(() => {
+    requestSequence.current++; acting.current = false;
+    setScope(siteId ? 'site' : 'account'); setOpen(false); setImpact(null); setReason(''); setError(''); setBusy(false); setResult(null);
+    return () => { requestSequence.current++; };
+  }, [accountId, siteId]);
+  const changeScope = (next: 'account' | 'site') => {
+    requestSequence.current++; setScope(next); setImpact(null); setError(''); setResult(null);
+  };
+  const review = async () => {
+    if (!id || acting.current || reason.trim().length < 8) return;
+    acting.current = true; setBusy(true); setError('');
+    const sequence = ++requestSequence.current;
+    try {
+      const response = await api<Impact>(`/api/admin/${resource}/${encodeURIComponent(id)}/erasure-impact`);
+      if (sequence === requestSequence.current) setImpact(response);
+    } catch (failure) {
+      if (sequence === requestSequence.current) setError(failure instanceof Error ? failure.message : String(failure));
+    } finally { if (sequence === requestSequence.current) { acting.current = false; setBusy(false); } }
+  };
+  const erase = async () => {
+    if (!impact || impact.alreadyErased || impact.holdKinds.length || acting.current || reason.trim().length < 8) return;
+    acting.current = true; setBusy(true); setError('');
+    const sequence = requestSequence.current;
+    try {
+      // The final button is the explicit affirmation; exact IDs and versions are never taken from an editable field.
+      const response = await onErase(`/api/admin/${resource}/${encodeURIComponent(id)}/erase`, {
+        reason: reason.trim(), confirmation: id, affirmation: true, versions: impact.versions, impactToken: impact.impactToken,
+      }) as Result | undefined;
+      if (!response?.erased) throw new Error(t('لم تتأكد الإزالة. راجع السجل قبل إعادة المحاولة.', 'Removal was not confirmed. Review the record before retrying.'));
+      if (sequence === requestSequence.current) setResult(response);
+    } catch (failure) {
+      if (sequence === requestSequence.current) { setError(failure instanceof Error ? failure.message : String(failure)); setImpact(null); }
+    } finally { if (sequence === requestSequence.current) { acting.current = false; setBusy(false); } }
+  };
+  return <section className="owner-erasure">
+    <button type="button" className="owner-erasure__heading owner-erasure__toggle" aria-expanded={open} disabled={busy} onClick={() => { setOpen(!open); setImpact(null); }}>
+      <Trash2 size={18}/><span>{t('حذف موقع أو حساب', 'Delete a site or account')}</span>
+    </button>
+    {open && <>
+      <p>{t('تحذف بيانات الهوية والموقع نهائياً من الخدمة. تبقى السجلات المالية والتدقيقية وأدلة المراجعة المطلوبة، وتُتابَع إزالة الملفات في طابور موثق.', 'Identity and website data are permanently removed from service. Required financial, audit and review evidence remains; file removal is tracked in a documented queue.')}</p>
+      {!result && <>
+        <label>{t('ما الذي تريد حذفه؟', 'What should be removed?')}
+          <select disabled={busy} value={scope} onChange={event => changeScope(event.target.value as typeof scope)}>
+            <option value="site" disabled={!siteId}>{t('الموقع فقط — يبقى الحساب', 'Website only — keep account')}</option>
+            <option value="account">{t('الحساب وجميع مواقعه', 'Account and all its websites')}</option>
+          </select>
+        </label>
+        <p className="owner-erasure__target"><strong>{t('الهدف', 'Target')}: </strong><bdi dir="auto">{target}</bdi></p>
+        <label>{t('سبب الحذف — 8 أحرف على الأقل', 'Reason — at least 8 characters')}
+          <textarea dir="auto" rows={2} value={reason} maxLength={1000} disabled={busy} onChange={event => { setReason(event.target.value); setImpact(null); }}/>
+        </label>
+        {!impact && <button className="button button-quiet" type="button" disabled={busy || !id || reason.trim().length < 8} onClick={() => void review()}>
+          {busy ? t('جارٍ مراجعة الأثر…', 'Reviewing impact…') : t('مراجعة أثر الإزالة', 'Review removal impact')}
+        </button>}
+        {impact && <div className="owner-erasure__confirmation" role="region" aria-label={t('تأكيد الحذف', 'Confirm deletion')}>
+          <p><ShieldAlert size={18}/> {t(`سيُحذف ${impact.siteCount} موقع، ويُحجب ${impact.mediaCount} ملف فوراً. لا يمكن التراجع عن هذا القرار.`, `${impact.siteCount} websites will be removed and ${impact.mediaCount} files blocked immediately. This decision cannot be reversed.`)}</p>
+          {impact.alreadyErased ? <p role="status">{t('هذا المورد مزال بالفعل.', 'This resource is already removed.')}</p> : impact.holdKinds.length ? <p role="alert">{t('تمنع حصانة احتفاظ أو بلاغ مفتوح الحذف. راجع السجل.', 'A retention hold or open report blocks deletion. Review the record.')}</p> : <div className="owner-erasure__actions">
+            <button type="button" className="button button-danger" disabled={busy} onClick={() => void erase()}>{busy ? t('جارٍ تنفيذ الحذف…', 'Removing…') : t('تأكيد الحذف النهائي', 'Confirm permanent deletion')}</button>
+            <button type="button" className="button button-quiet" disabled={busy} onClick={() => { setImpact(null); setOpen(false); }}>{t('إلغاء', 'Cancel')}</button>
+          </div>}
+        </div>}
+      </>}
+      {result && <div role="status"><p>{t('أزيلت الهوية من الخدمة وحُفظ إثبات القرار. يتابع السجل إزالة الملفات.', 'Identity removed from service and decision evidence saved. File removal is tracked in the record.')}</p><bdi dir="ltr">{result.requestId}</bdi></div>}
+      {onAudit && <button type="button" className="member-text-action" disabled={busy} onClick={onAudit}>{t('فتح السجل', 'Open record')}</button>}
+      {error && <p className="error" role="alert">{error}</p>}
+    </>}
+  </section>;
 }

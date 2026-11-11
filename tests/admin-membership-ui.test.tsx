@@ -23,7 +23,8 @@ beforeEach(()=>{
 afterEach(async()=>{await act(async()=>root.unmount());container.remove();vi.restoreAllMocks();});
 async function membershipTab(){
  await act(async()=>root.render(<AppContext.Provider value={{user,lang:'ar',t,notify,refresh:async()=>{}}}><Admin/></AppContext.Provider>));await flush();
- await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.admin-sidebar button')].find(button=>button.textContent?.includes('العضوية'))!.click());await flush();
+ await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.admin-sidebar button')].find(button=>button.textContent?.includes('الطلبات'))!.click());await flush();
+ await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.admin-subnavigation button')].find(button=>button.textContent?.includes('العضوية'))!.click());await flush();
 }
 describe('Simple annual approval — DOM and mocked API',()=>{
  it.each([['confirmed','اعتماد السداد'],['strategic','منحة استراتيجية']])('submits %s from one button without required receipt or note',async(mode,label)=>{

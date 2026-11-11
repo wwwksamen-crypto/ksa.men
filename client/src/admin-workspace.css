@@ -1,0 +1,46 @@
+.admin-console.admin-focused { max-inline-size: 1500px; margin-inline: auto; }
+.admin-focused .admin-navigation { display: grid; gap: 8px; }
+.admin-focused .admin-nav-group { margin: 0; }
+.admin-focused .admin-subnavigation { display: flex; flex-wrap: wrap; gap: 8px; margin-block-end: 20px; }
+.admin-focused .admin-subnavigation button { min-height: 46px; padding: 10px 16px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font: inherit; font-size: 15px; }
+.admin-focused .admin-subnavigation button.active { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.admin-focused .admin-mobile-nav { display: none !important; }
+.admin-focused .admin-user-layout { align-items: start; }
+.admin-focused .admin-user-detail { scroll-margin-top: 100px; }
+.admin-focused .admin-detail-disclosure { border: 1px solid var(--border); border-radius: 15px; padding: 14px; min-width: 0; }
+.admin-focused .admin-detail-disclosure > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; color: var(--text); font-size: 16px; font-weight: 700; }
+.admin-focused .admin-detail-disclosure[open] > summary { margin-block-end: 14px; }
+.admin-focused .admin-detail-heading h1 { font-size: clamp(22px, 3vw, 30px); line-height: 1.5; overflow-wrap: anywhere; }
+.admin-focused :is(.admin-actions, .admin-key-values) { min-width: 0; }
+.admin-focused .admin-key-values strong { overflow-wrap: anywhere; }
+.admin-focused .admin-primary-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.admin-focused .admin-primary-actions > * { min-height: 46px; flex: 1 1 145px; }
+.admin-focused .admin-workspace { min-width: 0; }
+.admin-focused :is(input,textarea,select) { font-size: 16px; }
+.admin-focused .admin-jump-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-focused :is(.admin-subnavigation button,.admin-navigation button):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.owner-erasure__toggle { border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer; min-height: 44px; text-align: start; }
+.owner-erasure__target { border-inline-start: 2px solid var(--danger,#b96565); padding-inline-start: 12px; }
+.owner-erasure__actions { display: flex; flex-wrap: wrap; gap: 9px; }
+.admin-record-list { display: grid; gap: 12px; }
+.admin-record-list article { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: 14px; }
+.admin-record-list p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; line-height: 1.8; }
+.admin-record-list dl { display: flex; flex-wrap: wrap; gap: 12px 24px; }
+.admin-record-list dl > div { min-width: 0; }
+.admin-record-list dt { color: var(--muted); font-size: 13px; }
+.admin-record-list dd { margin: 0; overflow-wrap: anywhere; font-size: 14px; }
+@media(max-width:960px) {
+ .admin-focused .admin-workbench { display: flex; flex-direction: column; gap: 16px; }
+ .admin-focused .admin-sidebar { display: block; position: static; inline-size: 100%; padding: 0; border: 0; background: transparent; }
+ .admin-focused .admin-sidebar-label { display: none; }
+ .admin-focused .admin-navigation { grid-template-columns: repeat(5,minmax(0,1fr)); gap: 6px; }
+ .admin-focused .admin-navigation button { display: flex; flex-direction: column; gap: 6px; justify-content: center; inline-size: 100%; padding: 10px 3px; min-height: 68px; font-size: 12px; text-align: center; }
+ .admin-focused .admin-subnavigation { gap: 6px; }
+ .admin-focused .admin-subnavigation button { flex: 1 1 110px; font-size: 14px; padding: 9px; }
+ .admin-focused .admin-topbar-actions { gap: 8px; }
+ .admin-focused .admin-user-layout.has-selected-user .admin-user-list { display: none; }
+ .admin-focused .admin-user-layout:not(.has-selected-user) .admin-user-detail { display: none; }
+ .admin-focused .admin-user-layout { grid-template-columns: minmax(0,1fr); }
+ .owner-erasure__actions { display: grid; grid-template-columns: 1fr; }
+}
+@media(prefers-reduced-motion:reduce) { .admin-focused * { scroll-behavior: auto !important; } }
