@@ -76,3 +76,22 @@ html[lang="ar"] :is(.member-workspace,.admin-focused,.sanad-dialog) :is(h1,h2,h3
  .header .icon-button { min-inline-size: 44px; min-block-size: 44px; padding: 8px; }
  .header .language-tool span { display: none; }
 }
+
+/* A column flex container with legacy wrapping placed draft actions outside the card. */
+@media(max-width:600px) {
+ .dashboard.member-workspace .dashboard-editor-top {
+   display: grid;
+   grid-template-columns: minmax(0,1fr);
+   align-items: stretch;
+   gap: 12px;
+ }
+ .dashboard.member-workspace .dashboard-editor-top > .member-text-action { flex-basis: auto; }
+ .dashboard.member-workspace .dashboard-editor-top :is(.dashboard-site-row,.dashboard-editor-actions) { min-inline-size: 0; max-inline-size: 100%; }
+}
+
+/* Legacy lazy-loaded administration CSS hid its old sidebar on mobile.
+   The new five-workspace navigation must remain visible, without the old mobile selector. */
+@media(max-width:960px) {
+ .admin-console.admin-focused .admin-workbench { display: flex; flex-direction: column; gap: 16px; }
+ .admin-console.admin-focused .admin-sidebar { display: block; position: static; inline-size: 100%; padding: 0; border: 0; background: transparent; }
+}
