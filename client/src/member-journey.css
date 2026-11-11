@@ -1,0 +1,58 @@
+/* Presentation only; no global typography, publication or public identity changes. */
+.dashboard.member-workspace .dashboard-workspace { grid-template-columns: minmax(0, 1fr); }
+.dashboard.member-workspace .dashboard-sidebar { position: static; padding: 0; border: 0; background: transparent; }
+.dashboard.member-workspace .dashboard-sidebar__label { display: none; }
+.dashboard.member-workspace .dashboard-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.dashboard.member-workspace .dashboard-tabs button { min-width: 0; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--dash-border); border-radius: 14px; background: var(--dash-surface); padding: 11px 8px; text-align: center; font-size: 16px; }
+.dashboard.member-workspace .dashboard-tabs button.is-active { background: color-mix(in srgb, var(--dash-green) 35%, var(--dash-surface)); border-color: var(--dash-accent); }
+.dashboard.member-workspace .dashboard-hero { min-height: 0; }
+.dashboard.member-workspace .dashboard-hero h1 { font-size: clamp(24px, 3vw, 32px); }
+.dashboard.member-workspace .dashboard-hero__actions { flex-wrap: wrap; max-width: 100%; }
+.dashboard.member-workspace .dashboard-content { min-width: 0; }
+.dashboard.member-workspace .member-account-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-block-end: 18px; }
+.dashboard.member-workspace .member-account-tabs button { flex: 1 1 120px; min-height: 44px; color: var(--dash-text); background: var(--dash-surface); border: 1px solid var(--dash-border); border-radius: 12px; padding: 10px; display: flex; align-items: center; justify-content: center; gap: 7px; }
+.dashboard.member-workspace .member-account-tabs button.is-active { border-color: var(--dash-accent); }
+.dashboard :is(.member-basics, .member-site-overview) { padding: clamp(18px, 3vw, 28px); display: grid; gap: 20px; }
+.dashboard .member-basics header p { margin-block-end: 0; }
+.dashboard .member-creation-steps { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 0 0 8px; }
+.dashboard .member-creation-steps li { min-width: 0; display: flex; align-items: center; gap: 8px; color: var(--dash-muted); font-size: 13px; line-height: 1.5; }
+.dashboard .member-creation-steps li:is(.is-current, .is-done) { color: var(--dash-text); }
+.dashboard .member-creation-steps__number { display: inline-flex; flex: 0 0 28px; width: 28px; height: 28px; align-items: center; justify-content: center; border: 1px solid var(--dash-border); border-radius: 50%; font-weight: 700; }
+.dashboard .is-current .member-creation-steps__number { background: var(--dash-green); border-color: var(--dash-accent); }
+.dashboard .is-done .member-creation-steps__number { color: var(--dash-accent); }
+.dashboard .member-site-overview__heading { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 12px; }
+.dashboard .member-site-overview__heading > div { min-width: 0; flex: 1 1 190px; }
+.dashboard .member-site-overview__heading h2 { overflow-wrap: anywhere; margin-block-end: 8px; }
+.dashboard .member-journey-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.dashboard .member-journey-actions .button { flex: 1 1 110px; min-width: 0; min-height: 48px; }
+.dashboard .member-optional-media { border-block-start: 1px solid var(--dash-border); padding-block-start: 16px; }
+.dashboard .member-optional-media summary { color: var(--dash-text); font-weight: 700; min-height: 44px; cursor: pointer; }
+.dashboard .member-optional-media .dashboard-media-pair { margin-block-start: 12px; }
+.dashboard .member-field-hint { display: block; color: var(--dash-muted); font-size: 13px; line-height: 1.7; margin-block-start: 8px; }
+.dashboard .member-text-action { display: inline-flex; align-items: center; justify-content: start; gap: 8px; border: 0; background: none; color: var(--dash-accent); padding: 8px 0; min-height: 44px; font-size: 14px; text-align: start; }
+.dashboard.member-workspace .dashboard-editor-group { margin: 0; }
+.dashboard.member-workspace .dashboard-editor-group > summary { min-height: 44px; padding: 12px 10px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.dashboard.member-workspace .dashboard-editor-group-label { margin: 0; }
+.dashboard .member-name-preview { overflow-wrap: anywhere; display: block; font-size: 15px; line-height: 1.6; color: var(--dash-accent); margin-block: 8px; }
+@media (max-width: 600px) {
+  .dashboard.member-workspace { --dash-gutter: 12px; }
+  .dashboard.member-workspace .dashboard-tabs button { flex-direction: column; gap: 5px; padding: 10px 4px; }
+  .dashboard .member-creation-steps li { flex-direction: column; justify-content: start; text-align: center; gap: 5px; }
+  .dashboard .member-basics .dashboard-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard .member-journey-actions .button:last-child { flex-basis: 100%; }
+  .dashboard .member-site-overview__heading .dashboard-status { margin-block-start: 0; }
+  .dashboard.member-workspace .dashboard-editor-navigation { grid-template-columns: minmax(0, 1fr); }
+  .dashboard.member-workspace .dashboard-editor-actions { gap: 8px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard.member-workspace .dashboard-tabs button { transition: none; }
+}
+
+.dashboard.member-workspace .dashboard-editor-top > .member-text-action { flex-basis: 100%; }
+.dashboard.member-workspace .member-address-settings { width: 100%; min-width: 0; }
+.dashboard.member-workspace .member-address-settings > summary { min-height: 44px; padding-block: 8px; color: var(--dash-accent); font-size: 14px; cursor: pointer; }
+.dashboard.member-workspace .dashboard-review-history > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; font-weight: 700; cursor: pointer; }
+.dashboard-preview-modal .member-creation-steps { display: grid; list-style: none; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 0; margin: 0 0 16px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.dashboard-preview-modal .member-creation-steps li { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.dashboard-preview-modal .member-creation-steps__number { display: grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 50%; }
+.dashboard-preview-modal .member-creation-steps .is-current { color: var(--accent); font-weight: 700; }

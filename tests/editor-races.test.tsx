@@ -24,7 +24,7 @@ function clickSave() { const button = [...container.querySelectorAll('button')].
 async function mount() { await act(async () => root.render(<AppContext.Provider value={{user,lang:'ar',t,notify,refresh:async()=>{}}}><Dashboard/></AppContext.Provider>)); await flush(); expect(nameInput()).not.toBeNull(); }
 beforeEach(() => {
   vi.useFakeTimers(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;
-  history.replaceState({},'', '/dashboard?tab=editor'); localStorage.clear();
+  history.replaceState({},'', '/dashboard?tab=editor&mode=edit'); localStorage.clear();
   Object.defineProperty(window,'matchMedia',{configurable:true,value:()=>({matches:true})});
   HTMLElement.prototype.scrollIntoView=vi.fn();
   Object.defineProperty(HTMLDialogElement.prototype,'showModal',{configurable:true,value:function(){this.setAttribute('open','');}});
@@ -62,11 +62,11 @@ describe('editor save races — DOM and mocked API only', () => {
     expect(records.first.draft).toMatchObject({ title: 'عنوان', specialty: 'التسويق الرقمي', city: 'جدة', skillImages: ['/api/media/existing'] });
     expect(container.textContent).toContain('التخصص');
   });
-  it.each(['header','bottom','preview'])('submits directly from the %s publication button after saving the latest edit', async place => {
+  it.each(['header','preview'])('submits directly from the %s publication button after saving the latest edit', async place => {
     await mount();
     await act(async()=>inputValue(nameInput(),'آخر نص قبل الطلب'));
     if(place==='preview') await act(async()=>[...container.querySelectorAll<HTMLButtonElement>('.dashboard-editor-actions button')].find(button=>button.textContent==='معاينة')!.click());
-    const parent=place==='header'?'.dashboard-editor-actions':place==='bottom'?'.dashboard-review-rail':'.dashboard-preview-modal footer';
+    const parent=place==='header'?'.dashboard-editor-actions':'.dashboard-preview-modal footer';
     await act(async()=>[...container.querySelectorAll<HTMLButtonElement>(parent+' button')].find(button=>button.textContent?.trim()==='طلب نشر موقعي')!.click());
     await flush();
     const calls=vi.mocked(api).mock.calls;

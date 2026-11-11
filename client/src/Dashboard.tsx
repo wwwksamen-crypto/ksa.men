@@ -1,3 +1,5 @@
+import { CreationSteps, MemberBasics, MemberSiteOverview } from './MemberSiteJourney';
+import { memberSection, memberWorkspace, editRequested, type MemberWorkspace, type CreationStep } from './member-journey';
 import ReferralPanel from './ReferralPanel';
 import SiteNameEditor from './SiteNameEditor';
 import { referralURL } from '../../shared/referral';
@@ -434,6 +436,10 @@ export default function Dashboard() {
   visibilityRef.current = visibilityPolicy;
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [editorSection, setEditorSection] = useState<EditorSection>('identity');
+  const [siteWorkspace, setSiteWorkspace] = useState<MemberWorkspace>('overview');
+  const [creationStep, setCreationStep] = useState<CreationStep>('basics');
+  const [preparingPreview, setPreparingPreview] = useState(false);
+  const preparingPreviewRef = useRef(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [submittingReview, setSubmittingReview] = useState(false);
   const [uploading, setUploading] = useState<UploadPurpose | ''>('');
@@ -496,6 +502,7 @@ export default function Dashboard() {
   const normalizedNameCandidate = nameCandidate.trim().toLowerCase();
   const localNameCandidateValid = validNameLabel(normalizedNameCandidate);
   const selectEditorSection = useCallback((section: EditorSection) => {
+    setSiteWorkspace('edit');
     setEditorSection(section);
     window.setTimeout(() => {
       const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
@@ -583,12 +590,8 @@ export default function Dashboard() {
   useEffect(() => { notificationSoundRef.current = notificationSoundEnabled; }, [notificationSoundEnabled]);
   useEffect(() => () => { void notificationAudioRef.current?.close(); }, []);
   useEffect(() => {
-    const requiredMissing = activeTab === 'editor'
-      ? [
-          ...(draft.name.trim() ? [] : [tr('الاسم', 'Name')]),
-          ...(draft.title.trim() ? [] : [tr('المسمى المهني', 'Professional title')]),
-        ]
-      : [];
+    // Existing publication completion is guidance, not a mandatory-field gate.
+    const requiredMissing: string[] = [];
     window.dispatchEvent(new CustomEvent('ksa:sanad-context', {
       detail: {
         section: activeTab,
@@ -688,6 +691,8 @@ export default function Dashboard() {
       if (dirtyRef.current && !(await flushSaveRef.current(true, true))) return;
       siteIdRef.current = site.id;
       setActiveSite(site);
+      setSiteWorkspace(memberWorkspace(site, editRequested(window.location.search) || Boolean(requestedSiteId())));
+      setCreationStep(site.status === 'pending' ? 'review' : 'basics');
       setLockForm({ enabled: Boolean(site.lock?.enabled), password: '', message: asText(site.lock?.message) });
       const nextDraft = parseDraft(site.draft);
       setVisibilityPolicy(site.visibility ?? { hidden: nextDraft.hidden, hiddenItems: nextDraft.hiddenItems, visible: true, listed: nextDraft.searchable, indexable: true, version: 0 });
@@ -713,7 +718,7 @@ export default function Dashboard() {
       setNameAvailability({ name: result.name, valid: true, available: false, reason: null });
       await openSite(result.site);
       await loadDashboard();
-      notify(tr('تم حجز الاسم وإنشاء مسودتك. الخطوة 2: ابدأ بتحرير هويتك.', 'Name reserved and your draft was created. Step 2: start editing your identity.'));
+      notify(tr('حُجز عنوان موقعك. عرّف بنفسك ثم عاين موقعك.', 'Your address is reserved. Introduce yourself, then preview your site.'));
     } catch (error) {
       const message = errorMessage(error);
       if ((error as { status?: unknown }).status === 409 || /(?:registered|conflict|reserved|taken)/i.test(message)) {
@@ -745,10 +750,16 @@ export default function Dashboard() {
     return () => window.removeEventListener('popstate', onPopState);
   }, [openSite]);
 
-  const changeTab = (tab: Tab) => {
+  const changeTab = (tab: Tab, workspace?: MemberWorkspace) => {
     setActiveTab(tab);
+    if (tab === 'editor' && activeSite) {
+      setSiteWorkspace(workspace ?? memberWorkspace(activeSite));
+      if (!workspace) setCreationStep('basics');
+    }
     const url = new URL(window.location.href);
     url.searchParams.set('tab', tab);
+    if (tab === 'editor' && workspace === 'edit') url.searchParams.set('mode', 'edit');
+    else url.searchParams.delete('mode');
     window.history.pushState({}, '', url);
     if (tab === 'editor') {
       window.setTimeout(() => {
@@ -866,6 +877,7 @@ export default function Dashboard() {
       const submittedVersion=versionRef.current;
       const response = await api<{ review?: { id?: string }; id?: string; message?: string; alreadyPublished?: boolean }>(`/api/sites/${encodeURIComponent(submittedSiteId!)}/submit`, { method: 'POST', body: JSON.stringify({ version: versionRef.current }) });
       setPreviewOpen(false);
+      setSiteWorkspace('overview');
       await loadDashboard();
       const message=lang==='ar'&&response.message?response.message:response.alreadyPublished?tr('موقعك معتمد بالفعل. يمكنك متابعة تطويره.', 'Your site is already published. Continue developing it.'):tr('شكراً لك. موقعك تحت المراجعة، وسنبلغك هنا وبالبريد فور اعتماده ونشره.', 'Thank you for building your identity. Your site is under review. We will notify you here and by email when it is approved and published.');
       setSubmissionMessage({siteId:submittedSiteId!,version:submittedVersion,message});
@@ -873,6 +885,17 @@ export default function Dashboard() {
       notify(message);
     } catch (error) { notify(errorMessage(error)); }
     finally { reviewingRef.current=false; setSubmittingReview(false); }
+  };
+
+  const previewCreation = async () => {
+    if (!activeSite || preparingPreviewRef.current || uploadSiteRef.current || openingSiteRef.current || reviewingRef.current) return;
+    const siteId = siteIdRef.current;
+    preparingPreviewRef.current = true; setPreparingPreview(true);
+    try {
+      if (!(await saveDraft(true, true)) || dirtyRef.current || siteIdRef.current !== siteId) return;
+      setCreationStep('review');
+      setPreviewOpen(true);
+    } finally { preparingPreviewRef.current = false; setPreparingPreview(false); }
   };
 
   const requestNamePublication = async (name: string): Promise<boolean> => {
@@ -1274,19 +1297,19 @@ export default function Dashboard() {
   if (loadError) return <main className="dashboard dashboard-loading" role="status" aria-live="polite" dir={lang === 'ar' ? 'rtl' : 'ltr'}><AlertTriangle /><div><strong>{tr('تعذر تحميل اللوحة', 'Unable to load dashboard')}</strong><p className="muted">{loadError}</p><button className="button" onClick={() => void loadDashboard()}>{tr('إعادة المحاولة', 'Try again')}</button></div></main>;
 
   return (
-    <main ref={viewportRef} className="dashboard" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
+    <main ref={viewportRef} className="dashboard member-workspace" dir={lang === 'ar' ? 'rtl' : 'ltr'}>
       <div className="dashboard-shell" ref={dashboardInteractiveRef}>
         <header className="dashboard-hero card">
           <div className="dashboard-hero__copy">
             <p className="dashboard-kicker"><BadgeCheck size={15} /> {tr('مساحة العمل', 'Workspace')}</p>
-            <h1>{tr('هويتك المهنية', 'Your professional identity')}</h1>
-            <p className="muted">{tr('حرر موقعك وخدماتك من مكان واحد.', 'Edit your site and services from one place.')}</p>
+            <h1>{memberSection(activeTab) === 'site' ? tr('موقعي', 'My site') : memberSection(activeTab) === 'outputs' ? tr('مخرجاتي', 'My outputs') : tr('حسابي', 'My account')}</h1>
+            <p className="muted">{memberSection(activeTab) === 'site' ? tr('أنشئ موقعك، عاينه، ثم اطلب نشره.', 'Create your site, preview it, then request publication.') : memberSection(activeTab) === 'outputs' ? tr('مخرجات موقعك وخدماته في مكان واحد.', 'Your site outputs and services in one place.') : tr('رسائلك وعضويتك ونقاطك وإعداداتك.', 'Your messages, membership, points and settings.')}</p>
           </div>
           {!initialReservationFlow && <div className="dashboard-hero__actions">
             <button className="dashboard-site-switch" title={activeSite?.status === 'published' ? tr('فتح الموقع المنشور', 'Open published site') : tr('معاينة الهوية قبل النشر', 'Preview before publication')} onClick={() => { if (activeSite?.status === 'published' && activeSiteUrl) window.open(activeSiteUrl, '_blank', 'noopener'); else setPreviewOpen(true); }} disabled={!activeSiteUrl}>
               <Globe2 size={16} /><span dir="ltr"><bdi>{activeSiteUrl ? activeSiteUrl.replace(/^https:\/\//, '') : tr('لا يوجد اسم محجوز', 'No reserved name')}</bdi></span><ExternalLink size={14} />
             </button>
-            {activeSite?.name&&<SiteNameEditor key={activeSite.id} siteId={activeSite.id} currentName={activeSite.name} disabled={submittingReview||Boolean(uploading)||openingSite} onRequest={requestNamePublication} onPublish={()=>void submitForReview()}/>}
+            {activeTab === 'editor' && siteWorkspace === 'edit' && activeSite?.name&&<details className="member-address-settings"><summary>{tr('تعديل عنوان الموقع', 'Edit site address')}</summary><SiteNameEditor key={activeSite.id} siteId={activeSite.id} currentName={activeSite.name} disabled={submittingReview||Boolean(uploading)||openingSite} onRequest={requestNamePublication} onPublish={()=>void submitForReview()}/></details>}
             <span className="dashboard-status">{publicationLabel(activeSite?.status, lang)}</span>
             <div className={`dashboard-save-state is-${saveState}`} role="status" aria-live="polite" aria-atomic="true"><span />{tr(...statusText[saveState])}</div>
           </div>}
@@ -1296,13 +1319,24 @@ export default function Dashboard() {
           {!initialReservationFlow && <aside className="dashboard-sidebar">
             <p className="dashboard-sidebar__label">{tr('لوحة التحكم', 'Console')}</p>
             <nav className="dashboard-tabs" aria-label={tr('أقسام لوحة التحكم', 'Dashboard sections')}>
-              {tabs.map(({ key, ar, en, icon: Icon }) => <button key={key} className={activeTab === key ? 'is-active' : ''} aria-current={activeTab === key ? 'page' : undefined} onClick={() => changeTab(key)}><Icon size={17} /><span>{tr(ar, en)}</span></button>)}
+              {([
+                { key: 'site', tab: 'editor', ar: 'موقعي', en: 'My site', icon: PanelTop },
+                { key: 'outputs', tab: 'services', ar: 'مخرجاتي', en: 'My outputs', icon: ArrowDownToLine },
+                { key: 'account', tab: memberSection(activeTab) === 'account' ? activeTab : 'settings', ar: 'حسابي', en: 'My account', icon: UserRound },
+              ] as const).map(({ key, tab, ar, en, icon: Icon }) => <button type="button" key={key} className={memberSection(activeTab) === key ? 'is-active' : ''} aria-current={memberSection(activeTab) === key ? 'page' : undefined} disabled={preparingPreview || openingSite} onClick={() => changeTab(tab)}><Icon size={17}/><span>{tr(ar, en)}</span></button>)}
             </nav>
           </aside>}
 
           <section className="dashboard-content">
+            {memberSection(activeTab) === 'account' && <nav className="member-account-tabs" aria-label={tr('أقسام حسابي', 'My account sections')}>
+              {tabs.filter(item => memberSection(item.key) === 'account').map(({ key, ar, en, icon: Icon }) => <button type="button" key={key} className={activeTab === key ? 'is-active' : ''} aria-current={activeTab === key ? 'page' : undefined} onClick={() => changeTab(key)}><Icon size={16}/><span>{tr(ar, en)}</span></button>)}
+            </nav>}
+
 
       {activeTab === 'editor' && <section className="dashboard-editor">
+        {activeSite && <div className="member-site-picker">{asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} disabled={openingSite || Boolean(uploading) || submittingReview || preparingPreview} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
+              {asArray<Site>(dashboard?.sites).map((site) => <option key={site.id} value={site.id}>{site.name || site.id}</option>)}
+            </select>}</div>}
         {!activeSite ? <>
           <InitialNameReservation
           candidate={nameCandidate}
@@ -1313,20 +1347,30 @@ export default function Dashboard() {
           onChange={(value) => setNameCandidate(value.toLowerCase())}
           onReserve={reserveInitialName}
           tr={tr}
-        /></> : <>
+        /></> : siteWorkspace === 'create' && creationStep === 'basics' ? <MemberBasics
+          draft={draft} lang={lang} tr={tr} onChange={changeDraft}
+          fallbackName={numericId(activeSite.userId) === numericId(user?.id) ? String(user?.name || '') : undefined}
+          onPreview={() => void previewCreation()} onEdit={() => changeTab('editor', 'edit')} onSave={() => void saveDraft(false, true)}
+          saving={saveState === 'saving'} busy={preparingPreview || Boolean(uploading) || openingSite || submittingReview} error={saveError}
+          optionalMedia={<div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={event => void uploadImage(event, 'photo')}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={event => void uploadImage(event, 'cover')}/></div>}
+        /> : siteWorkspace !== 'edit' ? <MemberSiteOverview
+          name={draft.name} title={draft.title} status={publicationLabel(activeSite.status, lang)} tr={tr}
+          creationReview={siteWorkspace === 'create'} error={saveError}
+          message={submissionMessage?.siteId === activeSite.id && !dirtyRef.current && submissionMessage.version === versionRef.current ? submissionMessage.message : undefined}
+          onEdit={() => { if (siteWorkspace === 'create') setCreationStep('basics'); else changeTab('editor', 'edit'); }}
+          onPreview={() => setPreviewOpen(true)} onSubmit={() => void submitForReview()} onOutputs={() => changeTab('services')}
+          busy={submittingReview || Boolean(uploading) || openingSite || preparingPreview}
+        /> : <>
         <div className="dashboard-editor-top card">
+          <button type="button" className="member-text-action" onClick={() => changeTab('editor')}>{tr('العودة إلى موقعي', 'Back to my site')}</button>
           <div className="dashboard-site-row">
             <div>
               <p className="dashboard-kicker"><PanelTop size={15}/>{isScopedProxySite ? tr('تحرير الهوية بإدارة الفريق', 'Team-managed identity editor') : tr('محرر الهوية الرقمية', 'Digital identity editor')}</p>
               <h2>{activeSite?.name || tr('اختر موقعاً', 'Select a site')}</h2>
             </div>
-            {asArray<Site>(dashboard?.sites).length > 1 && <select className="field" value={activeSite?.id || ''} disabled={openingSite || Boolean(uploading) || submittingReview} onChange={(event) => { const site = asArray<Site>(dashboard?.sites).find((item) => item.id === event.target.value); if (site) void openSite(site); }} aria-label={tr('الموقع الحالي', 'Current site')}>
-              {asArray<Site>(dashboard?.sites).map((site) => <option key={site.id} value={site.id}>{site.name || site.id}</option>)}
-            </select>}
           </div>
           <div className="dashboard-editor-actions" role="group" aria-label={tr('إجراءات المسودة', 'Draft actions')}>
             <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><Eye size={17}/>{tr('معاينة', 'Preview')}</button>
-            <button className="button button--quiet" onClick={() => setPreviewOpen(true)} disabled={!activeSite}><FileCheck2 size={17}/>{tr('مراجعة بياناتي', 'Review my details')}</button>
             <button className="button" onClick={() => void submitForReview()} disabled={!activeSite || submittingReview || Boolean(uploading)}><FileCheck2 size={17}/>{submittingReview ? tr('جارٍ إرسال موقعك', 'Sending your site') : tr('طلب نشر موقعي', 'Request publication')}</button>
             <button className="button" onClick={() => void saveDraft(false, true)} disabled={!activeSite || saveState === 'saving' || saveState === 'saved'}><Save size={17}/>{saveState === 'saving' ? tr('جارٍ الحفظ', 'Saving') : tr('حفظ', 'Save')}</button>
           </div>
@@ -1336,14 +1380,14 @@ export default function Dashboard() {
 
           <div className="dashboard-editor-layout">
             <aside className="dashboard-editor-navigation" aria-label={tr('أقسام محرر الهوية', 'Identity editor sections')}>
-              {editorGroups.map((group) => <section className={`dashboard-editor-group ${group.steps.includes(editorSection) ? 'is-active' : ''}`} key={group.key}>
-                <p className="dashboard-editor-group-label"><span>{tr(group.ar, group.en)}</span><small>{group.steps.filter((step) => step === editorSection).length ? tr('قيد التحرير', 'Editing') : `${group.steps.length} ${tr('خطوات', 'steps')}`}</small></p>
+              {editorGroups.map((group) => <details className={`dashboard-editor-group ${group.steps.includes(editorSection) ? 'is-active' : ''}`} key={group.key} open={group.steps.includes(editorSection)}>
+                <summary><span className="dashboard-editor-group-label"><span>{tr(group.ar, group.en)}</span><small>{group.steps.includes(editorSection) ? tr('قيد التحرير', 'Editing') : tr('فتح الأقسام', 'Open sections')}</small></span><ChevronDown size={16}/></summary>
                 <div className="dashboard-editor-substeps">
                   {group.steps.map((step) => <button type="button" key={step} className={editorSection === step ? 'is-active' : ''} aria-current={editorSection === step ? 'step' : undefined} onClick={() => selectEditorSection(step)}>
                     <EditorSectionIcon section={step}/><span>{tr(editorSectionMap[step].ar, editorSectionMap[step].en)}</span><ChevronLeft size={15}/>
                   </button>)}
                 </div>
-              </section>)}
+              </details>)}
             </aside>
             <details id="identity-editor-section" className="dashboard-edit-card card" ref={editorCardRef} open>
               <summary><span><PencilLine size={16}/>{tr(editorSectionMap[editorSection].ar, editorSectionMap[editorSection].en)}</span><ChevronDown size={18}/></summary>
@@ -1372,17 +1416,23 @@ export default function Dashboard() {
               </div>
             </details>
           </div>
-          <section className="dashboard-review-rail card">
-            <div><FileCheck2 size={19}/><div><h3>{tr('النشر', 'Publication')}</h3><p className="muted">{tr('أرسل موقعك للمشرف بلمسة. نحفظ أحدث تعديلاتك قبل الإرسال.', 'Send your site to the administrator with one click. Your latest edits are saved first.')}</p></div></div>
-            <div className="dashboard-review-rail__actions"><span className="dashboard-status">{publicationLabel(activeSite.status, lang)}</span><button className="button" onClick={() => void submitForReview()} disabled={submittingReview || Boolean(uploading)}><FileCheck2 size={16}/>{submittingReview ? tr('جارٍ إرسال موقعك', 'Sending your site') : tr('طلب نشر موقعي', 'Request publication')}</button></div>
-          </section>
-          {reviews.length > 0 && <section className="dashboard-review-history card"><div className="dashboard-section-heading"><div><Clock3 size={18}/><h2>{tr('سجل المراجعات', 'Review history')}</h2></div></div>{reviews.slice(0, 5).map((review, index) => <div key={String(review.id ?? index)} className="dashboard-history-row"><span>{String(review.status ?? 'pending')}</span><p>{String(review.reason || tr('بانتظار قرار المراجع.', 'Awaiting reviewer decision.'))}</p><time>{formatDate(Number(review.created_at), locale)}</time></div>)}</section>}
+          {reviews.length > 0 && <details className="dashboard-review-history card"><summary><Clock3 size={18}/>{tr('سجل طلبات النشر', 'Publication requests')}</summary>{reviews.slice(0, 5).map((review, index) => <div key={String(review.id ?? index)} className="dashboard-history-row"><span>{review.status === 'approved' ? tr('معتمد', 'Approved') : review.status === 'rejected' ? tr('لم يعتمد', 'Not approved') : tr('بانتظار القرار', 'Awaiting decision')}</span><p>{String(review.reason || tr('بانتظار قرار المراجع.', 'Awaiting reviewer decision.'))}</p><time>{formatDate(Number(review.created_at), locale)}</time></div>)}</details>}
         </>}
       </section>}
 
       {activeTab === 'wallet' && <WalletPanel balance={balance} ledger={asArray<Record<string, unknown>>(dashboard?.ledger)} transferForm={transferForm} setTransferForm={setTransferForm} onTransfer={doTransfer} onCopyReferral={copyReferral} busyOperation={walletOperation} loyalty={loyalty} loyaltyBusy={loyaltyOperation === 'daily'} competitionBusy={loyaltyOperation === 'competition'} activeSiteUrl={activeSiteUrl} onDailySubmit={submitDailyChallenge} onCompetitionEnter={enterCompetition} locale={locale} tr={tr} notify={notify} />}
 
       {activeTab === 'services' && <section className="dashboard-services stack">
+        <section className="card dashboard-exports">
+          <div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('مخرجاتي', 'My outputs')}</h2></div></div>
+          <p className="muted">{tr('اختَر مصدر التصدير. النسخة الإنجليزية لا تتاح هنا إلا بعد حفظها وتظل قابلة للتعديل أعلاه.', 'Choose an export source. English is available here only after it has been saved and remains editable above.')}</p>
+          <div className="dashboard-export-language" role="group" aria-label={tr('لغة التصدير', 'Export language')}>
+            <button className={`button button--quiet ${exportLanguage === 'ar' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'ar'} onClick={() => setExportLanguage('ar')}>العربية</button>
+            <button className={`button button--quiet ${exportLanguage === 'en' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'en'} disabled={!draft.translations?.en} onClick={() => setExportLanguage('en')}>English {draft.translations?.en ? <Check size={15}/> : <Lock size={15}/>}</button>
+          </div>
+          <div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => activeSite && (exportLanguage === 'ar' || draft.translations?.en) ? <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite.id)}&lang=${exportLanguage}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('السيرة الذاتية', 'ATS résumé') : kind === 'profile' ? tr('البروفايل التعريفي', 'Executive profile') : kind === 'card' ? tr('بطاقة المعارض', 'Exhibition badge') : kind === 'vcard' ? tr('بطاقة الاتصال', 'Contact card') : kind === 'qr' ? tr('رموز الاستجابة السريعة', 'QR codes') : tr('بطاقة المشاركة', 'Social card')}<ExternalLink size={13}/></a> : <span className="button button--quiet dashboard-export-disabled" key={kind}><Lock size={16}/>{tr('احفظ الترجمة أولاً', 'Save translation first')}</span>)}</div>
+        </section>
+
         <section className="dashboard-quality-grid dashboard-quality-grid--three">
           <article className="card dashboard-completion"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('اكتمال الهوية', 'Identity completeness')}</h2></div><strong>{profileCompletion}%</strong></div><div className="dashboard-progress"><span style={{ width: `${profileCompletion}%` }}/></div><p className="muted">{tr('مساعد التحرير يقيس الحقول المملوءة في مسودتك الحالية ويقودك للخطوة التالية.', 'The editing assistant measures populated fields in your current draft and guides your next step.')}</p></article>
           <article className="card dashboard-quality"><div className="dashboard-section-heading"><div><ShieldCheck size={18}/><h2>{tr('جودة الهوية', 'Identity quality')}</h2></div><button className="dashboard-icon-button" onClick={() => void loadIdentityInsights()} disabled={insightsLoading} aria-label={tr('تحديث تقييم الجودة', 'Refresh quality assessment')}><RefreshCw className={insightsLoading ? 'spin' : ''} size={16}/></button></div>{insightsError ? <p className="dashboard-error">{insightsError}</p> : serverQuality ? <><div className="dashboard-quality-score"><strong>{serverQuality.score}%</strong><span>{tr('تقييم خادمي للمسودة', 'Server-assessed draft')}</span></div><ul>{serverQuality.completed.map((item) => <li className="is-ready" key={item}><Check size={16}/><span>{qualityCopy(item, tr)}</span></li>)}{serverQuality.recommendations.map((item) => <li key={item}><CircleHelp size={16}/><span>{qualityCopy(item, tr)}</span></li>)}</ul></> : <EmptyInline text={insightsLoading ? tr('نحدّث التقييم من الخادم…', 'Refreshing the server assessment…') : tr('لا تتوفر نتيجة جودة معتمدة للموقع المحدد.', 'No server-approved quality result is available for the selected site.')} />}</article>
@@ -1390,7 +1440,7 @@ export default function Dashboard() {
         </section>
         <section className="card dashboard-translation">
           <div className="dashboard-section-heading"><div><Languages size={18}/><h2>{tr('الترجمة المحفوظة', 'Saved translation')}</h2></div>{selectedTranslation && <span className="dashboard-status">{translationTarget === 'en' ? tr('الإنجليزية محفوظة', 'English saved') : tr('العربية محفوظة', 'Arabic saved')}</span>}</div>
-          <p className="muted">{tr('يبقى محرر المسودة العربية الرئيسي أعلاه كما هو؛ هذا القسم يحفظ ويحرر نسخة الهدف المنفصلة فقط.', 'The main Arabic draft editor above remains unchanged; this section saves and edits only a separate target version.')}</p>
+          <p className="muted">{tr('تحفظ هنا نسخة مترجمة قابلة للتحرير، مستقلة عن مسودة موقعك الأصلية.', 'Save and edit a translated version separately from your original site draft.')}</p>
           <div className="dashboard-translation-direction" role="group" aria-label={tr('اتجاه الترجمة', 'Translation direction')}>
             <button className={`button button--quiet ${translationTarget === 'en' ? 'is-active' : ''}`} aria-pressed={translationTarget === 'en'} onClick={() => setTranslationTarget('en')}>{tr('العربية ← الإنجليزية', 'Arabic → English')}</button>
             <button className={`button button--quiet ${translationTarget === 'ar' ? 'is-active' : ''}`} aria-pressed={translationTarget === 'ar'} onClick={() => setTranslationTarget('ar')}>{tr('الإنجليزية ← العربية', 'English → Arabic')}</button>
@@ -1402,15 +1452,6 @@ export default function Dashboard() {
             <label className="dashboard-check"><input type="checkbox" checked={translationConsent} onChange={(event) => setTranslationConsent(event.target.checked)} />{tr('أوافق على معالجة محتوى المسودة للترجمة في الاتجاه المحدد.', 'I consent to processing draft content for the selected translation direction.')}</label>
             <button className="button" disabled={!activeSite || !translationConsent} onClick={() => void translateDraft()}><Languages size={17}/>{translationTarget === 'en' ? tr('ترجمة وحفظ الإنجليزية', 'Translate and save English') : tr('ترجمة وحفظ العربية', 'Translate and save Arabic')}</button>
           </> : <TranslationEditor target={translationTarget} translation={parseDraft(selectedTranslation)} onChange={(patch) => updateSavedTranslation(translationTarget, patch)} tr={tr} />}
-        </section>
-        <section className="card dashboard-exports">
-          <div className="dashboard-section-heading"><div><ArrowDownToLine size={18}/><h2>{tr('التصديرات الفعلية', 'Live exports')}</h2></div></div>
-          <p className="muted">{tr('اختَر مصدر التصدير. النسخة الإنجليزية لا تتاح هنا إلا بعد حفظها وتظل قابلة للتعديل أعلاه.', 'Choose an export source. English is available here only after it has been saved and remains editable above.')}</p>
-          <div className="dashboard-export-language" role="group" aria-label={tr('لغة التصدير', 'Export language')}>
-            <button className={`button button--quiet ${exportLanguage === 'ar' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'ar'} onClick={() => setExportLanguage('ar')}>العربية</button>
-            <button className={`button button--quiet ${exportLanguage === 'en' ? 'is-active' : ''}`} aria-pressed={exportLanguage === 'en'} disabled={!draft.translations?.en} onClick={() => setExportLanguage('en')}>English {draft.translations?.en ? <Check size={15}/> : <Lock size={15}/>}</button>
-          </div>
-          <div className="dashboard-export-grid">{['profile', 'ats', 'card', 'vcard', 'qr', 'social'].map((kind) => activeSite && (exportLanguage === 'ar' || draft.translations?.en) ? <a className="button button--quiet" key={kind} href={`/export/${kind}?site=${encodeURIComponent(activeSite.id)}&lang=${exportLanguage}`} target="_blank" rel="noreferrer"><FileText size={16}/>{kind === 'ats' ? tr('سيرة ذاتية', 'ATS résumé') : kind === 'profile' ? tr('ملف تعريفي', 'Identity PDF') : kind.toUpperCase()}<ExternalLink size={13}/></a> : <span className="button button--quiet dashboard-export-disabled" key={kind}><Lock size={16}/>{tr('احفظ الترجمة أولاً', 'Save translation first')}</span>)}</div>
         </section>
         <section className="dashboard-services-list card"><div className="dashboard-section-heading"><div><Sparkles size={18}/><h2>{tr('إتاحة الخدمات', 'Service availability')}</h2></div><button className="button button--quiet" onClick={() => void loadServices()}><RefreshCw size={15}/>{tr('تحديث', 'Refresh')}</button></div>{services.length ? <div className="dashboard-service-grid">{services.map((service) => { const enabled = Boolean(service.enabled); const entitled = service.entitled !== false; return <article key={service.key} className={!enabled || !entitled ? 'is-unavailable' : ''}><div><strong>{lang === 'ar' ? service.name_ar || service.key : service.name_en || service.key}</strong><small>{!enabled ? tr('معلّقة على مستوى المنصة', 'Suspended platform-wide') : !entitled ? tr('تتطلب استحقاقاً', 'Entitlement required') : tr('متاحة لحسابك', 'Available to your account')}</small></div><span>{enabled && entitled ? <Check size={17}/> : <Lock size={16}/>}</span></article>; })}</div> : <EmptyInline text={tr('لا توجد حالة خدمات مؤكدة من الخادم حالياً.', 'No server-confirmed service status is available yet.')} />}</section>
         <section className="dashboard-insights-grid"><article className="card"><div className="dashboard-section-heading"><div><BookOpen size={18}/><h2>{tr('قياسات الحضور', 'Presence measurements')}</h2></div></div>{presenceMeasurements.length ? <dl className="dashboard-metrics">{presenceMeasurements.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{typeof value === 'number' ? value.toLocaleString(locale) : String(value)}</dd></div>)}</dl> : <EmptyInline text={tr('قياس التفاعلات غير مفعل. لا يؤثر ذلك في جودة موقعك أو نشره.', 'Interaction measurement is not enabled. This does not affect your site quality or publication.')} />}</article><QuickLinkPanel mode={quickMode} setMode={setQuickMode} fields={quickFields} setFields={setQuickFields} days={quickDays} setDays={setQuickDays} activeLink={quickLink} existing={existingQuickLinks} onCreate={createQuickLink} onRevoke={revokeQuickLink} tr={tr} /></section>
@@ -1436,7 +1477,7 @@ export default function Dashboard() {
           </section>
         </div>
       </div>
-      {previewOpen && <PreviewModal policy={visibilityPolicy} visibilityBusy={visibilityBusy} onVisibilityChange={saveVisibility} draft={draft} site={activeSite} tr={tr} submitting={submittingReview} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
+      {previewOpen && <PreviewModal policy={visibilityPolicy} visibilityBusy={visibilityBusy} onVisibilityChange={saveVisibility} draft={activeSite && numericId(activeSite.userId) === numericId(user?.id) && !draft.name.trim() ? {...draft, name:String(user?.name || '')} : draft} site={activeSite} tr={tr} submitting={submittingReview} creation={siteWorkspace === 'create'} onContinueEditing={() => { setPreviewOpen(false); if (siteWorkspace === 'create') setCreationStep('basics'); else changeTab('editor', 'edit'); }} onClose={() => setPreviewOpen(false)} onSubmit={submitForReview} />}
     </main>
   );
 }
@@ -1451,11 +1492,12 @@ function InitialNameReservation({ candidate, availability, checking, reserving, 
         : availability?.reason || tr('أدخل اسماً صالحاً للمتابعة.', 'Enter a valid name to continue.');
   const stateClass = availability?.available ? 'is-available' : candidate.trim() && !checking ? 'is-unavailable' : '';
   return <section className="dashboard-name-reservation card" aria-labelledby="initial-name-title">
-    <header><p className="dashboard-kicker"><BadgeCheck size={15}/>{tr('الخطوة 1 من 2', 'Step 1 of 2')}</p><h2 id="initial-name-title">{tr('اختر اسمك الخاص', 'Choose your private name')}</h2><p className="muted">{tr('ستنشئ المسودة التالية بعد حجز الاسم فقط.', 'Your editable draft is created only after this name is reserved.')}</p></header>
+    <CreationSteps step="address" tr={tr}/><header><p className="dashboard-kicker"><BadgeCheck size={15}/>{tr('الخطوة 1 من 3', 'Step 1 of 3')}</p><h2 id="initial-name-title">{tr('عنوان موقعك', 'Your site address')}</h2><p className="muted">{tr('ستنشئ المسودة التالية بعد حجز الاسم فقط.', 'Your editable draft is created only after this name is reserved.')}</p></header>
     <label><span>{tr('النطاق الفرعي الخاص', 'Private subdomain')}</span><div className="dashboard-name-field" dir="ltr"><input className={`field ${candidate.trim() && !locallyValid ? 'is-invalid' : ''}`} value={candidate} onChange={(event) => onChange(event.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="text" placeholder="your-name" aria-describedby="initial-name-advisory" disabled={reserving}/><span>.ksa.men</span></div></label>
+    {locallyValid && <bdi className="member-name-preview" dir="ltr">https://{candidate.trim().toLowerCase()}.ksa.men</bdi>}
     <p id="initial-name-advisory" className={`dashboard-name-advisory ${stateClass}`} role="status" aria-live="polite">{checking || reserving ? <RefreshCw className="spin" size={16}/> : availability?.available ? <Check size={16}/> : <CircleHelp size={16}/>}<span>{reserving ? tr('جارٍ الحجز وإنشاء المسودة…', 'Reserving name and creating draft…') : advisory}</span></p>
     {availability?.suggestions && availability.suggestions.length > 0 && <div className="dashboard-name-suggestions"><span>{tr('بدائل متاحة للتحقق:', 'Alternatives to check:')}</span>{availability.suggestions.slice(0, 3).map((suggestion) => <button type="button" key={suggestion} onClick={() => onChange(suggestion)}><bdi dir="ltr">{suggestion}.ksa.men</bdi></button>)}</div>}
-    <button className="button" disabled={!locallyValid || !availability?.available || checking || reserving} onClick={onReserve}>{reserving ? <RefreshCw className="spin" size={17}/> : <Plus size={17}/>} {tr('حجز وإنشاء المسودة', 'Reserve & create')}</button>
+    <button className="button" disabled={!locallyValid || !availability?.available || checking || reserving} onClick={onReserve}>{reserving ? <RefreshCw className="spin" size={17}/> : <Plus size={17}/>} {tr('احجز عنوان موقعي', 'Reserve my site address')}</button>
   </section>;
 }
 
@@ -1496,7 +1538,7 @@ function TextSection({ label, hint, value, multiline = false, onChange, lang, ma
 }
 
 function IdentitySection({ draft, tr, uploading, onChange, onUpload, lang }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; uploading: string; onChange: (patch: Partial<ProfileDraft>) => void; onUpload: (event: ChangeEvent<HTMLInputElement>, purpose: UploadPurpose) => void; lang: 'ar' | 'en' }) {
-  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى', 'Name and title')}</h2><p className="muted">{tr('ابدأ ببيانات الهوية المطلوبة، ثم أضف الصورة والغلاف عندما تكون جاهزاً.', 'Start with the required identity details, then add a photo and cover when ready.')}</p></div></header><div className="dashboard-settings-grid"><DictatedInput label={tr('الاسم', 'Name')} autoComplete="name" maxLength={160} value={draft.name} onChange={(name) => onChange({ name })} lang={lang} tr={tr}/><DictatedInput label={tr('المسمى المهني', 'Professional title')} maxLength={180} value={draft.title} onChange={(title) => onChange({ title })} lang={lang} tr={tr}/><DictatedInput label={tr('التخصص', 'Specialty')} maxLength={120} value={draft.specialty} onChange={(specialty) => onChange({ specialty })} placeholder={tr('مثال: التسويق الرقمي', 'e.g. Digital marketing')} lang={lang} tr={tr}/><DictatedInput label={tr('المدينة', 'City')} autoComplete="address-level2" maxLength={120} value={draft.city} onChange={(city) => onChange({ city })} lang={lang} tr={tr}/></div><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo')}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover')}/></div></>;
+  return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><UserRound size={15}/>{tr('الخطوة 1', 'Step 1')}</p><h2>{tr('الاسم والمسمى', 'Name and title')}</h2><p className="muted">{tr('عرّف بنفسك، وأضف المسمى والصورة والغلاف عندما ترغب.', 'Introduce yourself and add your title, photo and cover whenever you wish.')}</p></div></header><div className="dashboard-settings-grid"><DictatedInput label={tr('الاسم', 'Name')} autoComplete="name" maxLength={160} value={draft.name} onChange={(name) => onChange({ name })} lang={lang} tr={tr}/><DictatedInput label={tr('المسمى المهني', 'Professional title')} maxLength={180} value={draft.title} onChange={(title) => onChange({ title })} lang={lang} tr={tr}/><DictatedInput label={tr('التخصص', 'Specialty')} maxLength={120} value={draft.specialty} onChange={(specialty) => onChange({ specialty })} placeholder={tr('مثال: التسويق الرقمي', 'e.g. Digital marketing')} lang={lang} tr={tr}/><DictatedInput label={tr('المدينة', 'City')} autoComplete="address-level2" maxLength={120} value={draft.city} onChange={(city) => onChange({ city })} lang={lang} tr={tr}/></div><div className="dashboard-media-pair"><UploadControl label={tr('الصورة الشخصية', 'Profile photo')} purpose="photo" uploading={uploading} tr={tr} preview={draft.photo} onChange={(event) => void onUpload(event, 'photo')}/><UploadControl label={tr('الغلاف البانورامي', 'Panoramic cover')} purpose="cover" uploading={uploading} tr={tr} preview={draft.cover} onChange={(event) => void onUpload(event, 'cover')}/></div></>;
 }
 function ContactSection({ draft, tr, onChange, lang, siteName }: { draft: ProfileDraft; tr: (ar: string, en: string) => string; onChange: (patch: Partial<ProfileDraft>) => void; lang: 'ar' | 'en'; siteName?: string }) { const suggestion = siteName ? `${siteName}@ksa.men` : 'name@ksa.men'; return <><header className="dashboard-edit-heading"><div><p className="dashboard-kicker"><Mail size={15}/>{tr('الخطوة 3', 'Step 3')}</p><h2>{tr('بيانات التواصل والموقع', 'Contact and location')}</h2><p className="muted">{tr('يمكنك لاحقاً التحكم في ظهور كل حقل ضمن إعدادات الخصوصية.', 'You can later control visibility for each field in privacy settings.')}</p></div></header><div className="dashboard-settings-grid">{([['email', tr('البريد الإلكتروني', 'Email'), 'email'], ['phone', tr('الهاتف', 'Phone'), 'tel'], ['whatsapp', tr('واتساب', 'WhatsApp'), 'tel'], ['country', tr('الدولة', 'Country'), 'text']] as const).map(([key, label, type]) => <DictatedInput key={key} label={label} type={type} value={draft[key]} onChange={(value) => onChange({ [key]: value })} lang={lang} tr={tr}/>)}</div><p className="dashboard-email-suggestion"><Mail size={15}/>{tr(`صيغة مقترحة لهويتك البريدية: ${suggestion}. هذا اقتراح فقط؛ لا تنشئ المنصة صندوق بريد أو وصولاً إليه.`, `A suggested professional format is ${suggestion}. This is only a format suggestion; the platform does not create or access a mailbox.`)}</p></>;
 }
@@ -1705,7 +1747,7 @@ function TranslationEditor({ target, translation, onChange, tr }: { target: Tran
   ];
   return <div className="dashboard-translation-editor" dir={target === 'ar' ? 'rtl' : 'ltr'}><p className="muted">{tr(`حرر النصوص المحفوظة للنسخة ${targetName} فقط ثم استخدم الحفظ الآن أو انتظر الحفظ التلقائي. الأسماء والجهات والمؤهلات الرسمية تبقى كما هي لحمايتها من التحريف.`, `Edit only the saved ${targetName} text, then use Save now or wait for auto-save. Names, organisations, and official qualifications remain exact to prevent alteration.`)}</p><div className="dashboard-settings-grid"><label><span>{tr('المسمى المترجم', 'Translated title')}</span><input className="field" value={translation.title} onChange={(event) => onChange({ title: event.target.value })}/></label><DictatedInput label={tr('التخصص المترجم', 'Translated specialty')} maxLength={120} value={translation.specialty} onChange={(specialty) => onChange({ specialty })} lang={target} tr={tr}/><label><span>{tr('المدينة المترجمة', 'Translated city')}</span><input className="field" value={translation.city} onChange={(event) => onChange({ city: event.target.value })}/></label><label><span>{tr('الدولة المترجمة', 'Translated country')}</span><input className="field" value={translation.country} onChange={(event) => onChange({ country: event.target.value })}/></label></div><label><span>{tr('النبذة المترجمة', 'Translated biography')}</span><textarea className="field" rows={5} value={translation.bio} onChange={(event) => onChange({ bio: event.target.value })}/></label><div className="dashboard-settings-grid"><label><span>{tr('المهارات المترجمة، مفصولة بفواصل', 'Translated skills, comma-separated')}</span><textarea className="field" rows={3} value={translation.skills.join(', ')} onChange={(event) => updateStrings('skills', event.target.value)}/></label><label><span>{tr('الهوايات المترجمة، مفصولة بفواصل', 'Translated hobbies, comma-separated')}</span><textarea className="field" rows={3} value={translation.hobbies.join(', ')} onChange={(event) => updateStrings('hobbies', event.target.value)}/></label></div><div className="dashboard-translation-lists">{sections.map((section) => translation[section.key].length > 0 && <section key={section.key}><h3>{tr(section.ar, section.en)}</h3>{translation[section.key].map((item, index) => <div className="dashboard-translation-item" key={`${section.key}-${index}`}>{section.titles && <label><span>{tr('العنوان المترجم', 'Translated title')}</span><input className="field" value={item.title} onChange={(event) => updateStructured(section.key, index, { title: event.target.value })}/></label>}<label><span>{tr('الوصف المترجم', 'Translated description')}</span><textarea className="field" rows={3} maxLength={3000} value={item.description} onChange={(event) => updateStructured(section.key, index, { description: event.target.value })}/></label></div>)}</section>)}</div></div>;
 }
-export function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit, policy, visibilityBusy = false, onVisibilityChange }: { policy?: VisibilityPolicy | null; visibilityBusy?: boolean; onVisibilityChange?: (patch: Partial<Omit<VisibilityPolicy, 'version'>>) => void; draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
+export function PreviewModal({ draft, site, tr, submitting, onClose, onContinueEditing, creation = false, onSubmit, policy, visibilityBusy = false, onVisibilityChange }: { creation?: boolean; onContinueEditing?: () => void; policy?: VisibilityPolicy | null; visibilityBusy?: boolean; onVisibilityChange?: (patch: Partial<Omit<VisibilityPolicy, 'version'>>) => void; draft: ProfileDraft; site: Site | null; tr: (ar: string, en: string) => string; submitting: boolean; onClose: () => void; onSubmit: () => void }) {
   const { lang } = useApp();
   const previewProfile = useMemo(() => {
     const translated = lang === 'en' ? draft.translations?.en : undefined;
@@ -1737,7 +1779,7 @@ export function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit, p
   >
     <header>
       <div>
-        <p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة هويتك', 'Preview your identity')}</p>
+        {creation && <CreationSteps step="review" tr={tr}/>}<p className="dashboard-kicker"><Eye size={15}/>{tr('معاينة هويتك', 'Preview your identity')}</p>
         <h2 id="dashboard-preview-title">{draft.name || tr('اسمك', 'Your name')}</h2>
       </div>
       <button ref={closeButtonRef} type="button" className="dashboard-icon-button" onClick={onClose} aria-label={tr('إغلاق', 'Close')}><X size={18}/></button>
@@ -1751,7 +1793,7 @@ export function PreviewModal({ draft, site, tr, submitting, onClose, onSubmit, p
     <footer>
       <p className="muted">{tr('اضغط طلب النشر، وسيتولى المشرف إتاحة موقعك.', 'Request publication and your administrator will make your site available.')}</p>
       <div>
-        <button type="button" className="button button--quiet" onClick={onClose}>{tr('متابعة التحرير', 'Keep editing')}</button>
+        <button type="button" className="button button--quiet" onClick={onContinueEditing ?? onClose}>{tr('متابعة التحرير', 'Keep editing')}</button>
         <button type="button" className="button" disabled={submitting} onClick={onSubmit}>{submitting ? <RefreshCw className="spin" size={16}/> : <FileCheck2 size={16}/>} {tr('طلب نشر موقعي', 'Request publication')}</button>
       </div>
     </footer>
