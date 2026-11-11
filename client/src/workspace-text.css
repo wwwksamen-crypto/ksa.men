@@ -65,3 +65,14 @@ html[lang="ar"] :is(.member-workspace,.admin-focused,.sanad-dialog) :is(h1,h2,h3
  .sanad-dialog .sanad-actions .sanad-control { flex-basis: 100%; }
 }
 @media(prefers-reduced-motion:reduce) { :is(.member-workspace,.admin-focused,.sanad-dialog) { scroll-behavior: auto; } }
+
+/* Live acceptance found a 14px overflow in the authenticated header at 320px.
+   Keep all actions; only the visible language word becomes its labelled globe icon. */
+@media(max-width:420px) {
+ .header .header-inner { padding-inline: 10px; gap: 6px; }
+ .header .brand { flex-shrink: 0; gap: 6px; font-size: 18px; }
+ .header .brand img { inline-size: 28px; block-size: 28px; }
+ .header .header-tools { gap: 2px; }
+ .header .icon-button { min-inline-size: 44px; min-block-size: 44px; padding: 8px; }
+ .header .language-tool span { display: none; }
+}
