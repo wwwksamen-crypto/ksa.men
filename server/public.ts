@@ -1,3 +1,4 @@
+import {boundedUploadForm,validateIdentityWebp} from './upload-validation';
 import { usageMetricsEnabled } from './optional-metrics';
 import { profileItemIds, draftWithIdentities, expandedHiddenItems, withVisibility } from '../shared/profile-visibility';
 import { siteVisibility, visibleSiteProfile } from './visibility';
@@ -153,7 +154,7 @@ export function registerPublic(app:App){
   app.post('/api/upload',async c=>{
     const user=me(c);
     await rate(c,'upload:'+user.id,60,3600);
-    const form=await c.req.formData();
+    const form=await boundedUploadForm(c);
     const file=form.get('file');
     if(!(file instanceof File))throw new HTTPException(400,{message:'اختر الملف'});
     const purpose=z.enum(['photo','cover','skill','work','receipt']).parse(form.get('purpose'));
@@ -169,9 +170,20 @@ export function registerPublic(app:App){
     if(purpose==='receipt'&&new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')mime='application/pdf';
     if(!mime||file.type!==mime)throw new HTTPException(400,{message:'تعذر التحقق من محتوى الملف'});
     if(purpose!=='receipt'&&mime!=='image/webp')throw new HTTPException(400,{message:'تُجهز صور الهوية بصيغة WebP قبل الرفع'});
-    const id=uid(),key='user/'+user.id+'/'+id;
-    await c.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});
-    await run(c,'INSERT INTO media(id,owner_id,site_id,purpose,bucket_key,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)',id,user.id,siteId||null,purpose,key,mime,file.size,now());
+    if(purpose!=='receipt')await validateIdentityWebp(bytes);
+    const id=uid(),key='user/'+user.id+'/'+id,clock=now();
+    // Durable staging comes before R2, so a failed DB commit cannot create an untracked object.
+    await run(c,"INSERT INTO upload_intents(id,owner_id,site_id,bucket_key,purpose,state,created_at) VALUES(?,?,?,?,?,'staged',?)",id,user.id,siteId||null,key,purpose,clock);
+    try{
+     await c.env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});
+     await c.env.DB.batch([
+      c.env.DB.prepare('INSERT INTO media(id,owner_id,site_id,purpose,bucket_key,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)').bind(id,user.id,siteId||null,purpose,key,mime,file.size,clock),
+      c.env.DB.prepare("UPDATE upload_intents SET state='ready',finished_at=? WHERE id=? AND state='staged'").bind(now(),id),
+     ]);
+    }catch(error){
+     try{await run(c,"UPDATE upload_intents SET state='failed',finished_at=?,error_name=? WHERE id=?",now(),error instanceof Error?error.name:'UploadError',id);}catch{}
+     throw new HTTPException(503,{message:'لم يكتمل حفظ الصورة. الصورة السابقة لم تتغير؛ حاول مجدداً.'});
+    }
     return c.json({id,url:'/api/media/'+id});
   });
 

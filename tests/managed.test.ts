@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { webcrypto } from 'node:crypto';
@@ -50,7 +50,7 @@ describe.sequential('Managed identity and one-click administrative publication',
   const managed=sql({sql:'SELECT role,pin_hash,email,consent_at FROM users WHERE id=?',params:[managedId]}).results[0];expect(managed.role).toBe('user');expect(managed.consent_at).toBe(0);expect(await verifySecret(body.pin,managed.pin_hash)).toBe(true);expect(managed.email).toContain('@managed.ksa.men');
   expect((await request('/api/admin/managed-accounts','owner','POST',body)).status).toBe(409);
   expect(sql({sql:"SELECT active FROM reserved_names WHERE name='test'"}).results[0].active).toBe(1);
-  const upload=new FormData();upload.set('file',new File([new TextEncoder().encode('RIFF1234WEBPVP8L')],'owner-photo.webp',{type:'image/webp'}));upload.set('purpose','photo');upload.set('siteId',siteId);
+  const upload=new FormData();upload.set('file',new File([new Uint8Array(readFileSync('public/assets/logo-emblem.webp'))],'owner-photo.webp',{type:'image/webp'}));upload.set('purpose','photo');upload.set('siteId',siteId);
   const uploaded=await worker.fetch(new Request('https://ksa.men/api/upload',{method:'POST',headers:{Origin:'https://ksa.men',Cookie:actors.owner.cookie,'X-CSRF-Token':actors.owner.csrf},body:upload}),env,{} as any);expect(uploaded.status).toBe(200);const media=(await uploaded.json()) as {id:string};
   expect((await request('/api/media/'+media.id,'moderator')).status).toBe(403);
   expect((await request('/api/admin/managed-accounts/'+managedId+'/assign','owner','POST',{managerId:actors.moderator.id})).status).toBe(200);

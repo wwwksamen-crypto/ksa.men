@@ -11,8 +11,9 @@ function safeError(error:unknown){return error instanceof Error?error.name:'r2_d
 async function hidePublicPresence(c:Ctx,userId:number,at:number){
  const sites=(await c.env.DB.prepare('SELECT id FROM sites WHERE user_id=?').bind(userId).all<{id:string}>()).results;
  const statements=[
-  c.env.DB.prepare("UPDATE sites SET status='hidden',searchable=0,allow_contact=0,updated_at=? WHERE user_id=? AND status<>'proxy_pending'").bind(at,userId),
-  c.env.DB.prepare('UPDATE quick_links SET revoked=1 WHERE user_id=? AND revoked=0').bind(userId),
+  c.env.DB.prepare("UPDATE sites SET status='hidden',searchable=0,allow_contact=0,updated_at=? WHERE user_id=? AND status NOT IN ('proxy_pending','deleted','deletion_pending')").bind(at,userId),
+  c.env.DB.prepare(`UPDATE quick_links SET revoked=1 WHERE revoked=0 AND (user_id=?1 OR
+       (CASE WHEN json_valid(payload) THEN json_extract(payload,'$.siteId') END IN (SELECT id FROM sites WHERE user_id=?1)))`).bind(userId),
  ];
  await c.env.DB.batch(statements);
  return sites.map(site=>site.id);
@@ -29,17 +30,17 @@ export async function hideMyPublicPresence(c:Ctx){
 async function activeHolds(env:Env,userId:number):Promise<Hold[]>{
  const explicit=(await env.DB.prepare("SELECT resource_type,resource_id FROM retention_holds WHERE user_id=? AND status='active'").bind(userId).all<{resource_type:string;resource_id:string}>()).results.map(row=>({kind:row.resource_type,id:row.resource_id}));
  const checks:[string,string][]=[
-  ['payments',"SELECT id FROM payments WHERE user_id=? AND status<>'rejected'"],
-  ['financial_ledger',"SELECT id FROM ledger WHERE from_id=? OR to_id=?"],
-  ['reviews',"SELECT id FROM reviews WHERE user_id=?"],
-  ['reports',"SELECT id FROM reports WHERE user_id=?"],
-  ['transfers',"SELECT id FROM transfers WHERE from_id=? OR to_id=?"],
-  ['handovers',"SELECT id FROM handovers WHERE accepted_by=? OR creator_id=?"],
-  ['audit',"SELECT id FROM audit WHERE actor_id=?"],
-  ['assigned_accounts',"SELECT id FROM users WHERE referrer_id=? OR assigned_to=?"],
+  ['payments',"SELECT id FROM payments WHERE user_id=?1 AND status<>'rejected'"],
+  ['financial_ledger',"SELECT id FROM ledger WHERE from_id=?1 OR to_id=?1"],
+  ['reviews',"SELECT id FROM reviews WHERE user_id=?1"],
+  ['reports',"SELECT id FROM reports WHERE user_id=?1"],
+  ['transfers',"SELECT id FROM transfers WHERE from_id=?1 OR to_id=?1"],
+  ['handovers',"SELECT id FROM handovers WHERE accepted_by=?1 OR creator_id=?1"],
+  ['audit',"SELECT id FROM audit WHERE actor_id=?1"],
+  ['assigned_accounts',"SELECT id FROM users WHERE referrer_id=?1 OR assigned_to=?1"],
  ];
  const implicit:Hold[]=[];
- for(const [kind,sql] of checks){const rows=(await env.DB.prepare(sql).bind(userId,userId).all<{id:string}>()).results;for(const row of rows.slice(0,10))implicit.push({kind,id:String(row.id)});}
+ for(const [kind,sql] of checks){const rows=(await env.DB.prepare(sql).bind(userId).all<{id:string}>()).results;for(const row of rows.slice(0,10))implicit.push({kind,id:String(row.id)});}
  return [...explicit,...implicit];
 }
 
@@ -114,15 +115,24 @@ export async function requestDeletionLifecycle(c:Ctx,action:LifecycleAction,reas
  if((action==='destroy'||action==='schedule')&&!affirmation)throw new HTTPException(422,{message:'يلزم تأكيد صريح: نعم، أريد تنفيذ هذا الإجراء'});
  if(action==='schedule'&&(!scheduledFor||scheduledFor<=now()))throw new HTTPException(422,{message:'اختر تاريخاً مستقبلياً للإتلاف المجدول'});
  const at=now(); const id=uid(); const notice=await setting<string>(c,'privacy_notice_version','2026-10-31');
- const existing=await one<{id:string;status:string}>(c,"SELECT id,status FROM deletion_requests WHERE user_id=? AND status IN ('pending','scheduled','hidden','archived') ORDER BY created_at DESC LIMIT 1",user.id);
- if(existing)return {request:{id:existing.id,status:existing.status},idempotent:true};
+ const existing=await one<{id:string;status:string}>(c,"SELECT id,status FROM deletion_requests WHERE user_id=? AND requested_action=? AND status IN ('pending','scheduled','hidden','archived') ORDER BY created_at DESC LIMIT 1",user.id,action);
+ if(existing){
+  if(action==='destroy' && existing.status==='pending'){
+   const result=await destroyEligibleAccount(c.env,user.id,existing.id,'member-retry');
+   return {...result,request:{id:existing.id,status:result.status},idempotent:true};
+  }
+  return {status:existing.status,request:{id:existing.id,status:existing.status},idempotent:true};
+ }
  await hidePublicPresence(c,user.id,at);
  await c.env.DB.prepare("UPDATE consent_records SET withdrawn_at=? WHERE user_id=? AND purpose IN ('public_profile','contact') AND withdrawn_at IS NULL").bind(at,user.id).run();
  const status=action==='hide'?'hidden':action==='archive'?'archived':action==='schedule'?'scheduled':'pending';
  await run(c,'INSERT INTO deletion_requests(id,user_id,reason,status,created_at,requested_action,scheduled_for,hidden_at,archived_at,notice_version) VALUES(?,?,?,?,?,?,?,?,?,?)',id,user.id,reason,status,at,action,scheduledFor??null,at,action==='archive'?at:null,notice);
  await audit(c,'privacy.deletion.request',`request:${id}`,{action,scheduled:Boolean(scheduledFor),noticeVersion:notice,reasonProvided:Boolean(reason)});
- if(action==='destroy')return {request:{id,status:'pending'},idempotent:false,...await destroyEligibleAccount(c.env,user.id,id,'member-request')};
- return {request:{id,status,createdAt:at,scheduledFor:scheduledFor??null},idempotent:false};
+ if(action==='destroy'){
+  const result=await destroyEligibleAccount(c.env,user.id,id,'member-request');
+  return {...result,request:{id,status:result.status},idempotent:false};
+ }
+ return {status,request:{id,status,createdAt:at,scheduledFor:scheduledFor??null},idempotent:false};
 }
 
 async function purgeMedia(env:Env){
@@ -153,8 +163,15 @@ async function purgeExpiredConversations(env:Env){
 /** Cron-only lifecycle: scheduled erasure, expired-message purge and retryable R2 deletion. */
 export async function runDataLifecycle(env:Env){
  const due=(await env.DB.prepare("SELECT id,user_id FROM deletion_requests WHERE status='scheduled' AND scheduled_for IS NOT NULL AND scheduled_for<=? ORDER BY scheduled_for LIMIT 50").bind(now()).all<{id:string;user_id:number}>()).results;
- const destroyed=[] as string[];
- for(const request of due){const result=await destroyEligibleAccount(env,request.user_id,request.id,'scheduled-cron');if(result.status==='destroyed')destroyed.push(request.id);}
- const [messages,media]=await Promise.all([purgeExpiredConversations(env),purgeMedia(env)]);
- return {scheduledProcessed:due.length,destroyed:destroyed.length,expiredConversations:messages.conversations,expiredMessages:messages.messages,mediaPurged:media.deleted,mediaFailures:media.failed};
+ const destroyed:string[]=[],failed:string[]=[];let blocked=0;
+ for(const request of due){
+  try{const result=await destroyEligibleAccount(env,request.user_id,request.id,'scheduled-cron');if(result.status==='destroyed')destroyed.push(request.id);else blocked++;}
+  catch(error){failed.push(request.id);try{await appendAudit(env,null,'privacy.deletion.processing_failed',`request:${request.id}`,{errorName:safeError(error),retryable:true});}catch{}}
+ }
+ const tasks=await Promise.allSettled([purgeExpiredConversations(env),purgeMedia(env)]);
+ const messages=tasks[0].status==='fulfilled'?tasks[0].value:{conversations:0,messages:0};
+ const media=tasks[1].status==='fulfilled'?tasks[1].value:{deleted:0,failed:0};
+ return {scheduledProcessed:due.length,destroyed:destroyed.length,blocked,scheduledFailures:failed.length,
+  expiredConversations:messages.conversations,expiredMessages:messages.messages,mediaPurged:media.deleted,mediaFailures:media.failed,
+  messageProcessingFailed:tasks[0].status==='rejected',mediaProcessingFailed:tasks[1].status==='rejected'};
 }

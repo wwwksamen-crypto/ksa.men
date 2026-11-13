@@ -1506,13 +1506,19 @@ export function registerBusiness(app: App): void {
         values[field] = value;
       }
     }
-    if (site.lock_hash || ['deleted', 'deletion_pending'].includes(site.status)) apiError(409, 'أعد إتاحة الموقع قبل إنشاء رابط التعارف.', 'SITE_UNAVAILABLE');
+    if (site.lock_hash || ['hidden', 'deleted', 'deletion_pending'].includes(site.status) || !(await siteVisibility(c, site)).visible) apiError(409, 'أعد إتاحة الموقع قبل إنشاء رابط التعارف.', 'SITE_UNAVAILABLE');
     const createdAt = now();
     const id = newQuickToken();
     const expiresAt = createdAt + expiresDays * 86_400;
     // Keep only the explicitly selected snapshot; live privacy is enforced when the link is read.
     const payload = { mode, fields, values, siteId: site.id };
-    await run(c, 'INSERT INTO quick_links(id,user_id,payload,expires_at,revoked,created_at) VALUES(?,?,?,?,0,?)', id, userId, JSON.stringify(payload), expiresAt, createdAt);
+    const insertion = await run(c, `INSERT INTO quick_links(id,user_id,payload,expires_at,revoked,created_at)
+      SELECT ?,?,?,?,0,? WHERE EXISTS(SELECT 1 FROM sites s LEFT JOIN site_visibility v ON v.site_id=s.id
+       LEFT JOIN users u ON u.id=s.user_id WHERE s.id=? AND s.status NOT IN ('hidden','deleted','deletion_pending')
+       AND (s.lock_hash IS NULL OR s.lock_hash='') AND u.status='active' AND COALESCE(v.visible,1)=1
+       AND NOT EXISTS(SELECT 1 FROM deleted_tombstones t WHERE t.resource_type='site' AND t.resource_id=s.id))`,
+      id, userId, JSON.stringify(payload), expiresAt, createdAt, site.id);
+    if(changes(insertion)!==1)apiError(409,'تغيرت إتاحة الموقع. أعد إتاحته قبل إنشاء رابط التعارف.','SITE_UNAVAILABLE');
     await audit(c, 'quick_link.create', id, { fields, expiresAt });
     return c.json(toQuickLink({ id, payload: JSON.stringify(payload), expires_at: expiresAt, created_at: createdAt, revoked: 0 }, c.env.ROOT_DOMAIN), 201);
   });

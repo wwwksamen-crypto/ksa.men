@@ -1,3 +1,4 @@
+import {retryPublicationNotices} from './publication-notice';
 import { registerRequestRemoval } from './request-removal';
 import {registerOwnerErasure} from './owner-erasure';
 import { registerSubdomains, resolveOwnerRedirect } from './subdomains';
@@ -191,6 +192,7 @@ export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(fetchRadar(env));
     ctx.waitUntil(runDataLifecycle(env));
+    ctx.waitUntil(retryPublicationNotices(env));
     ctx.waitUntil(runSeasonalNotices(env));
     if (new Date(event.scheduledTime).getUTCHours() === 0) ctx.waitUntil(makeBackup(env));
   },

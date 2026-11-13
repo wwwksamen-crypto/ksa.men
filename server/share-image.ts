@@ -46,6 +46,14 @@ function boundedJpeg(bytes: Uint8Array): boolean {
   }
   return false;
 }
+/** Decode only after dimensions bound the allocation; shared with identity upload. */
+export async function decodeValidatedWebp(bytes:Uint8Array){
+ const dimensions=webpDimensions(bytes);if(!dimensions)return null;
+ ready ||= initWebp(webpWasm);await ready;
+ const decoded=await decodeWebp(bytes.slice().buffer as ArrayBuffer);
+ if(decoded.width!==dimensions.width || decoded.height!==dimensions.height)return null;
+ return decoded;
+}
 export async function shareImageData(bytes: Uint8Array, mime: string): Promise<{ bytes: Uint8Array; mime: string } | null> {
   if (!bytes.length || bytes.length > 5_000_000) return null;
   if (mime === 'image/png' && bytes.length >= 24 && bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71) {
@@ -55,9 +63,6 @@ export async function shareImageData(bytes: Uint8Array, mime: string): Promise<{
   }
   if (mime === 'image/jpeg' && bytes[0] === 0xff && bytes[1] === 0xd8 && boundedJpeg(bytes)) return { bytes, mime };
   if (mime !== 'image/webp' || !webpDimensions(bytes)) return null;
-  ready ||= initWebp(webpWasm);
-  await ready;
-  const source = bytes.slice().buffer as ArrayBuffer;
-  const decoded = await decodeWebp(source);
+  const decoded=await decodeValidatedWebp(bytes);if(!decoded)return null;
   return { bytes: encodePng({ width: decoded.width, height: decoded.height, data: new Uint8Array(decoded.data.buffer), channels: 4, depth: 8 }), mime: 'image/png' };
 }

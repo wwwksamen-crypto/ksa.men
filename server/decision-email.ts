@@ -1,7 +1,7 @@
 import type { Env } from './core';
 import { institutionalContact } from '../shared/institutional-contact';
 
-export type TransactionalEmailInput = { to: string; subject: string; html: string; text?: string };
+export type TransactionalEmailInput = { to: string; subject: string; html: string; text?: string; idempotencyKey?:string };
 export type DecisionEmailInput = Omit<TransactionalEmailInput, 'html' | 'text'> & { name: string; title: string; message: string; actionLabel: string; actionUrl: string };
 export type DeliveryResult = { delivered: boolean; channel: 'resend' | 'cloudflare_email' | 'unavailable'; uncertain?: boolean };
 function escapeHtml(value: string): string {
@@ -23,7 +23,7 @@ export async function deliverTransactionalEmail(env: Env, input: TransactionalEm
     const timeout = setTimeout(() => controller.abort(), 5_000);
     try {
       const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        method: 'POST', headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`, 'Content-Type': 'application/json', ...(input.idempotencyKey?{'Idempotency-Key':input.idempotencyKey}:{}) },
         body: JSON.stringify({ from, reply_to: institutionalContact.support, to: [input.to], subject: input.subject, html: input.html, text: input.text }), signal: controller.signal,
       });
       if (response.ok) return { delivered: true, channel: 'resend' };
@@ -40,5 +40,5 @@ export async function deliverTransactionalEmail(env: Env, input: TransactionalEm
   return { delivered: false, channel: 'unavailable', ...(uncertain ? { uncertain: true } : {}) };
 }
 export async function deliverDecisionEmail(env: Env, input: DecisionEmailInput): Promise<DeliveryResult> {
-  return deliverTransactionalEmail(env, { to: input.to, subject: input.subject, html: emailHtml(input), text: `${input.title}\n\n${input.message}\n\n${input.actionUrl}` });
+  return deliverTransactionalEmail(env, { to: input.to, subject: input.subject, html: emailHtml(input), text: `${input.title}\n\n${input.message}\n\n${input.actionUrl}`,idempotencyKey:input.idempotencyKey });
 }

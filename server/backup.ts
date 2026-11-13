@@ -1,3 +1,4 @@
+import {currentErasureContext,applyCurrentErasure} from './backup-erasure';
 import type { App, Env, Ctx } from './core';
 import { role, fresh, now, uid, audit, all, digest } from './core';
 import { HTTPException } from 'hono/http-exception';
@@ -25,15 +26,29 @@ function tombstoneSets(tables:Record<string,any[]>){
 /** Removes rows known destroyed at snapshot time. Live restore also applies its current tombstone set. */
 export function scrubTombstones(tables:Record<string,any[]>){
  const removed:{[key:string]:number}={};const sets=tombstoneSets(tables);
- const filter=(table:string,type:string,key:string)=>{const tombstones=sets.get(type);if(!tombstones||!Array.isArray(tables[table]))return;const before=tables[table].length;tables[table]=tables[table].filter(row=>!tombstones.has(String(row?.[key])));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;};
+ const referencedAccounts=new Set<string>();
+ for(const id of sets.get('account')||[]){
+  if((tables.ledger||[]).some(r=>String(r.from_id)===id||String(r.to_id)===id)||
+    ['payments','reviews','subscription_requests','retention_holds'].some(t=>(tables[t]||[]).some(r=>String(r.user_id)===id)))referencedAccounts.add(id);
+ }
+ // Keep only an anonymous non-login parent when immutable or financial records need its identifier.
+ if(Array.isArray(tables.users))tables.users=tables.users.map(row=>{
+  if(!referencedAccounts.has(String(row.id)))return row;
+  const stub:Record<string,any>={};for(const [k,v] of Object.entries(row))stub[k]=['id','created_at','consent_at'].includes(k)?v:typeof v==='number'?0:typeof v==='string'?'':null;
+  return {...stub,id:row.id,email:`erased-${row.id}@deleted.ksa.men`,name:'حساب محذوف',whatsapp:'',status:'deleted',role:'user',pin_hash:null,assigned_to:null,referrer_id:null};
+ });
+ const referencedSites=new Set<string>((tables.reviews||[]).map(r=>String(r.site_id)).filter(id=>sets.get('site')?.has(id)));
+ if(Array.isArray(tables.sites))tables.sites=tables.sites.map(row=>referencedSites.has(String(row.id))?{...row,user_id:null,manager_id:null,draft:'{}',published:null,status:'deleted',searchable:0,allow_contact:0,lock_hash:null,lock_message:'',authorization:null}:row);
+
+ const filter=(table:string,type:string,key:string)=>{const tombstones=sets.get(type);if(!tombstones||!Array.isArray(tables[table]))return;const before=tables[table].length;tables[table]=tables[table].filter(row=>!tombstones.has(String(row?.[key]))||(table==='users'&&referencedAccounts.has(String(row?.id)))||(table==='sites'&&referencedSites.has(String(row?.id))));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;};
  filter('users','account','id');filter('sites','site','id');filter('media','media','id');filter('conversations','conversation','id');filter('messages','message','id');
  const conversations=sets.get('conversation');
  if(conversations&&Array.isArray(tables.messages)){
   const before=tables.messages.length;tables.messages=tables.messages.filter(row=>!conversations.has(String(row?.conversation_id)));
   if(before!==tables.messages.length)removed.messages=(removed.messages||0)+before-tables.messages.length;
  }
- const accounts=sets.get('account');if(accounts){for(const table of ['mail_delivery_events','managed_creation_requests','managed_accounts','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','sessions','devices'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!accounts.has(String(row?.user_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
- const sites=sets.get('site');if(sites){for(const table of ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!sites.has(String(row?.site_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
+ const accounts=sets.get('account');if(accounts){for(const table of ['mail_delivery_events','managed_creation_requests','managed_accounts','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','upload_intents','sessions','devices'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!accounts.has(String(row?.user_id))||(table==='wallets'&&referencedAccounts.has(String(row?.user_id))));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
+ const sites=sets.get('site');if(sites){for(const table of ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody','subdomain_change_requests'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!sites.has(String(row?.site_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
  return removed;
 }
 export async function makeBackup(env:Env,reason='nightly') {
@@ -53,12 +68,13 @@ async function decryptSnapshot(env:Env,bytes:Uint8Array){
 }
 async function snapshot(c:Ctx) {
  role(c,['owner']);fresh(c);const id=c.req.param('id')||'';if(!/^[a-zA-Z0-9-]{20,100}$/.test(id))throw new HTTPException(400,{message:'معرف النسخة غير صحيح'});const object=await c.env.MEDIA.get('backups/'+id+'.ksab');if(!object)throw new HTTPException(404,{message:'النسخة غير موجود'});
- const bytes=new Uint8Array(await object.arrayBuffer());const plain=await decryptSnapshot(c.env,bytes);const checksum=await sha256(plain);if(object.customMetadata?.sha256&&object.customMetadata.sha256!==checksum)throw new HTTPException(409,{message:'بصمة النسخة لا تطابق المحتوى'});const data=JSON.parse(new TextDecoder().decode(plain));if(data.format!=='ksa-men-backup-v2'||!data.tables)throw new HTTPException(409,{message:'تنسيق النسخة غير مدعوم'});scrubTombstones(data.tables);return {id,object,bytes,data,checksum};
+ const bytes=new Uint8Array(await object.arrayBuffer());const plain=await decryptSnapshot(c.env,bytes);const checksum=await sha256(plain);if(object.customMetadata?.sha256&&object.customMetadata.sha256!==checksum)throw new HTTPException(409,{message:'بصمة النسخة لا تطابق المحتوى'});const data=JSON.parse(new TextDecoder().decode(plain));if(data.format!=='ksa-men-backup-v2'||!data.tables)throw new HTTPException(409,{message:'تنسيق النسخة غير مدعوم'});const erasure=await currentErasureContext(c.env);applyCurrentErasure(data.tables,erasure);scrubTombstones(data.tables);data.erasureContextAt=erasure.generatedAt;return {id,object,bytes,data,checksum};
 }
 export function registerBackup(app:App) {
+ app.get('/api/admin/backup-erasure-context',async c=>{role(c,['owner']);fresh(c);return c.json(await currentErasureContext(c.env));});
  app.get('/api/admin/backups',async c=>{role(c,['owner']);fresh(c);const list=await c.env.MEDIA.list({prefix:'backups/',limit:100,include:['customMetadata']});return c.json({backups:list.objects.map(object=>({id:object.key.slice(8).replace(/\.ksab$/,''),bytes:object.size,createdAt:object.customMetadata?.createdAt,sha256:object.customMetadata?.sha256,keyId:object.customMetadata?.keyId})),truncated:list.truncated});});
  app.post('/api/admin/backups/create',async c=>{role(c,['owner']);fresh(c);const backup=await makeBackup(c.env,'owner');await audit(c,'backup.create',backup.id);return c.json(backup);});
- app.post('/api/admin/backups/:id/verify',async c=>{const {id,data,checksum}=await snapshot(c);let missingMedia=0;for(const media of data.tables.media||[]){if(!await c.env.MEDIA.get(media.bucket_key))missingMedia++;}await audit(c,'backup.verify',id,{missingMedia,tableCount:Object.keys(data.tables).length});return c.json({verified:true,sha256:checksum,tableCount:Object.keys(data.tables).length,rowCount:Object.values(data.tables).reduce((total:number,rows:any)=>total+rows.length,0),missingMedia,restoration:'Validated snapshot; no production data was modified.'});});
+ app.post('/api/admin/backups/:id/verify',async c=>{const {id,data,checksum}=await snapshot(c);let missingMedia=0;for(const media of data.tables.media||[]){if(!await c.env.MEDIA.get(media.bucket_key))missingMedia++;}await audit(c,'backup.verify',id,{missingMedia,tableCount:Object.keys(data.tables).length});return c.json({verified:missingMedia===0,cryptographyVerified:true,mediaComplete:missingMedia===0,restorationVerified:false,sha256:checksum,tableCount:Object.keys(data.tables).length,rowCount:Object.values(data.tables).reduce((total:number,rows:any)=>total+rows.length,0),missingMedia,restoration:'Cryptography checked; media completeness separate. No restoration was performed.'});});
  app.get('/api/admin/backups/:id/encrypted',async c=>{const {id,bytes,checksum}=await snapshot(c);await audit(c,'backup.download.encrypted',id,{encrypted:true});return new Response(bytes,{headers:{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="ksa-men-'+id+'.ksab"','X-Backup-SHA256':checksum,'Cache-Control':'private, no-store'}});});
  app.get('/api/admin/backups/:id',async c=>{const {id,data}=await snapshot(c);data.excluded=[...excludedAuth,...privateCommunication,'users.pin_hash','sites.lock_hash','settings.lock.passwordHash'];for(const table of [...excludedAuth,...privateCommunication])delete data.tables[table];for(const user of data.tables.users||[])delete user.pin_hash;for(const site of data.tables.sites||[])delete site.lock_hash;for(const row of data.tables.settings||[]){if(row.key==='lock'){const value=JSON.parse(row.value);delete value.passwordHash;row.value=JSON.stringify(value);}}for(const table of Object.keys(data.tables))if(table.includes('report')||table.includes('evidence'))delete data.tables[table];await audit(c,'backup.download',id,{ordinaryExport:true});const output=JSON.stringify(data);const checksum=await sha256(new TextEncoder().encode(output));return new Response(output,{headers:{'Content-Type':'application/json','Content-Disposition':'attachment; filename="ksa-men-'+id+'.json"','X-Backup-SHA256':checksum,'Cache-Control':'private, no-store'}});});
 }

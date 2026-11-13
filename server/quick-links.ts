@@ -23,7 +23,7 @@ export async function readQuickLink(c: Ctx, id: string) {
   const site = typeof payload.siteId === 'string'
     ? await one<Record<string, unknown> & { id: string }>(c, 'SELECT s.*,u.status AS owner_status FROM sites s LEFT JOIN users u ON u.id=s.user_id WHERE s.id=?', payload.siteId)
     : await one<Record<string, unknown> & { id: string }>(c, 'SELECT s.*,u.status AS owner_status FROM sites s LEFT JOIN users u ON u.id=s.user_id WHERE s.user_id=? ORDER BY s.created_at LIMIT 1', link.user_id);
-  if (!site || site.lock_hash || site.owner_status !== 'active' || ['deleted', 'deletion_pending'].includes(String(site.status))) throw unavailable();
+  if (!site || site.lock_hash || site.owner_status !== 'active' || ['hidden', 'deleted', 'deletion_pending'].includes(String(site.status))) throw unavailable();
   const policy = await siteVisibility(c, site);
   if (!policy.visible) throw unavailable();
   const values = object(payload.values || payload);
