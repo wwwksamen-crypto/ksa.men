@@ -35,7 +35,7 @@ function stable(value:unknown):unknown{
 }
 const auditSecret=/^(?:pin|pin[_-]?hash|code|authorization|ip(?:[_-]?address)?|(?:client|raw|remote|request)[_-]?ip(?:[_-]?address)?|network[_-]?address)$|(?:token|secret|password|cookie|csrf|api_key)$/i;
 const auditSensitive=/^(?:email|phone|whatsapp|reason|message|body|content|snapshot|draft|receipt|evidence)$/i;
-async function minimizedAuditDetail(env:Env,input:unknown):Promise<string>{
+export async function minimizedAuditDetail(env:Env,input:unknown):Promise<string>{
  let value:unknown=input;
  if(typeof value==='string'){const raw=value;try{value=JSON.parse(raw);}catch{return JSON.stringify({text_hash:await hmac(env.AUTH_SECRET,raw),present:Boolean(raw)});}}
  const sanitize=async(item:unknown,key=''):Promise<unknown>=>{

@@ -189,7 +189,7 @@ export function registerPublic(app:App){
     }
     if(media.purpose!=='receipt'&&!authorized){
       const site:any=media.site_id?await one(c,"SELECT * FROM sites WHERE id=? AND status='published'",media.site_id):null;
-      if(site?.published&&await personalGate(c,site)){ const owner:any=await one(c,"SELECT status FROM users WHERE id=?",site.user_id); const policy=await siteVisibility(c,site); if(owner?.status==='active'&&policy.visible)authorized=publishedReferencesMedia(withVisibility(publishedJson(site),policy),media.id); }
+      if(site?.published&&await personalGate(c,site)){ const owner:any=await one(c,"SELECT u.status FROM dns_names n JOIN users u ON u.id=COALESCE(?,n.owner_id) WHERE n.site_id=? LIMIT 1",site.user_id,site.id); const policy=await siteVisibility(c,site); if(owner?.status==='active'&&policy.visible)authorized=publishedReferencesMedia(withVisibility(publishedJson(site),policy),media.id); }
     }
     if(!authorized)throw new HTTPException(403,{message:'الملف خاص أو غير منشور'});
     const object=await c.env.MEDIA.get(media.bucket_key);

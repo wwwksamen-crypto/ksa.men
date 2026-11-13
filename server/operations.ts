@@ -1,3 +1,4 @@
+import { minimizedAuditDetail } from './core';
 import { socialOverrides, validateSocialOverrides } from '../shared/social-platforms';
 import { decideMembershipRequest } from './membership-decisions';
 import { background } from './managed';
@@ -1350,7 +1351,6 @@ export function registerOperations(app: App): void {
 
   app.get("/api/admin/audit", async (c) => {
     owner(c);
-    fresh(c);
     const limit = integer(c.req.query("limit") ?? "100", "limit", 1, 200);
     const before = c.req.query("before") ? integer(c.req.query("before"), "before", 1) : Number.MAX_SAFE_INTEGER;
     const auditRows = await all<Record<string, unknown>>(
@@ -1361,7 +1361,7 @@ export function registerOperations(app: App): void {
       before,
       limit,
     );
-    return c.json({ audit: auditRows.map((entry) => ({ ...entry, detail: parseJson(String(entry.detail ?? "")) ?? {} })) });
+    return c.json({ audit: await Promise.all(auditRows.map(async entry => ({ ...entry, detail: JSON.parse(await minimizedAuditDetail(c.env,String(entry.detail ?? ""))) }))) });
   });
 
   app.get("/api/admin/audit/verify", async (c) => {

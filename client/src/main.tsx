@@ -44,6 +44,8 @@ function App(){
  const [theme,setTheme]=useState(localStorage.getItem('ksa-theme')||'dark');
  const [seasonalThemeEnabled,setSeasonalThemeEnabled]=useState(()=>localStorage.getItem('ksa-men:seasonal-theme')!=='off');
  const [user,setUser]=useState<User|null>(null),[platform,setPlatform]=useState<any>(null);
+ const [toastSequence,setToastSequence]=useState(0);
+ const announceToast=useCallback((message:string)=>{setToast(message);setToastSequence(value=>value+1);},[]);
  const [toast,setToast]=useState(''),[menu,setMenu]=useState(false),[loading,setLoading]=useState(true);
  const [install,setInstall]=useState<any>(null),[update,setUpdate]=useState<ServiceWorker|null>(null),[error,setError]=useState('');
  const t=useCallback((ar:string,en:string)=>lang==='ar'?ar:en,[lang]);
@@ -62,10 +64,10 @@ function App(){
   const handler=(e:any)=>{e.preventDefault();setInstall(e);};window.addEventListener('beforeinstallprompt',handler);
   return()=>window.removeEventListener('beforeinstallprompt',handler);
  },[]);
- useEffect(()=>{if(!toast)return;const id=setTimeout(()=>setToast(''),4500);return()=>clearTimeout(id);},[toast]);
+ useEffect(()=>{if(!toast)return;const id=setTimeout(()=>setToast(''),4500);return()=>clearTimeout(id);},[toast,toastSequence]);
  useEffect(()=>{const close=(e:KeyboardEvent)=>{if(e.key==='Escape')setMenu(false);};window.addEventListener('keydown',close);return()=>window.removeEventListener('keydown',close);},[]);
  const logout=async()=>{try{await api('/api/auth/logout',{method:'POST'});navigator.serviceWorker?.controller?.postMessage('CLEAR_PRIVATE');sessionStorage.clear();['ksa-men:wallet-idempotency:transfer','ksa-men:seasonal-theme'].forEach(key=>localStorage.removeItem(key));await refresh();location.href='/';}catch(e:any){setToast(e.message);}};
- const ctx={user,lang,t,refresh,notify:setToast,optionalMetrics:platform?.optionalMetrics===true};
+ const ctx={user,lang,t,refresh,notify:announceToast,optionalMetrics:platform?.optionalMetrics===true};
  let page:React.ReactNode;
  if(sub)page=<Personal/>;
  else if(loading)page=<LoadingState/>;
@@ -108,7 +110,7 @@ function App(){
    {!sub&&/iPad|iPhone|iPod/.test(navigator.userAgent)&&!matchMedia('(display-mode: standalone)').matches&&<details className="ios-install"><summary>{t('ثبّت KSA.MEN على آيفون','Install KSA.MEN on iPhone')}</summary><p>{t('من سفاري: مشاركة، ثم «إضافة إلى الشاشة الرئيسية».','In Safari: Share, then Add to Home Screen.')}</p></details>}
   </div>
   <Footer sub={sub} platform={platform}/>
-  {toast&&<div className="toast" role="status"><Check size={18}/><span>{toast}</span></div>}
+  {toast&&<div key={toastSequence} className="toast" role="status" aria-live="polite" aria-atomic="true"><span>{toast}</span><button type="button" className="icon-button" aria-label={t('إغلاق التنبيه','Dismiss notice')} onClick={()=>setToast('')}><X size={17}/></button></div>}
  </div></AppContext.Provider>;
 }
 function activeSeason(value:any){const starts=Number(value?.starts_at??value?.startsAt??0),ends=Number(value?.ends_at??value?.endsAt??0),clock=Math.floor(Date.now()/1000);if(!value?.enabled||!Number.isFinite(starts)||!Number.isFinite(ends)||starts<=0||ends<starts||clock<starts||clock>ends)return '';const occasions=new Set(['eid_al_fitr','eid_al_adha','national_day','founding_day']);return occasions.has(value.occasion)?value.occasion:'';}

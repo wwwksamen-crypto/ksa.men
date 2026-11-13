@@ -1,0 +1,19 @@
+// @vitest-environment jsdom
+import React,{act}from'react';import{createRoot,type Root}from'react-dom/client';import{beforeEach,afterEach,it,expect,vi}from'vitest';
+import CompactFilters from'../client/src/CompactFilters';import AuditPanel from'../client/src/AuditPanel';
+import{auditCsv,csvCell}from'../client/src/audit-download';import{AppContext,api}from'../client/src/lib';
+vi.mock('../client/src/lib',async original=>({...await original<typeof import('../client/src/lib')>(),api:vi.fn()}));
+let box:HTMLDivElement,root:Root;const notify=vi.fn(),clear=vi.fn();const ctx={user:{id:1,role:'owner'}as any,lang:'ar' as const,t:(ar:string)=>ar,notify,refresh:async()=>{}};
+const flush=async()=>{await act(async()=>{for(let i=0;i<8;i++)await Promise.resolve();});};
+async function render(child:React.ReactNode){await act(async()=>root.render(<AppContext.Provider value={ctx}>{child}</AppContext.Provider>));await flush();}
+async function click(text:string){const b=[...box.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim()===text);expect(b).toBeDefined();await act(async()=>b!.click());await flush();}
+beforeEach(()=>{(globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;box=document.createElement('div');document.body.append(box);root=createRoot(box);notify.mockReset();clear.mockReset();vi.mocked(api).mockReset().mockResolvedValue({audit:[]}as any);});
+afterEach(async()=>{await act(async()=>root.unmount());box.remove();});
+it('keeps the search visible and extra filters closed, then opens them through a button',async()=>{
+ const form=<CompactFilters><label><span>اسم أو بريد</span><input aria-label="بحث"/></label><label>الحالة<select><option>نشط</option></select></label></CompactFilters>;
+ await render(form);const input=box.querySelector('input');expect(input?.placeholder).toBe('اسم أو بريد');expect(box.querySelector('select')).toBeNull();await click('فلترة');expect(box.querySelector('select')).not.toBeNull();expect(box.querySelector('input')).toBe(input);await click('فلترة');expect(box.querySelector('input')).toBe(input);expect(box.querySelector('select')).toBeNull();expect(notify).toHaveBeenCalled();
+});
+it('clears an active filter without modifying the original data or hiding search',async()=>{await render(<CompactFilters active onClear={clear}><label><span>بحث</span><input/></label><select><option>كل الحالات</option></select></CompactFilters>);const b=box.querySelector<HTMLButtonElement>('[aria-label="مسح الفلترة"]');await act(async()=>b!.click());expect(clear).toHaveBeenCalledOnce();expect(box.querySelector('input')).not.toBeNull();});
+it('does not load a long audit record until opened and exposes export only afterwards',async()=>{await render(<AuditPanel/>);expect(api).not.toHaveBeenCalled();expect(box.querySelector('table')).toBeNull();expect(box.textContent).not.toContain('تصدير');await click('فتح سجل العمليات');expect(api).toHaveBeenCalledWith('/api/admin/audit?limit=10');expect(box.textContent).toContain('تصدير CSV');expect(box.textContent).toContain('تصدير JSON');});
+it('shows audit failures instead of an empty-success message',async()=>{vi.mocked(api).mockRejectedValue(new Error('تعذر الاتصال'));await render(<AuditPanel/>);await click('فتح سجل العمليات');expect(box.querySelector('[role="alert"]')?.textContent).toContain('تعذر الاتصال');expect(box.textContent).not.toContain('لا توجد أحداث');});
+it('CSV prevents formula injection, quotes and line breaks safely while preserving JSON source',()=>{expect(csvCell('=1+1')).toBe('"\'=1+1"');expect(csvCell('  @SUM(1)')).toContain("'");expect(csvCell('أحمد "مدير"')).toBe('"أحمد ""مدير"""');const rows=[{actor:'=HYPERLINK("x")',reason:'نص عربي\nسطر آخر',id:3}],before=JSON.stringify(rows);const csv=auditCsv(rows);expect(csv.startsWith('\uFEFF')).toBe(true);expect(csv).toContain("'=HYPERLINK");expect(csv).toContain('نص عربي\nسطر آخر');expect(JSON.stringify(rows)).toBe(before);});

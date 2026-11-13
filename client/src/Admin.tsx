@@ -1,3 +1,6 @@
+import RetainedSites from './RetainedSites';
+import CompactFilters from './CompactFilters';
+import AuditPanel from './AuditPanel';
 import { SANAD_ACTION_EVENT, type SanadAction } from './sanad-journey';
 import { publishSanadContext } from './sanad-context';
 import { adminWorkspaces, adminWorkspace, initialAdminTab } from './admin-workspace';
@@ -438,8 +441,6 @@ export default function Admin() {
                     ? [['settings', '/api/admin/settings']]
                   : target === 'economics' && owner
                     ? [['economics', '/api/admin/economics']]
-                    : target === 'audit' && owner
-                      ? [['audit', '/api/admin/audit']]
                       : [];
 
     try {
@@ -780,7 +781,7 @@ export default function Admin() {
   const renderUsers = () => (
     <div className="stack admin-stack">
       <section className="admin-section-intro"><div><h1 className="page-title">{tr('المستخدمون وإدارة التفويض', 'Users & delegation')}</h1><p className="muted">{tr('ابحث عن الحساب، ثم افتح هويته أو حدّث بياناته وخياراته من مكان واحد.', 'Find an account, then open its identity or update its details and options in one place.')}</p></div></section>
-      <section className="card admin-request-filter"><label className="field"><span>{tr('البحث بالاسم أو البريد أو C# أو النطاق', 'Search name, email, C#, or subdomain')}</span><input value={userQuery} onChange={(event) => setUserQuery(event.target.value)} /></label><label className="field"><span>{tr('الحالة', 'Status')}</span><select value={userStatus} onChange={(event) => setUserStatus(event.target.value)}><option value="">{tr('كل الحالات', 'All statuses')}</option><option value="active">{tr('نشط', 'Active')}</option><option value="suspended">{tr('معلق', 'Suspended')}</option></select></label></section>
+      <CompactFilters active={Boolean(userQuery||userStatus)} onClear={()=>{setUserQuery('');setUserStatus('');}}><label className="field"><span>{tr('البحث بالاسم أو البريد أو C# أو النطاق', 'Search name, email, C#, or subdomain')}</span><input value={userQuery} onChange={(event) => setUserQuery(event.target.value)} /></label><label className="field"><span>{tr('الحالة', 'Status')}</span><select value={userStatus} onChange={(event) => setUserStatus(event.target.value)}><option value="">{tr('كل الحالات', 'All statuses')}</option><option value="active">{tr('نشط', 'Active')}</option><option value="suspended">{tr('معلق', 'Suspended')}</option></select></label></CompactFilters>
       <div className={`admin-user-layout${selectedUser ? ' has-selected-user' : ''}`}>
         <section className="admin-user-list stack">
           {filteredUsers.length ? filteredUsers.map((item) => {
@@ -798,7 +799,7 @@ export default function Admin() {
           }) : <Empty title={tr('لا توجد بيانات مستخدمين معروضة ضمن نطاقك.', 'No user data was returned in your scope.')} />}
         </section>
         <section className="card admin-user-detail">
-          {selectedUser ? <UserDetail key={idOf(selectedUser)} onBack={() => setSelectedUser(null)} item={selectedUser} lang={lang} tr={tr} services={services} users={users} points={points} setPoints={setPoints} grantDays={grantDays} setGrantDays={setGrantDays} serviceKey={serviceKey} setServiceKey={setServiceKey} role={role} setRole={setRole} financial={financial} setFinancial={setFinancial} assignedTo={assignedTo} setAssignedTo={setAssignedTo} busy={busy} owner={owner} financialOperator={financialOperator} onPublish={() => publishUserSite(selectedUser)} onErase={async (path,body) => { const result=await mutate('owner-erasure', async () => { const response = await api<{erased:boolean;requestId:string}>(path,{method:'POST',body:JSON.stringify(body)}); if(!response.erased) throw new Error(tr('لم تتأكد الإزالة. راجع السجل.', 'Removal was not confirmed. Review the record.')); return response; },{fresh:true,success:tr('أزيلت الهوية من الخدمة. حُفظ السجل وتتابَع إزالة الملفات.','Identity removed from service. Evidence is retained and file removal is tracked.')});if(result===undefined)throw new Error(tr('لم تتأكد الإزالة. راجع التنبيه والسجل قبل إعادة المحاولة.','Removal was not confirmed. Check the alert and record before retrying.'));setLoadedTabs(current=>({...current,audit:false,managed:false,overview:false,reviews:false}));setSelectedUser(null);return result; }} onAction={userAction} onAudit={() => switchTab('audit')} onNotify={(recipient) => { setNotification((value) => ({ ...value, recipient })); switchTab('overview'); }} /> : <Empty title={tr('اختر مستخدماً لرؤية البطاقة التفصيلية وإجراء العمليات المصرح بها.', 'Choose a user to view the detailed card and authorized actions.')} />}
+          {selectedUser ? <UserDetail key={idOf(selectedUser)} onBack={() => setSelectedUser(null)} item={selectedUser} lang={lang} tr={tr} services={services} users={users} points={points} setPoints={setPoints} grantDays={grantDays} setGrantDays={setGrantDays} serviceKey={serviceKey} setServiceKey={setServiceKey} role={role} setRole={setRole} financial={financial} setFinancial={setFinancial} assignedTo={assignedTo} setAssignedTo={setAssignedTo} busy={busy} owner={owner} financialOperator={financialOperator} onPublish={() => publishUserSite(selectedUser)} onErase={async (path,body) => { const result=await mutate('owner-erasure', async () => { const response = await api<{erased:boolean;requestId:string}>(path,{method:'POST',body:JSON.stringify(body)}); if(!response.erased) throw new Error(tr('لم تتأكد الإزالة. راجع السجل.', 'Removal was not confirmed. Review the record.')); return response; },{fresh:false,success:body.mode==='account_only'?tr('حُذف الحساب وبقي الموقع بإدارة المشرف؛ حُفظ سبب القرار.','Account removed; websites retained under administrator management and reason recorded.'):tr('أزيلت الهوية من الخدمة. حُفظ السجل وتتابَع إزالة الملفات.','Identity removed from service. Evidence is retained and file removal is tracked.')});if(result===undefined)throw new Error(tr('لم تتأكد الإزالة. راجع التنبيه والسجل قبل إعادة المحاولة.','Removal was not confirmed. Check the alert and record before retrying.'));setLoadedTabs(current=>({...current,audit:false,managed:false,overview:false,reviews:false}));setSelectedUser(null);return result; }} onAction={userAction} onAudit={() => switchTab('audit')} onNotify={(recipient) => { setNotification((value) => ({ ...value, recipient })); switchTab('overview'); }} /> : <Empty title={tr('اختر مستخدماً لرؤية البطاقة التفصيلية وإجراء العمليات المصرح بها.', 'Choose a user to view the detailed card and authorized actions.')} />}
         </section>
       </div>
     </div>
@@ -807,7 +808,7 @@ export default function Admin() {
   const renderReviews = () => (
     <div className="stack admin-stack">
       <section className="admin-section-intro"><div><h1 className="page-title">{tr('طلبات نشر المواقع', 'Site publication requests')}</h1><p className="muted">{tr('عاين الهوية، ثم انشرها بلمسة أو اطلب تعديلها.', 'Preview the identity, then publish with one click or request changes.')}</p></div></section>
-      <section className="card admin-request-filter"><label className="field"><span>{tr('البحث في طلبات المواقع', 'Search site requests')}</span><input value={reviewQuery} onChange={(event) => setReviewQuery(event.target.value)} placeholder={tr('اسم الموقع أو العضو أو البريد أو C#', 'Site, member, email, or C#')} /></label></section>
+      <CompactFilters active={Boolean(reviewQuery)} onClear={()=>setReviewQuery('')}><label className="field"><span>{tr('البحث في طلبات المواقع', 'Search site requests')}</span><input value={reviewQuery} onChange={(event) => setReviewQuery(event.target.value)} placeholder={tr('اسم الموقع أو العضو أو البريد أو C#', 'Site, member, email, or C#')} /></label></CompactFilters>
       {filteredReviews.length ? filteredReviews.map((review) => {
         const id = idOf(review);
         const expanded = selectedReview && idOf(selectedReview) === id;
@@ -918,10 +919,10 @@ export default function Admin() {
     });
     return <div className="stack admin-stack">
       <section className="admin-section-intro"><div><h1 className="page-title">{tr('طلبات العضوية', 'Membership requests')}</h1><p className="muted">{tr('اعتمادك يفعّل العضوية سنة. أكّد السداد أو امنح عضوية استراتيجية دون سداد، ولا يلزم رفع وصل. يصل القرار للعضو ويحفظ في السجل.', 'Your approval activates one year. Confirm payment or grant strategic membership without payment; no receipt upload is required. The member is notified and your decision is recorded.')}</p></div></section>
-      <section className="card admin-request-filter">
+      <CompactFilters active={Boolean(membershipQuery||membershipStatus!=='pending')} onClear={()=>{setMembershipQuery('');setMembershipStatus('pending');}}>
         <label className="field"><span>{tr('البحث بالاسم أو البريد أو C# أو النطاق', 'Search name, email, C#, or subdomain')}</span><input value={membershipQuery} onChange={(event) => setMembershipQuery(event.target.value)} /></label>
         <label className="field"><span>{tr('الحالة', 'Status')}</span><select value={membershipStatus} onChange={(event) => setMembershipStatus(event.target.value)}><option value="pending">{tr('قيد المراجعة', 'Pending')}</option><option value="approved">{tr('معتمد', 'Approved')}</option><option value="changes_requested">{tr('مطلوب توضيح', 'Changes requested')}</option><option value="rejected">{tr('مرفوض', 'Rejected')}</option><option value="">{tr('كل الحالات', 'All statuses')}</option></select></label>
-      </section>
+      </CompactFilters>
       <section className="admin-membership-grid">{matching.length ? matching.map((request) => {
         const id = idOf(request), status = text(field(request, 'status'), '').toLowerCase();
         const pending = status === 'pending', annual = field(request, 'kind') === 'annual_contact', deciding = Boolean(busy?.startsWith(`membership-${id}-`));
@@ -966,7 +967,7 @@ export default function Admin() {
   };
 
   const renderAudit = () => (
-    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('سجل التدقيق', 'Audit trail')}</h1><p className="muted">{tr('القرارات والعمليات المهمة موثقة بمنفذها ووقتها ونتيجتها. لا يعرض السجل محتوى الرسائل الخاصة.', 'Important actions and decisions are recorded with their actor, time and result, without displaying private messages.')}</p></div></section><section className="card admin-table-wrap"><table className="admin-table"><thead><tr><th>{tr('الوقت', 'Time')}</th><th>{tr('الإجراء', 'Action')}</th><th>{tr('الهدف', 'Target')}</th><th>{tr('بواسطة', 'By')}</th><th>{tr('التفاصيل', 'Details')}</th></tr></thead><tbody>{audit.length ? audit.map((entry, index) => <tr key={`${idOf(entry)}-${index}`}><td>{asDate(field(entry, 'created_at', 'at', 'timestamp'), lang)}</td><td>{auditActionLabel(text(field(entry,'action'),''),tr)}<small style={{display:'block'}}>{auditOutcomeLabel(text(field(entry,'action'),''),tr)}</small></td><td>{text(field(entry, 'target', 'target_id'))}</td><td>{text(field(entry,'actor_name','actor_id','actor','user_id'))}</td><td><details><summary>{tr('عرض الإثبات', 'View evidence')}</summary><p><bdi dir="ltr">{text(field(entry,'action'))}</bdi></p><span className="admin-detail-text">{displayJson(field(entry, 'detail', 'details', 'reason'))}</span></details></td></tr>) : <tr><td colSpan={5}>{tr('لا توجد أحداث تدقيق معروضة.', 'No audit events were returned.')}</td></tr>}</tbody></table></section>{owner&&<OwnerErasureRecords/>}</div>
+    <div className="stack admin-stack"><section className="admin-section-intro"><div><h1 className="page-title">{tr('السجل والإثبات','Records and evidence')}</h1><p className="muted">{tr('افتح السجل عند الحاجة، وتصفح عملياته أو صدّرها. تبقى الأحداث الأصلية ومنفذها ووقتها محفوظة.','Open the record when needed, browse or export actions. Original events, actors and times remain intact.')}</p></div></section><AuditPanel/>{owner&&<OwnerErasureRecords/>}</div>
   );
 
   const renderBackup = () => (
@@ -975,7 +976,7 @@ export default function Admin() {
 
   let contentView = renderOverview();
   switch (tab) {
-    case 'managed': contentView = <AdminManaged/>; break;
+    case 'managed': contentView = <div className="stack"><AdminManaged/>{owner&&<RetainedSites/>}</div>; break;
     case 'users': contentView = renderUsers(); break;
     case 'reviews': contentView = renderReviews(); break;
     case 'membership': contentView = renderMembership(); break;
