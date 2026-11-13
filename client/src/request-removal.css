@@ -1,0 +1,7 @@
+.request-removal { margin-block-start: 14px; padding-block-start: 12px; border-block-start: 1px solid var(--line); min-inline-size: 0; }
+.request-removal__form { display: grid; gap: 12px; margin-block-start: 12px; min-inline-size: 0; }
+.request-removal__form label { display: grid; gap: 8px; }
+.request-removal__form textarea { inline-size: 100%; min-inline-size: 0; font-size: 16px; }
+.request-removal__form .button { min-block-size: 44px; white-space: normal; overflow-wrap: anywhere; }
+.request-removal__form p { line-height: 1.8; text-align: start; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .request-removal__form .button { inline-size: 100%; } }

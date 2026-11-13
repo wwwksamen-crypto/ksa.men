@@ -1,3 +1,4 @@
+import { registerRequestRemoval } from './request-removal';
 import {registerOwnerErasure} from './owner-erasure';
 import { registerSubdomains, resolveOwnerRedirect } from './subdomains';
 import { publicInstitutionalContact } from '../shared/institutional-contact';
@@ -129,6 +130,7 @@ app.post('/api/gate', async c => {
   return c.json({ ok: true });
 });
 registerOwnerErasure(app);
+registerRequestRemoval(app);
 registerSubdomains(app);
 registerPreview(app);
 registerOG(app);

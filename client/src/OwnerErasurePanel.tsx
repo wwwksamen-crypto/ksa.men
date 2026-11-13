@@ -6,8 +6,8 @@ import './owner-erasure.css';
 type Mode = 'site' | 'account_only' | 'both';
 type Impact = { impactToken: string; siteCount: number; retainedSiteCount?: number; mediaCount: number; holdKinds: string[]; alreadyErased: boolean; versions: { id: string; draft: number; published: number }[] };
 type Result = { erased?: boolean; requestId?: string; mediaRemoval?: string; retainedSiteCount?: number };
-export default function OwnerErasurePanel({ accountId, siteId, accountLabel, siteLabel, onErase, onAudit }: {
-  accountId: string; siteId: string; accountLabel?: string; siteLabel?: string;
+export default function OwnerErasurePanel({ accountId, siteId, accountLabel, siteLabel, onErase, onAudit, openRequest = 0 }: {
+  accountId: string; siteId: string; accountLabel?: string; siteLabel?: string; openRequest?: number;
   onErase: (path: string, body: Record<string, unknown>) => Promise<unknown>; onAudit?: () => void;
 }) {
   const { t } = useApp();
@@ -25,6 +25,11 @@ export default function OwnerErasurePanel({ accountId, siteId, accountLabel, sit
     setMode(siteId ? 'site' : 'account_only'); setOpen(false); setImpact(null); setReason(''); setError(''); setBusy(false); setResult(null);
     return () => { sequence.current++; };
   }, [accountId, siteId]);
+  useEffect(() => {
+    if (!openRequest) return;
+    setMode('account_only'); setOpen(true);
+    requestAnimationFrame(() => document.querySelector('.owner-erasure')?.scrollIntoView?.({ block: 'center', behavior: 'smooth' }));
+  }, [openRequest]);
   useEffect(() => {
     const current = ++sequence.current;
     if (!open || !id || result) return;

@@ -1,5 +1,9 @@
 type Translate = (ar: string, en: string) => string;
 const labels: Record<string, [string,string]> = {
+ 'admin.request.requested':['طلب حذف من القائمة','Request removal requested'],
+ 'admin.request.completed':['حذف طلب من قائمة العمل','Request removed from work list'],
+ 'admin.request.blocked':['حذف طلب ممنوع بحصانة','Request removal blocked by protection'],
+ 'admin.request.conflict':['حذف طلب توقف لتغير حالته','Request removal stopped after state changed'],
  'owner.erasure.requested':['طلب حذف نهائي','Permanent deletion requested'],
  'owner.erasure.reviewed':['مراجعة أثر الحذف','Deletion impact reviewed'],
  'owner.erasure.completed':['تنفيذ الحذف النهائي','Permanent deletion executed'],

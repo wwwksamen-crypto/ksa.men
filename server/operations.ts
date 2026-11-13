@@ -1,4 +1,5 @@
 import { minimizedAuditDetail } from './core';
+import { assertRequestPresent } from './request-removal';
 import { socialOverrides, validateSocialOverrides } from '../shared/social-platforms';
 import { decideMembershipRequest } from './membership-decisions';
 import { background } from './managed';
@@ -873,7 +874,7 @@ export function registerOperations(app: App): void {
               d.status AS decision_status,d.reviewer_id AS decision_reviewer_id,d.reason AS decision_reason,d.decided_at AS decision_decided_at
        FROM reviews r JOIN sites s ON s.id=r.site_id JOIN users u ON u.id=r.user_id
        LEFT JOIN review_decisions d ON d.review_id=r.id
-       WHERE COALESCE(d.status,r.status)=? ${scope}
+       WHERE COALESCE(d.status,r.status)=? AND NOT EXISTS(SELECT 1 FROM owner_request_removals rm WHERE rm.kind='review' AND rm.request_id=r.id) ${scope}
        ORDER BY r.created_at ASC LIMIT ?`,
       status,
       ...(user.role === "manager" ? [user.id, user.id, user.id] : []),
@@ -931,6 +932,7 @@ export function registerOperations(app: App): void {
     );
     if (!review) fail(404, "Review not found", "not_found");
     const reviewer = await reviewScope(c, review);
+    await assertRequestPresent(c, 'review', c.req.param("id"));
     if (review.status !== "pending" || review.decision_status) {
       if ((review.decision_status || review.status) !== decision) fail(409, "The request already has a different decision", "review_stale");
       if (decision === 'approved') await background(c, publicationNotice(c,review.id));
@@ -1147,7 +1149,7 @@ export function registerOperations(app: App): void {
               (SELECT CASE WHEN json_valid(es.detail) THEN json_extract(es.detail,'$.settlement') END FROM entitlement_sources es WHERE es.reference='subscription-annual-'||r.id) AS settlement,
               (SELECT n.name FROM dns_names n WHERE n.owner_id=u.id ORDER BY n.created_at LIMIT 1) AS subdomain
        FROM subscription_requests r JOIN users u ON u.id=r.user_id
-       WHERE r.status LIKE ? ESCAPE '\\' AND r.kind LIKE ? ESCAPE '\\' AND (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR ('C'||u.id) LIKE ? ESCAPE '\\')
+       WHERE NOT EXISTS(SELECT 1 FROM owner_request_removals rm WHERE rm.kind='membership' AND rm.request_id=r.id) AND r.status LIKE ? ESCAPE '\\' AND r.kind LIKE ? ESCAPE '\\' AND (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR ('C'||u.id) LIKE ? ESCAPE '\\')
        ORDER BY CASE WHEN r.status='pending' THEN 0 ELSE 1 END,r.created_at ASC LIMIT 100`,
       status || "%", kind || "%", like, like, like,
     );
@@ -1157,6 +1159,7 @@ export function registerOperations(app: App): void {
   app.post("/api/admin/subscription-requests/:id/decision", async (c) => {
     const operator = owner(c);
     fresh(c);
+    await assertRequestPresent(c, 'membership', c.req.param("id"));
     return decideMembershipRequest(c, operator.id, await input(c));
   });
 
