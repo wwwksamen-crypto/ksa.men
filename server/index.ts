@@ -1,3 +1,5 @@
+import { registerPrivacy } from './privacy';
+import { processPrivacyJobs } from './privacy-jobs';
 import {retryPublicationNotices} from './publication-notice';
 import { registerRequestRemoval } from './request-removal';
 import {registerOwnerErasure} from './owner-erasure';
@@ -132,6 +134,7 @@ app.post('/api/gate', async c => {
 });
 registerOwnerErasure(app);
 registerRequestRemoval(app);
+registerPrivacy(app);
 registerSubdomains(app);
 registerPreview(app);
 registerOG(app);
@@ -194,6 +197,7 @@ export default {
     ctx.waitUntil(runDataLifecycle(env));
     ctx.waitUntil(retryPublicationNotices(env));
     ctx.waitUntil(runSeasonalNotices(env));
+    ctx.waitUntil(processPrivacyJobs(env));
     if (new Date(event.scheduledTime).getUTCHours() === 0) ctx.waitUntil(makeBackup(env));
   },
 };

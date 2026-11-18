@@ -32,8 +32,9 @@ data=json.loads(plain)
 if data.get('format')!='ksa-men-backup-v2' or not data.get('schema'):raise SystemExit('Snapshot does not contain a v2 restorable schema.')
 tables=data['tables']
 # Never restore account invitation capabilities.
-tables['managed_claim_tokens']=[]
-tables['auth_mail_daily_limits']=[]
+schema_names={item.get('name') for item in data['schema'] if item.get('type')=='table'}
+for capability in ['managed_claim_tokens','auth_mail_daily_limits','operational_jobs','privacy_export_artifacts']:
+ if capability in schema_names:tables[capability]=[]
 supplied=json.loads(args.tombstones.read_text())
 if not isinstance(supplied,dict) or not isinstance(supplied.get('deleted_tombstones'),list) or not isinstance(supplied.get('retained_sites'),list):
  raise SystemExit('A structured current erasure context is required; a snapshot-only list is insufficient.')
@@ -54,7 +55,9 @@ for table,key in [('dns_names','owner_id'),('media','owner_id')]:
 tombstones={(str(r.get('resource_type')),str(r.get('resource_id'))) for r in tables.get('deleted_tombstones',[]) if isinstance(r,dict) and r.get('resource_type') and r.get('resource_id') is not None}
 preserved_accounts={rid for typ,rid in tombstones if typ=='account' and (
  any(str(r.get('from_id'))==rid or str(r.get('to_id'))==rid for r in tables.get('ledger',[])) or
- any(str(r.get('user_id'))==rid for t in ['payments','reviews','subscription_requests','retention_holds'] for r in tables.get(t,[])))}
+ any(str(r.get('user_id'))==rid for t in ['payments','reviews','subscription_requests','retention_holds'] for r in tables.get(t,[])) or
+ any(str(r.get('user_id'))==rid or str(r.get('assigned_to'))==rid for r in tables.get('privacy_requests',[])) or
+ any(str(r.get('actor_id'))==rid for r in tables.get('privacy_request_events',[])))}
 def anonymous_user(row):
  result={k:(v if k in ['id','created_at','consent_at'] else 0 if isinstance(v,(int,float)) else '' if isinstance(v,str) else None) for k,v in row.items()}
  result.update(id=row['id'],email='erased-'+str(row['id'])+'@deleted.ksa.men',name='حساب محذوف',whatsapp='',status='deleted',role='user',pin_hash=None,assigned_to=None,referrer_id=None)
@@ -75,6 +78,11 @@ for table in ['mail_delivery_events','managed_creation_requests','managed_accoun
  if isinstance(tables.get(table),list):tables[table]=[r for r in tables[table] if str(r.get('user_id')) not in accounts or (table=='wallets' and str(r.get('user_id')) in preserved_accounts)]
 for table in ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody','subdomain_change_requests']:
  if isinstance(tables.get(table),list):tables[table]=[r for r in tables[table] if str(r.get('site_id')) not in sites]
+for request in tables.get('privacy_requests',[]):
+ if str(request.get('user_id')) in accounts:
+  request.update(user_id=None,message='',public_response='',payload_hash='',idempotency_key='',status='cancelled')
+ if str(request.get('assigned_to')) in accounts:request['assigned_to']=None
+ if request.get('type')=='export' and request.get('status') in ['received','processing','ready','failed']:request['status']='expired'
 args.target.parent.mkdir(parents=True,exist_ok=True)
 conn=sqlite3.connect(args.target);conn.execute('PRAGMA foreign_keys=OFF')
 objects=data['schema']

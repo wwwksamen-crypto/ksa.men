@@ -3,7 +3,7 @@ import type { App, Env, Ctx } from './core';
 import { role, fresh, now, uid, audit, all, digest } from './core';
 import { HTTPException } from 'hono/http-exception';
 
-const excludedAuth = ['auth_mail_daily_limits', 'managed_claim_tokens', 'auth_codes', 'sessions', 'devices', 'rate_limits'];
+const excludedAuth = ['auth_mail_daily_limits', 'managed_claim_tokens', 'auth_codes', 'sessions', 'devices', 'rate_limits', 'operational_jobs', 'privacy_export_artifacts'];
 const privateCommunication = ['conversations', 'messages', 'contact_requests', 'blocks', 'reports'];
 const magic=new TextEncoder().encode('KSA2');
 
@@ -28,6 +28,8 @@ export function scrubTombstones(tables:Record<string,any[]>){
  const removed:{[key:string]:number}={};const sets=tombstoneSets(tables);
  const referencedAccounts=new Set<string>();
  for(const id of sets.get('account')||[]){
+  if((tables.privacy_requests||[]).some(r=>String(r.user_id)===id||(r.assigned_to!==null&&String(r.assigned_to)===id))||
+    (tables.privacy_request_events||[]).some(r=>r.actor_id!==null&&String(r.actor_id)===id))referencedAccounts.add(id);
   if((tables.ledger||[]).some(r=>String(r.from_id)===id||String(r.to_id)===id)||
     ['payments','reviews','subscription_requests','retention_holds'].some(t=>(tables[t]||[]).some(r=>String(r.user_id)===id)))referencedAccounts.add(id);
  }
@@ -49,6 +51,14 @@ export function scrubTombstones(tables:Record<string,any[]>){
  }
  const accounts=sets.get('account');if(accounts){for(const table of ['mail_delivery_events','managed_creation_requests','managed_accounts','wallets','user_services','entitlement_sources','consent_records','notifications','quick_links','subscription_requests','member_preferences','loyalty_notification_consents','loyalty_daily_activities','occasion_notices','upload_intents','sessions','devices'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!accounts.has(String(row?.user_id))||(table==='wallets'&&referencedAccounts.has(String(row?.user_id))));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
  const sites=sets.get('site');if(sites){for(const table of ['site_visibility','dns_names','names','analytics','proxy_media','proxy_sites','site_custody','subdomain_change_requests'])if(Array.isArray(tables[table])){const before=tables[table].length;tables[table]=tables[table].filter(row=>!sites.has(String(row?.site_id)));if(before!==tables[table].length)removed[table]=(removed[table]||0)+before-tables[table].length;}}
+ for(const request of tables.privacy_requests||[]){
+  if(accounts?.has(String(request.user_id))){request.user_id=null;request.message='';request.public_response='';request.payload_hash='';request.idempotency_key='';request.status='cancelled';}
+  if(accounts?.has(String(request.assigned_to)))request.assigned_to=null;
+  if(request.type==='export'&&['received','processing','ready','failed'].includes(request.status))request.status='expired';
+ }
+ // A snapshot retains rights evidence, not runtime leases or private download capabilities.
+ if('operational_jobs' in tables)tables.operational_jobs=[];
+ if('privacy_export_artifacts' in tables)tables.privacy_export_artifacts=[];
  return removed;
 }
 export async function makeBackup(env:Env,reason='nightly') {

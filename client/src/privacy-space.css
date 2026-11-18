@@ -1,0 +1,9 @@
+.privacy-space > summary { cursor: pointer; width: fit-content; max-width: 100%; white-space: normal; }
+.privacy-space-body { padding-block-start: 1rem; min-width: 0; }
+.privacy-space-body > details > summary { cursor: pointer; max-width: 100%; white-space: normal; }
+.privacy-request { padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; min-width: 0; overflow-wrap: anywhere; }
+.privacy-request > .button { margin-block-start: .6rem; }
+.privacy-space .row { flex-wrap: wrap; }
+.privacy-space .field { max-width: 100%; box-sizing: border-box; }
+.privacy-copy { white-space: pre-wrap; text-align: start; overflow-wrap: anywhere; }
+@media (max-width: 480px) { .privacy-space .row > .button { width: 100%; justify-content: center; } }

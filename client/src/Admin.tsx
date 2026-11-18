@@ -1,3 +1,4 @@
+import PrivacyRequestsAdmin from './PrivacyRequestsAdmin';
 import RequestRemovalRecords from './RequestRemovalRecords';
 import RequestRemovalButton from './RequestRemovalButton';
 import RetainedSites from './RetainedSites';
@@ -994,7 +995,7 @@ export default function Admin() {
     case 'economics': contentView = renderEconomics(); break;
     case 'audit': contentView = renderAudit(); break;
     case 'backup': contentView = renderBackup(); break;
-    case 'governance': contentView = renderGovernance(); break;
+    case 'governance': contentView = <>{renderGovernance()}<PrivacyRequestsAdmin/></>; break;
     default: contentView = renderOverview();
   }
 
