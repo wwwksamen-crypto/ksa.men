@@ -19,3 +19,15 @@ export function consentPurposeLabel(purpose:string,t:(ar:string,en:string)=>stri
   const labels:Record<string,[string,string]>={account_creation:['إنشاء الحساب','Account creation'],public_profile:['نشر موقعي للعامة','Public profile publication'],contact:['طلبات التواصل','Contact requests'],translation:['ترجمة نصوصي','Text translation'],seasonal_notices:['تنبيهات المناسبات','Seasonal notices']};
   return labels[purpose]?t(...labels[purpose]):t('غرض معالجة مسجل','Recorded processing purpose');
 }
+
+export type PrivacyErasureOutcome = {
+ scope:'account'|'account_only'|'site';operationRecorded:boolean;executedAt:number;
+ recordsRetained:true;fullErasureVerified:false;
+ media:{total:number;removed:number;failed:number;pending:number;state:'retained'|'incomplete'|'pending'|'verified'};
+};
+export function erasureScopeLabel(scope:string,t:(ar:string,en:string)=>string){
+ return scope==='account_only'?t('إزالة الحساب مع إبقاء المواقع','Account removed; sites retained'):scope==='site'?t('إزالة موقع محدد','Specific site removed'):t('إزالة الحساب ومواقعه','Account and sites removed');
+}
+export function erasureMediaLabel(state:string,t:(ar:string,en:string)=>string){
+ return state==='retained'?t('صور المواقع المحتفظ بها باقية','Retained site images remain'):state==='verified'?t('سجل إزالة الوسائط المحددة مكتمل','Scoped media removal records complete'):state==='pending'?t('إزالة الوسائط المحددة قيد المتابعة','Scoped media removal requires follow-up'):t('اكتمال إزالة الوسائط غير مثبت','Media removal completeness not verified');
+}

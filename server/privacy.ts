@@ -6,6 +6,7 @@ import { hideMyPublicPresence } from './lifecycle';
 import { privacyPolicy, processPrivacyJobs, privateFileHash } from './privacy-jobs';
 import { MAX_PRIVATE_EXPORT_BYTES } from './privacy-export';
 import type { PrivacyRequest } from '../shared/privacy-rights';
+import { registerPrivacyErasure, erasureOutcome } from './privacy-erasure';
 
 function fail(status:400|404|409|410|503,message:string):never {throw new HTTPException(status,{message});}
 const requestSchema=z.object({type:z.enum(['export','correction','erasure','objection']),message:z.string().trim().max(2000).default(''),idempotencyKey:z.string().regex(/^[A-Za-z0-9_-]{8,100}$/)}).strict();
@@ -28,6 +29,7 @@ async function requestPage(c:Ctx,userId:number,cursor='') {
 }
 
 export function registerPrivacy(app:App) {
+  registerPrivacyErasure(app);
   app.get('/api/privacy/summary',async c=>{
     const u=me(c);noStore(c);const policy=await privacyPolicy(c.env);
     const records=await all<any>(c,'SELECT id,purpose,notice_version,granted_at,withdrawn_at FROM consent_records WHERE user_id=? ORDER BY granted_at DESC,id DESC LIMIT 100',u.id);
@@ -78,7 +80,8 @@ export function registerPrivacy(app:App) {
   app.get('/api/privacy/requests/:id',async c=>{
     me(c);noStore(c);await enabled(c);const row=await ownRequest(c,c.req.param('id'));
     const events=(await all<any>(c,'SELECT status,event_code,created_at FROM privacy_request_events WHERE request_id=? ORDER BY created_at,id LIMIT 100',row.id)).map(r=>({status:r.status,code:r.event_code,createdAt:r.created_at}));
-    return c.json({request:present(row),message:row.message,policyVersion:row.policy_version,events});
+    const outcome=row.type==='erasure'?await erasureOutcome(c,row.id):null;
+    return c.json({request:present(row),message:row.message,policyVersion:row.policy_version,events,outcome});
   });
   app.get('/api/privacy/requests/:id/download',async c=>{
     const u=me(c);fresh(c);noStore(c);await enabled(c);const row=await ownRequest(c,c.req.param('id'));
@@ -126,7 +129,8 @@ export function registerPrivacy(app:App) {
   app.get('/api/admin/privacy/requests/:id',async c=>{
     role(c,['owner']);fresh(c);noStore(c);await enabled(c);
     const r=await one<any>(c,'SELECT id,user_id,type,status,message,public_response,policy_version,assigned_to,due_at,created_at,updated_at,revision FROM privacy_requests WHERE id=?',c.req.param('id'));if(!r)fail(404,'الطلب غير موجود');
-    return c.json({request:{id:r.id,subjectId:r.user_id,type:r.type,status:r.status,message:r.message,response:r.public_response,policyVersion:r.policy_version,dueAt:r.due_at,createdAt:r.created_at,updatedAt:r.updated_at,revision:r.revision}});
+    const outcome=r.type==='erasure'?await erasureOutcome(c,r.id):null;
+    return c.json({request:{id:r.id,subjectId:r.user_id,type:r.type,status:r.status,message:r.message,response:r.public_response,policyVersion:r.policy_version,dueAt:r.due_at,createdAt:r.created_at,updatedAt:r.updated_at,revision:r.revision,outcome}});
   });
   app.post('/api/admin/privacy/requests/:id/reply',async c=>{
     const actor=role(c,['owner']);fresh(c);noStore(c);await enabled(c);const body=replySchema.parse(await c.req.json()),id=c.req.param('id'),clock=now();

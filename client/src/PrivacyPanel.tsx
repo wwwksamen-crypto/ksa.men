@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Download, RefreshCcw, ShieldCheck } from 'lucide-react';
 import { api, useApp } from './lib';
-import { consentPurposeLabel, privacyStatusLabel, privacyTypeLabel, type PrivacySummary, type PrivacyRequest, type PrivacyRequestType, type PrivacyEvent } from '../../shared/privacy-rights';
+import { consentPurposeLabel, privacyStatusLabel, privacyTypeLabel, type PrivacySummary, type PrivacyRequest, type PrivacyRequestType, type PrivacyEvent, type PrivacyErasureOutcome as Outcome } from '../../shared/privacy-rights';
+import PrivacyErasureOutcome from './PrivacyErasureOutcome';
 import './privacy-space.css';
 
 export default function PrivacyPanel({children}:{children?:ReactNode}) {
   const {user,t,notify,lang}=useApp();
   const [open,setOpen]=useState(false),[summary,setSummary]=useState<PrivacySummary|null>(null),[loading,setLoading]=useState(false),[busy,setBusy]=useState('');
-  const [type,setType]=useState<PrivacyRequestType>('correction'),[message,setMessage]=useState(''),[detail,setDetail]=useState<{request:PrivacyRequest;message:string;events:PrivacyEvent[]}|null>(null);
+  const [type,setType]=useState<PrivacyRequestType>('correction'),[message,setMessage]=useState(''),[detail,setDetail]=useState<{request:PrivacyRequest;message:string;events:PrivacyEvent[];outcome?:Outcome|null}|null>(null);
   const key=useRef<{fingerprint:string;id:string}|null>(null);
   const date=(value:number)=>new Intl.DateTimeFormat(lang==='ar'?'ar-SA':'en-GB',{dateStyle:'medium',timeStyle:'short',calendar:'gregory'}).format(new Date(value*1000));
   const load=async(signal?:AbortSignal)=>{const data=await api<PrivacySummary>('/api/privacy/summary',{signal});setSummary(data);};
@@ -61,7 +62,7 @@ export default function PrivacyPanel({children}:{children?:ReactNode}) {
           {summary.requests.some(r=>['received','processing'].includes(r.status))&&<p className="muted">{t('اضغط «تحديث» لمتابعة حالة التجهيز.','Press Refresh to check preparation status.')}</p>}
           {summary.nextBefore&&<button type="button" className="button button--quiet" disabled={!!busy} onClick={()=>void older()}>{t('طلبات أقدم','Older requests')}</button>}
         </section>
-        {detail&&<section className="privacy-request"><h3>{t('تفاصيل طلبي','My request details')}</h3><p>{privacyStatusLabel(detail.request.status,t)}</p>{detail.message&&<p className="privacy-copy">{detail.message}</p>}{detail.request.response&&<p className="privacy-copy">{detail.request.response}</p>}<ol>{detail.events.map((event,i)=><li key={`${event.createdAt}:${i}`}>{privacyStatusLabel(event.status,t)} · {date(event.createdAt)}</li>)}</ol><button type="button" className="button button--quiet" onClick={()=>setDetail(null)}>{t('إغلاق التفاصيل','Close details')}</button></section>}
+        {detail&&<section className="privacy-request"><h3>{t('تفاصيل طلبي','My request details')}</h3><p>{privacyStatusLabel(detail.request.status,t)}</p><p>{t('مرجع الطلب','Request reference')}: <bdi>{detail.request.id}</bdi></p>{detail.message&&<p className="privacy-copy">{detail.message}</p>}{detail.request.response&&<p className="privacy-copy">{detail.request.response}</p>}<PrivacyErasureOutcome outcome={detail.outcome}/>{detail.request.type==='erasure'&&<p>{t('احفظ مرجع طلبك. إذا أزيل حسابك، تابع مع الدعم بعد التحقق من هويتك؛ لا يعاد تفعيل دخولك السابق.','Keep your request reference. If your account is removed, follow up with support after identity verification; your old sign-in is not restored.')}</p>}<ol>{detail.events.map((event,i)=><li key={`${event.createdAt}:${i}`}>{privacyStatusLabel(event.status,t)} · {date(event.createdAt)}</li>)}</ol><button type="button" className="button button--quiet" onClick={()=>setDetail(null)}>{t('إغلاق التفاصيل','Close details')}</button></section>}
       </>}
       <details><summary className="button button--quiet">{t('اختياراتي والموافقات','My choices and consents')}</summary><div className="stack privacy-space-body">{children}
         {summary?.consents.map(consent=><div className="privacy-request" key={consent.id}><strong>{consentPurposeLabel(consent.purpose,t)}</strong><p>{consent.withdrawnAt?t('سُحب هذا الاختيار','Choice withdrawn'):t('اختيار مسجل','Recorded choice')} · {date(consent.withdrawnAt||consent.grantedAt)}</p>{summary.enabled&&!consent.withdrawnAt&&['translation','contact','public_profile'].includes(consent.purpose)&&<button type="button" className="button button--quiet" disabled={!!busy} onClick={()=>void withdraw(consent.purpose)}>{consent.purpose==='public_profile'?t('إخفاء موقعي وسحب إتاحته العامة','Hide my site and withdraw public access'):t('سحب هذا الاختيار','Withdraw this choice')}</button>}</div>)}

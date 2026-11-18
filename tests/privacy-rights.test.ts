@@ -145,7 +145,7 @@ describe('Privacy rights bounds and isolated recovery',()=>{
     const key=await crypto.subtle.importKey('raw',material,{name:'AES-GCM'},false,['encrypt','decrypt']);
     const original=new Uint8Array(await raw.arrayBuffer());
     const legacy=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:original.slice(4,16)},key,original.slice(16))));
-    const names=['privacy_requests','privacy_request_events','privacy_export_artifacts','operational_jobs'];
+    const names=['privacy_requests','privacy_request_events','privacy_export_artifacts','operational_jobs','privacy_erasure_links'];
     legacy.schema=legacy.schema.filter((item:any)=>!names.some(name=>String(item.sql||'').includes(name)));
     for(const name of names)delete legacy.tables[name]; // In-memory synthetic payload, never a SQL deletion.
     const plain=new TextEncoder().encode(JSON.stringify(legacy)),nonce=crypto.getRandomValues(new Uint8Array(12));

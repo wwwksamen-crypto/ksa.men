@@ -41,3 +41,20 @@ describe('Privacy spaces — local DOM only, no browser/live actions',()=>{
     mocked.api.mockResolvedValue({...summary,requests:[request]});await render(<PrivacyPanel/>,'en');await toggle();expect(box.textContent).toContain('My privacy and data');expect(box.textContent).toContain('Request received');expect(box.textContent).not.toContain('خصوصيتي');
   });
 });
+
+describe('Scoped removal follow-up — local DOM',()=>{
+ it('shows a scoped incomplete result and support reference without claiming all data was erased',async()=>{
+  const outcome={scope:'site',operationRecorded:true,recordsRetained:true,fullErasureVerified:false,executedAt:1770000000,media:{total:2,removed:1,pending:1,failed:0,state:'pending'}};
+  mocked.api.mockImplementation(async(path:string)=>path==='/api/privacy/summary'?{...summary,requests:[{...request,type:'erasure',status:'answered'}]}:{request:{...request,type:'erasure',status:'answered'},message:'',events:[],outcome});
+  await render(<PrivacyPanel/>);await toggle();await click('تفاصيل الطلب');expect(box.textContent).toContain('إزالة موقع محدد');expect(box.textContent).toContain('ليست إثبات محو جميع البيانات والنسخ');expect(box.textContent).toContain('مرجع الطلب');expect(box.textContent).toContain('لا يعاد تفعيل دخولك السابق');expect(mocked.api.mock.calls.some(([path])=>String(path).includes('/erase'))).toBe(false);
+ });
+ it('does not fetch candidate operations until asked, and links only after an explicit choice',async()=>{
+  const op={id:'synthetic-operation',scope:'site',executedAt:1770000000};let linked=false;
+  const outcome={scope:'site',operationRecorded:true,recordsRetained:true,fullErasureVerified:false,executedAt:1770000000,media:{total:0,removed:0,pending:0,failed:0,state:'verified'}};
+  mocked.api.mockImplementation(async(path:string)=>path==='/api/admin/privacy/requests'?{enabled:true,requests:[{...request,type:'erasure',name:'اختبار'}]}:path.endsWith('/erasure-options')?{operations:[op]}:path.endsWith('/link-erasure')?(linked=true,{linked:true,outcome}):{request:{...request,type:'erasure',status:linked?'answered':'received',subjectId:1,message:'',revision:1,outcome:linked?outcome:null}});
+  await render(<PrivacyRequestsAdmin/>);await toggle();await click('فتح التفاصيل');expect(mocked.api.mock.calls.some(([path])=>String(path).endsWith('/erasure-options'))).toBe(false);
+  await click('استحضار العمليات المتاحة');const button=[...box.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent==='ربط النتيجة بهذا الطلب')!;expect(button.disabled).toBe(true);
+  const select=[...box.querySelectorAll<HTMLSelectElement>('select')].find(s=>[...s.options].some(o=>o.value===op.id))!;await act(async()=>{select.value=op.id;select.dispatchEvent(new Event('change',{bubbles:true}));});await click('ربط النتيجة بهذا الطلب');
+  const calls=mocked.api.mock.calls.filter(([path])=>String(path).endsWith('/link-erasure'));expect(calls).toHaveLength(1);expect(JSON.parse(calls[0][1].body)).toEqual({deletionRequestId:op.id,expectedRevision:1});expect(mocked.api.mock.calls.some(([path])=>String(path).endsWith('/erase'))).toBe(false);expect(box.textContent).toContain('إزالة موقع محدد');
+ });
+});
