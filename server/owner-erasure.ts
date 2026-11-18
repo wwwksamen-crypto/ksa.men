@@ -1,6 +1,6 @@
 import {HTTPException} from 'hono/http-exception';
 import type {App,Ctx} from './core';
-import {all,audit,digest,now,one,role,setting,uid} from './core';
+import {all,audit,digest,fresh,now,one,role,setting,uid} from './core';
 import {registerAuditExport} from './audit-export';
 
 type Scope='account'|'account_only'|'site';
@@ -61,6 +61,7 @@ export function registerOwnerErasure(app:App){
    try { role(c,['owner']); }
    catch(error) { if(c.get('user')?.status==='active')await audit(c,'owner.erasure.denied',`${scope}:${c.req.param('id')}`,{scope,outcome:'not-executed'});throw error; }
    const actor=role(c,['owner']);
+   fresh(c); // Impact/record reads remain ordinary; only the irreversible commit is stepped up.
    const body=await c.req.json<{mode?:unknown;reason?:unknown;affirmation?:unknown;confirmation?:unknown;impactToken?:unknown;versions?:Array<{id:string;draft:number;published:number}>}>();
    const actualScope:Scope=routeScope==='account'&&body.mode==='account_only'?'account_only':routeScope;
    const reason=typeof body.reason==='string'?body.reason.trim():'';

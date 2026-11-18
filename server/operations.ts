@@ -1,3 +1,4 @@
+import { commitAccountAuthority, type AccountAuthority } from './admin-security';
 import { minimizedAuditDetail } from './core';
 import { assertRequestPresent } from './request-removal';
 import { socialOverrides, validateSocialOverrides } from '../shared/social-platforms';
@@ -695,12 +696,12 @@ export function registerOperations(app: App): void {
       const nextRole = text(body.role, "role", { max: 16 });
       if (!(["owner", "manager", "moderator", "user"] as string[]).includes(nextRole)) fail(400, "Role is invalid", "invalid_input");
       if (body.financial !== undefined && typeof body.financial !== "boolean") fail(400, "financial must be boolean", "invalid_input");
-      const target = await one<{ id: number; financial: number }>(c, "SELECT id,financial FROM users WHERE id=?", targetId);
+      const target = await one<AccountAuthority>(c, "SELECT id,role,financial,status FROM users WHERE id=?", targetId);
       if (!target) fail(404, "User not found", "not_found");
       const financial = nextRole === "manager"
         ? (typeof body.financial === "boolean" ? (body.financial ? 1 : 0) : target.financial)
         : 0;
-      await run(c, "UPDATE users SET role=?,financial=? WHERE id=?", nextRole, financial, targetId);
+      const credentials = await commitAccountAuthority(c, target, { role: nextRole as AccountAuthority['role'], financial, status: target.status });
       const delivery = await notifyMemberDecision(c, {
         targetId,
         title: "تحديث صلاحية الحساب",
@@ -708,7 +709,7 @@ export function registerOperations(app: App): void {
         actionLabel: "فتح حسابي",
         actionPath: "/dashboard?tab=settings",
       });
-      await audit(c, "user.role", `user:${targetId}`, { role: nextRole, financial: Boolean(financial), delivery: delivery.channel });
+      await audit(c, "user.role", `user:${targetId}`, { role: nextRole, financial: Boolean(financial), ...credentials, delivery: delivery.channel });
       return c.json({ user: responseUser((await one<Record<string, unknown>>(c, "SELECT id,email,name,role,status,financial,assigned_to FROM users WHERE id=?", targetId)) ?? {}) });
     }
 
@@ -763,10 +764,10 @@ export function registerOperations(app: App): void {
       const status = requestedStatus === "approved" || requestedStatus === "published" ? "active" : requestedStatus;
       if (!(["active", "suspended"] as string[]).includes(status)) fail(400, "Status is invalid", "invalid_input");
       if (targetId === user.id) fail(400, "You cannot change your own account status here", "invalid_action");
-      const target = await one<{ role: string }>(c, "SELECT role FROM users WHERE id=?", targetId);
+      const target = await one<AccountAuthority>(c, "SELECT id,role,financial,status FROM users WHERE id=?", targetId);
       if (!target) fail(404, "User not found", "not_found");
       if (target.role === "owner" && user.role !== "owner") fail(403, "Owner accounts are outside this scope", "scope_denied");
-      await run(c, "UPDATE users SET status=? WHERE id=?", status, targetId);
+      const credentials = await commitAccountAuthority(c, target, { role: target.role, financial: target.financial, status });
       const delivery = await notifyMemberDecision(c, {
         targetId,
         title: status === "active" ? "تم تفعيل حسابك" : "تم تعليق حسابك",
@@ -774,7 +775,7 @@ export function registerOperations(app: App): void {
         actionLabel: "فتح صفحة الدخول",
         actionPath: "/auth",
       });
-      await audit(c, "user.status", `user:${targetId}`, { status, delivery: delivery.channel });
+      await audit(c, "user.status", `user:${targetId}`, { status, ...credentials, delivery: delivery.channel });
       return c.json({ status });
     }
 

@@ -8,6 +8,7 @@ export class APIError extends Error {
   constructor(message:string,status:number,code=''){super(message);this.name='APIError';this.status=status;this.code=code;}
 }
 const errorText:Record<string,[string,string]>={
+  REAUTH_REQUIRED:['أعد التحقق من البريد لإتمام الإجراء الحساس.','Verify your email again to complete this sensitive action.'],
   INCOMPLETE_PROFILE:['حُفظت كتابتك. أكمل الاسم والعناوين وبيانات التواصل والروابط قبل طلب النشر.','Your work is saved. Complete the name, entry titles, contact details and links before requesting publication.'],
   INCOMPLETE_LINK:['أكمل وجهة الرابط قبل طلب النشر؛ كتابتك محفوظة.','Complete the link destination before publishing; your work is saved.'],
   INVALID_INPUT:['تحقق من الحقول المدخلة وأكمل البيانات المطلوبة.','Check the fields and complete the required information.'],
@@ -62,7 +63,7 @@ export async function api<T=any>(path:string,options:RequestInit={}):Promise<T>{
   if(!response.ok){
     if(typeof window!=='undefined'&&!path.startsWith('/api/auth/')&&!options.signal?.aborted){
       if(response.status===401||(response.status===403&&String(data.error||'')==='فشل التحقق من أمان الطلب'))window.dispatchEvent(new CustomEvent('ksa:session-required',{detail:{reason:'login'}}));
-      else if(response.status===403&&String(data.error||data.message||'')==='أعد التحقق من البريد لإتمام الإجراء الحساس')window.dispatchEvent(new CustomEvent('ksa:session-required',{detail:{reason:'reauth'}}));
+      else if(response.status===403&&(data.code==='REAUTH_REQUIRED'||String(data.error||data.message||'')==='أعد التحقق من البريد لإتمام الإجراء الحساس'))window.dispatchEvent(new CustomEvent('ksa:session-required',{detail:{reason:'reauth'}}));
     }
     throw new APIError(readableError(data,response.status),response.status,String(data.code||''));
   }

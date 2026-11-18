@@ -1,5 +1,5 @@
 import type { App } from './core';
-import { all, audit, one, role, minimizedAuditDetail } from './core';
+import { all, audit, fresh, one, role, minimizedAuditDetail } from './core';
 import { HTTPException } from 'hono/http-exception';
 
 function integer(value: string | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER) {
@@ -10,6 +10,7 @@ function integer(value: string | undefined, fallback: number, max = Number.MAX_S
 export function registerAuditExport(app: App) {
   app.get('/api/admin/audit/export', async c => {
     const actor = role(c, ['owner']);
+    fresh(c);
     c.header('Cache-Control', 'private, no-store');
     const kind = c.req.query('kind') || 'audit';
     if (kind !== 'audit' && kind !== 'erasure') throw new HTTPException(400, {message:'نوع سجل التصدير غير مدعوم'});
